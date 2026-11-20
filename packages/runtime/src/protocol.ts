@@ -66,6 +66,31 @@ export type ColumnType =
 export interface Column {
   name: string;
   type: ColumnType;
+  role?: "dimension" | "measure";
+  /** Tableau/Excel-style number format from the model, e.g. "$#,##0" or "0.0%". */
+  format?: string;
+}
+
+export type FilterKind = "categorical" | "range" | "relative_date" | "wildcard";
+
+/** What a dashboard needs to render a filter control; mirrors `filter` in the manifest. */
+export interface FilterSpec {
+  label: string;
+  kind: FilterKind;
+  multi: boolean;
+  default: FilterValue | null;
+}
+
+export type ParameterType = "string" | "integer" | "float" | "boolean" | "date" | "datetime";
+
+export interface ParameterSpec {
+  label: string;
+  type: ParameterType;
+  default: Scalar;
+  list?: Scalar[];
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 export interface Theme {
@@ -92,6 +117,13 @@ export interface QueryMessage {
   type: "query";
   id: string;
   query: string;
+}
+/** Ask for the members a filter control can offer; answered with a ResultMessage (query = filter). */
+export interface DomainMessage {
+  v: 0;
+  type: "domain";
+  id: string;
+  filter: string;
 }
 export interface SetFilterMessage {
   v: 0;
@@ -125,6 +157,7 @@ export interface DashboardErrorMessage {
 export type DashboardMessage =
   | HelloMessage
   | QueryMessage
+  | DomainMessage
   | SetFilterMessage
   | SetParameterMessage
   | SelectMessage
@@ -143,6 +176,8 @@ export interface InitMessage {
   dashboard: { id: string; title: string };
   state: DashboardState;
   theme: Theme;
+  filters: Record<string, FilterSpec>;
+  parameters: Record<string, ParameterSpec>;
 }
 export interface ResultMessage {
   v: 0;
@@ -197,6 +232,8 @@ const COLUMN_TYPES: readonly unknown[] = [
   "datetime",
   "geography",
 ];
+const FILTER_KINDS: readonly unknown[] = ["categorical", "range", "relative_date", "wildcard"];
+const PARAMETER_TYPES: readonly unknown[] = ["string", "integer", "float", "boolean", "date", "datetime"];
 const ERROR_CODES: readonly unknown[] = [
   "forbidden",
   "not_found",
@@ -307,10 +344,45 @@ export function isDashboardState(value: unknown): value is DashboardState {
 function isColumn(value: unknown): value is Column {
   return (
     isObject(value) &&
-    hasExactKeys(value, ["name", "type"]) &&
+    hasExactKeys(value, ["name", "type"], ["role", "format"]) &&
     typeof value.name === "string" &&
     isFieldKey(value.name) &&
-    COLUMN_TYPES.includes(value.type)
+    COLUMN_TYPES.includes(value.type) &&
+    (!Object.hasOwn(value, "role") || value.role === "dimension" || value.role === "measure") &&
+    (!Object.hasOwn(value, "format") || (typeof value.format === "string" && value.format.length <= 128))
+  );
+}
+
+function isLabel(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 200;
+}
+
+function isFilterSpec(value: unknown): value is FilterSpec {
+  return (
+    isObject(value) &&
+    hasExactKeys(value, ["label", "kind", "multi", "default"]) &&
+    isLabel(value.label) &&
+    FILTER_KINDS.includes(value.kind) &&
+    typeof value.multi === "boolean" &&
+    (value.default === null || isFilterValue(value.default))
+  );
+}
+
+function isOptionalNumber(obj: Obj, key: string): boolean {
+  return !Object.hasOwn(obj, key) || (typeof obj[key] === "number" && Number.isFinite(obj[key]));
+}
+
+function isParameterSpec(value: unknown): value is ParameterSpec {
+  if (!isObject(value) || !hasExactKeys(value, ["label", "type", "default"], ["list", "min", "max", "step"])) {
+    return false;
+  }
+  const { list } = value;
+  return (
+    isLabel(value.label) &&
+    PARAMETER_TYPES.includes(value.type) &&
+    isScalar(value.default) &&
+    (list === undefined || (Array.isArray(list) && list.length <= LIMITS.members && list.every(isScalar))) &&
+    ["min", "max", "step"].every((k) => isOptionalNumber(value, k))
   );
 }
 
@@ -324,6 +396,11 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
       const { id, query } = data;
       if (!hasExactKeys(data, ["v", "type", "id", "query"]) || !isId(id) || !isName(query)) return null;
       return { v: 0, type: "query", id, query };
+    }
+    case "domain": {
+      const { id, filter } = data;
+      if (!hasExactKeys(data, ["v", "type", "id", "filter"]) || !isId(id) || !isName(filter)) return null;
+      return { v: 0, type: "domain", id, filter };
     }
     case "setFilter": {
       const { filter, value } = data;
@@ -365,15 +442,16 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     case "connect":
       return hasExactKeys(data, ["v", "type"]) ? { v: 0, type: "connect" } : null;
     case "init": {
-      const { dashboard, state, theme } = data;
-      if (!hasExactKeys(data, ["v", "type", "dashboard", "state", "theme"])) return null;
+      const { dashboard, state, theme, filters, parameters } = data;
+      if (!hasExactKeys(data, ["v", "type", "dashboard", "state", "theme", "filters", "parameters"])) return null;
+      if (!isRecordOf(filters, isFilterSpec) || !isRecordOf(parameters, isParameterSpec)) return null;
       if (!isObject(dashboard) || !hasExactKeys(dashboard, ["id", "title"])) return null;
       const { id, title } = dashboard;
       if (typeof id !== "string" || !SLUG.test(id) || typeof title !== "string") return null;
       if (!isDashboardState(state) || !isObject(theme) || !hasExactKeys(theme, ["mode"])) return null;
       const { mode } = theme;
       if (mode !== "light" && mode !== "dark") return null;
-      return { v: 0, type: "init", dashboard: { id, title }, state, theme: { mode } };
+      return { v: 0, type: "init", dashboard: { id, title }, state, theme: { mode }, filters, parameters };
     }
     case "result": {
       const { id, query, columns, rows, truncated } = data;

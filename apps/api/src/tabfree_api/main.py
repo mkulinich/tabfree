@@ -27,6 +27,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def version() -> dict[str, str]:
         return {"name": "tabfree-api", "version": __version__, "environment": config.environment}
 
+    if config.preview:
+        if config.environment not in ("dev", "test"):
+            raise RuntimeError("the preview has no authentication; enable it only in dev or test")
+        from tabfree_api.preview import PreviewEngine, PreviewPaths, create_router
+
+        app.include_router(create_router(PreviewEngine(PreviewPaths.default())))
+
     return app
 
 

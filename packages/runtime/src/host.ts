@@ -1,0 +1,367 @@
+/**
+ * The host side of the dashboard sandbox: runs in the TabFree portal, never inside a dashboard.
+ *
+ * `mountDashboard` creates the sandboxed iframe, authenticates the dashboard's hello by
+ * `event.source`, moves all traffic onto a private MessagePort, and enforces the manifest: only
+ * declared queries, filters and parameters are accepted, and selections only trigger declared
+ * actions. Data comes from `runQuery`, which calls the governed query API; the server, not this
+ * code, applies permissions and row-level security.
+ */
+
+import {
+  PROTOCOL_VERSION,
+  isFilterValue,
+  isScalar,
+  parseDashboardMessage,
+  type Column,
+  type DashboardMessage,
+  type DashboardState,
+  type ErrorCode,
+  type FilterSpec,
+  type FilterValue,
+  type HostMessage,
+  type ParameterSpec,
+  type ParameterType,
+  type Scalar,
+  type Theme,
+  type Tuple,
+} from "./protocol.js";
+import { applyTableCalcs, type TableCalc } from "./tablecalc.js";
+
+// ---- The parts of tabfree.json the host reads ------------------------------------------------
+
+export interface ManifestFilter {
+  label?: string;
+  field?: string;
+  expr?: string;
+  kind: FilterSpec["kind"];
+  multi?: boolean;
+  appliesTo: "all" | string[];
+  default?: FilterValue;
+}
+
+export interface ManifestParameter {
+  label?: string;
+  type: ParameterType;
+  default: Scalar;
+  allowed?: "any" | { list: Scalar[] } | { range: { min?: number | string; max?: number | string; step?: number } };
+}
+
+export interface ManifestAction {
+  type: string;
+  source: "all" | string[];
+  targets?: "all" | string[];
+  fields?: (string | { source: string; target: string })[];
+  clear?: "keep_filter" | "show_all" | "exclude_all";
+}
+
+export interface Manifest {
+  id: string;
+  title: string;
+  filters?: Record<string, ManifestFilter>;
+  parameters?: Record<string, ManifestParameter>;
+  queries: Record<string, { tableCalcs?: TableCalc[] }>;
+  actions?: ManifestAction[];
+}
+
+/** What the host asks the governed query API for. The server maps it onto the manifest. */
+export interface QueryRequest {
+  dashboard: string;
+  query: string;
+  state: DashboardState;
+  /** Current selections by source query, for the manifest's filter actions. */
+  selections: Record<string, Tuple[]>;
+}
+
+export interface DomainRequest {
+  dashboard: string;
+  filter: string;
+  state: DashboardState;
+}
+
+export interface QueryResponse {
+  columns: Column[];
+  rows: Scalar[][];
+  truncated: boolean;
+}
+
+export class HostQueryError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface MountOptions {
+  container: HTMLElement;
+  manifest: Manifest;
+  /** The bundle's index.html. */
+  html: string;
+  /** Source of the frame runtime (dist/bundle/frame.js), inlined because the frame has no network. */
+  runtime: string;
+  runQuery: (request: QueryRequest) => Promise<QueryResponse>;
+  runDomain: (request: DomainRequest) => Promise<QueryResponse>;
+  theme?: Theme;
+  initialState?: Partial<DashboardState>;
+  onStateChange?: (state: DashboardState, selections: Record<string, Tuple[]>) => void;
+  onDashboardError?: (message: string) => void;
+}
+
+export interface DashboardHost {
+  readonly iframe: HTMLIFrameElement;
+  readonly state: DashboardState;
+  setTheme(theme: Theme): void;
+  setState(state: Partial<DashboardState>): void;
+  destroy(): void;
+}
+
+/** CSP for the frame: inline runtime and bundle code only, no network of any kind. */
+export const FRAME_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; " +
+  "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+
+/** The frame document: the bundle's HTML with the CSP and the runtime injected first in <head>. */
+export function buildSrcdoc(html: string, runtime: string): string {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">`;
+  const script = `<script>${runtime.replace(/<\/(script)/gi, "<\\/$1")}</script>`;
+  const head = /<head(\s[^>]*)?>/i.exec(html);
+  if (head) {
+    const at = head.index + head[0].length;
+    return `${html.slice(0, at)}${csp}${script}${html.slice(at)}`;
+  }
+  return `<!doctype html><html><head>${csp}${script}</head><body>${html}</body></html>`;
+}
+
+export function filterSpecs(manifest: Manifest): Record<string, FilterSpec> {
+  const out: Record<string, FilterSpec> = {};
+  for (const [name, f] of Object.entries(manifest.filters ?? {})) {
+    out[name] = {
+      label: f.label ?? f.field ?? name,
+      kind: f.kind,
+      multi: f.multi ?? f.kind === "categorical",
+      default: f.default ?? null,
+    };
+  }
+  return out;
+}
+
+export function parameterSpecs(manifest: Manifest): Record<string, ParameterSpec> {
+  const out: Record<string, ParameterSpec> = {};
+  for (const [name, p] of Object.entries(manifest.parameters ?? {})) {
+    const spec: ParameterSpec = { label: p.label ?? name, type: p.type, default: p.default };
+    const allowed = p.allowed;
+    if (allowed && allowed !== "any" && "list" in allowed) spec.list = allowed.list;
+    if (allowed && allowed !== "any" && "range" in allowed) {
+      const { min, max, step } = allowed.range;
+      if (typeof min === "number") spec.min = min;
+      if (typeof max === "number") spec.max = max;
+      if (typeof step === "number") spec.step = step;
+    }
+    out[name] = spec;
+  }
+  return out;
+}
+
+export function initialState(manifest: Manifest, overrides: Partial<DashboardState> = {}): DashboardState {
+  const filters: Record<string, FilterValue> = {};
+  for (const [name, f] of Object.entries(manifest.filters ?? {})) {
+    if (f.default) filters[name] = f.default;
+  }
+  const parameters: Record<string, Scalar> = {};
+  for (const [name, p] of Object.entries(manifest.parameters ?? {})) parameters[name] = p.default;
+  return {
+    filters: { ...filters, ...overrides.filters },
+    parameters: { ...parameters, ...overrides.parameters },
+    highlight: overrides.highlight ?? null,
+  };
+}
+
+/** Coerce a parameter value to its declared type and allowed values; null when not allowed. */
+export function coerceParameter(spec: ParameterSpec, value: Scalar): Scalar | undefined {
+  let v: Scalar = value;
+  if (spec.type === "integer" || spec.type === "float") {
+    const n = typeof value === "string" ? Number(value) : value;
+    if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
+    v = spec.type === "integer" ? Math.round(n) : n;
+    if (spec.min !== undefined && v < spec.min) return undefined;
+    if (spec.max !== undefined && v > spec.max) return undefined;
+  } else if (spec.type === "boolean") {
+    if (typeof value !== "boolean") return undefined;
+  } else if (typeof value !== "string") {
+    return undefined;
+  }
+  if (spec.list && !spec.list.includes(v)) return undefined;
+  return v;
+}
+
+function kindAccepts(kind: FilterSpec["kind"], value: FilterValue): boolean {
+  if (kind === "categorical") return "members" in value;
+  if (kind === "relative_date") return "relative" in value || "min" in value || "max" in value;
+  if (kind === "wildcard") return "wildcard" in value;
+  return "min" in value || "max" in value;
+}
+
+function inList(list: "all" | string[] | undefined, name: string): boolean {
+  return list === "all" || (list ?? []).includes(name);
+}
+
+function sameTuple(a: Tuple, b: Tuple): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]);
+}
+
+export function mountDashboard(options: MountOptions): DashboardHost {
+  const { manifest } = options;
+  const filters = filterSpecs(manifest);
+  const parameters = parameterSpecs(manifest);
+  let state = initialState(manifest, options.initialState);
+  let theme: Theme = options.theme ?? { mode: "light" };
+  let selections: Record<string, Tuple[]> = {};
+  let port: MessagePort | null = null;
+
+  const iframe = document.createElement("iframe");
+  // allow-scripts only: no allow-same-origin, so the frame's origin is opaque and it has no
+  // cookies, storage or access to this page.
+  iframe.setAttribute("sandbox", "allow-scripts");
+  iframe.setAttribute("referrerpolicy", "no-referrer");
+  iframe.setAttribute("allow", "");
+  iframe.setAttribute("title", manifest.title);
+  iframe.style.cssText = "width:100%;border:0;display:block;min-height:200px";
+  iframe.srcdoc = buildSrcdoc(options.html, options.runtime);
+
+  const send = (message: HostMessage) => port?.postMessage(message);
+  const broadcast = () => {
+    send({ v: 0, type: "state", state });
+    options.onStateChange?.(state, selections);
+  };
+
+  const onWindowMessage = (event: MessageEvent) => {
+    // The frame's origin is "null", so the sender is identified by its window object.
+    if (event.source !== iframe.contentWindow || iframe.contentWindow === null) return;
+    const message = parseDashboardMessage(event.data);
+    if (message?.type !== "hello") return;
+    port?.close();
+    const channel = new MessageChannel();
+    port = channel.port1;
+    port.onmessage = (e: MessageEvent) => void handle(parseDashboardMessage(e.data));
+    iframe.contentWindow.postMessage({ v: PROTOCOL_VERSION, type: "connect" }, "*", [channel.port2]);
+    send({
+      v: 0,
+      type: "init",
+      dashboard: { id: manifest.id, title: manifest.title },
+      state,
+      theme,
+      filters,
+      parameters,
+    });
+  };
+
+  const fail = (id: string, code: ErrorCode, message: string) => send({ v: 0, type: "error", id, code, message });
+
+  async function handle(message: DashboardMessage | null): Promise<void> {
+    if (message === null) return;
+    switch (message.type) {
+      case "query": {
+        const query = manifest.queries[message.query];
+        if (!query) return fail(message.id, "not_found", `no query named "${message.query}"`);
+        try {
+          const response = await options.runQuery({ dashboard: manifest.id, query: message.query, state, selections });
+          const table = applyTableCalcs(response, query.tableCalcs ?? []);
+          send({ v: 0, type: "result", id: message.id, query: message.query, ...table, truncated: response.truncated });
+        } catch (error) {
+          const code = error instanceof HostQueryError ? error.code : "query_failed";
+          fail(message.id, code, error instanceof Error ? error.message : "query failed");
+        }
+        return;
+      }
+      case "domain": {
+        if (!filters[message.filter]) return fail(message.id, "not_found", `no filter named "${message.filter}"`);
+        try {
+          const response = await options.runDomain({ dashboard: manifest.id, filter: message.filter, state });
+          send({ v: 0, type: "result", id: message.id, query: message.filter, ...response });
+        } catch (error) {
+          const code = error instanceof HostQueryError ? error.code : "query_failed";
+          fail(message.id, code, error instanceof Error ? error.message : "domain query failed");
+        }
+        return;
+      }
+      case "setFilter": {
+        const spec = filters[message.filter];
+        if (!spec) return;
+        const others = Object.entries(state.filters).filter(([k]) => k !== message.filter);
+        const next: Record<string, FilterValue> = Object.fromEntries(others);
+        if (message.value !== null) {
+          if (!isFilterValue(message.value) || !kindAccepts(spec.kind, message.value)) return;
+          next[message.filter] = message.value;
+        }
+        state = { ...state, filters: next };
+        broadcast();
+        return;
+      }
+      case "setParameter": {
+        const spec = parameters[message.parameter];
+        if (!spec || !isScalar(message.value)) return;
+        const value = coerceParameter(spec, message.value);
+        if (value === undefined) return;
+        state = { ...state, parameters: { ...state.parameters, [message.parameter]: value } };
+        broadcast();
+        return;
+      }
+      case "select": {
+        const actions = (manifest.actions ?? []).filter((a) => inList(a.source, message.source));
+        if (!actions.length) return;
+        let changed = false;
+        for (const action of actions) {
+          if (action.type === "filter") {
+            const current = selections[message.source] ?? [];
+            const same =
+              current.length === message.tuples.length && current.every((t, i) => sameTuple(t, message.tuples[i] ?? {}));
+            if (same) continue;
+            selections = Object.fromEntries(Object.entries(selections).filter(([k]) => k !== message.source));
+            if (message.tuples.length) selections[message.source] = message.tuples;
+            changed = true;
+          } else if (action.type === "highlight") {
+            state = { ...state, highlight: message.tuples.length ? { source: message.source, tuples: message.tuples } : null };
+            changed = true;
+          }
+        }
+        if (changed) broadcast();
+        return;
+      }
+      case "resize":
+        iframe.style.height = `${Math.max(200, message.height)}px`;
+        return;
+      case "error":
+        options.onDashboardError?.(message.message);
+        return;
+      default:
+        return;
+    }
+  }
+
+  window.addEventListener("message", onWindowMessage);
+  options.container.append(iframe);
+
+  return {
+    iframe,
+    get state() {
+      return state;
+    },
+    setTheme(next: Theme) {
+      theme = next;
+      // The theme travels with init; a running frame picks it up on reload.
+      iframe.srcdoc = buildSrcdoc(options.html, options.runtime);
+    },
+    setState(partial: Partial<DashboardState>) {
+      state = { ...state, ...partial };
+      broadcast();
+    },
+    destroy() {
+      window.removeEventListener("message", onWindowMessage);
+      port?.close();
+      iframe.remove();
+    },
+  };
+}

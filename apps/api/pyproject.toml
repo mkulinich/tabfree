@@ -9,7 +9,17 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
   "pydantic-settings>=2.6",
+  "tabfree-compiler",
+  "tabfree-schemas",
 ]
+
+[project.optional-dependencies]
+# The local dashboard preview runs queries on DuckDB over generated sample data.
+preview = ["duckdb>=1.1"]
+
+[tool.uv.sources]
+tabfree-compiler = { workspace = true }
+tabfree-schemas = { workspace = true }
 
 [build-system]
 requires = ["hatchling>=1.27"]

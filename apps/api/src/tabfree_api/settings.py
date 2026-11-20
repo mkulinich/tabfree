@@ -9,3 +9,5 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TABFREE_", extra="ignore")
 
     environment: str = "dev"
+    #: Mount the local dashboard preview (/preview). Development only: it has no authentication.
+    preview: bool = False
