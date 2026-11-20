@@ -30,6 +30,18 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest
 
+  hyper:
+    # The Hyper API ships wheels for Linux x86-64 and Windows only, so extract conversion is tested here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-packages --extra hyper --locked
+      - run: uv run pytest packages/migrate/tests/test_hyper.py -rs
+
   node:
     runs-on: ubuntu-latest
     steps:

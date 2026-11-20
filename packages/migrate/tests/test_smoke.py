@@ -39,9 +39,7 @@ def test_report_explains_missing_permissions_and_metadata(connection: TableauCon
     assert "NOT available" in text
 
 
-def test_secret_never_appears_in_reports_or_repr(
-    connection: TableauConnection, secret: str
-) -> None:
+def test_secret_never_appears_in_reports_or_repr(connection: TableauConnection, secret: str) -> None:
     report = run_smoke(FakeReader(), connection, sample=3)
     assert secret not in format_report(report)
     assert secret not in json.dumps(report.to_dict())

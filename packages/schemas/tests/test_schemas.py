@@ -80,8 +80,7 @@ def test_manifest_requires_queries() -> None:
     doc = manifest()
     del doc["queries"]
     assert any(
-        "'queries' is a required property" in e
-        for e in schema_errors(SchemaKind.DASHBOARD_MANIFEST, doc)
+        "'queries' is a required property" in e for e in schema_errors(SchemaKind.DASHBOARD_MANIFEST, doc)
     )
 
 
@@ -168,15 +167,11 @@ def test_example_manifest_references_are_consistent() -> None:
             "unknown parameter 'nope'",
         ),
         (
-            lambda d: d["queries"]["top_customers"]["where"][0]["topN"].update(
-                n={"param": "absent"}
-            ),
+            lambda d: d["queries"]["top_customers"]["where"][0]["topN"].update(n={"param": "absent"}),
             "unknown parameter 'absent'",
         ),
         (
-            lambda d: d["queries"]["by_region"]["measures"].append(
-                {"field": "Sales", "agg": "avg"}
-            ),
+            lambda d: d["queries"]["by_region"]["measures"].append({"field": "Sales", "agg": "avg"}),
             "duplicate output name 'Sales'",
         ),
     ],

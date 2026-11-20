@@ -12,6 +12,10 @@ dependencies = [
   "tabfree-schemas",
 ]
 
+[project.optional-dependencies]
+# Tableau Hyper API (Apache-2.0) ships a native engine (~100 MB); only extract conversion needs it.
+hyper = ["tableauhyperapi>=0.0.21000", "pyarrow>=17"]
+
 [project.scripts]
 tabfree-migrate = "tabfree_migrate.cli:app"
 

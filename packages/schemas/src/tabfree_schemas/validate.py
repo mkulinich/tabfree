@@ -54,9 +54,7 @@ def load_schema(kind: SchemaKind) -> dict[str, Any]:
 
 @cache
 def _validator(kind: SchemaKind) -> Draft202012Validator:
-    return Draft202012Validator(
-        load_schema(kind), format_checker=Draft202012Validator.FORMAT_CHECKER
-    )
+    return Draft202012Validator(load_schema(kind), format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
 def _location(error: ValidationError) -> str:
@@ -168,9 +166,7 @@ def check_manifest_references(manifest: Mapping[str, Any]) -> list[str]:
     def check_model(where: str, alias: str | None) -> None:
         if alias is None:
             if len(models) > 1:
-                errors.append(
-                    f'{where}: "model" is required when the dashboard uses several models'
-                )
+                errors.append(f'{where}: "model" is required when the dashboard uses several models')
         elif alias not in models:
             errors.append(f"{where}: unknown model alias {alias!r}")
 

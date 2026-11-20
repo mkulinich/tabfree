@@ -7,7 +7,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
@@ -70,16 +70,135 @@ def smoke(
 
 @app.command("corpus-check")
 def corpus_check(
-    root: Annotated[
-        Path, typer.Option(help="Repository root that contains corpus/manifest.json.")
-    ] = Path("."),
+    root: Annotated[Path, typer.Option(help="Repository root that contains corpus/manifest.json.")] = Path(
+        "."
+    ),
 ) -> None:
     """Verify corpus files against corpus/manifest.json: presence, hashes and XML structure."""
     report = verify_corpus(root)
     for problem in report.problems:
         typer.echo(f"FAIL {problem}")
-    typer.echo(
-        f"{report.checked} checked, {report.skipped} external, {len(report.problems)} problems"
-    )
+    typer.echo(f"{report.checked} checked, {report.skipped} external, {len(report.problems)} problems")
     if report.problems:
         raise typer.Exit(code=1)
+
+
+def _connection_or_exit() -> TableauConnection:
+    try:
+        return TableauConnection.from_env(os.environ)
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+
+@app.command()
+def crawl(
+    db: Annotated[Path, typer.Option(help="SQLite inventory file (created if missing).")] = Path(
+        "inventory.db"
+    ),
+    types: Annotated[
+        list[str] | None, typer.Option("--type", help="Object types to crawl (default: all).")
+    ] = None,
+) -> None:
+    """Inventory a Tableau site into SQLite: users, groups, projects, content, permissions, tasks."""
+    from tabfree_migrate.inventory import OBJECT_TYPES, InventoryStore
+    from tabfree_migrate.inventory import crawl as run_crawl
+    from tabfree_migrate.inventory_tsc import TscInventorySource
+
+    connection = _connection_or_exit()
+    store = InventoryStore(db)
+    try:
+        with TscReader(connection) as reader:
+            stats = run_crawl(TscInventorySource(connection, reader), store, types or OBJECT_TYPES)
+    except (TableauAccessError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    finally:
+        store.close()
+    for object_type, count in stats.counts.items():
+        note = f"  ERROR {stats.errors[object_type]}" if object_type in stats.errors else ""
+        typer.echo(f"{object_type:<14} {count}{note}")
+    typer.echo(f"added {stats.added}, updated {stats.updated}, unchanged {stats.unchanged}")
+
+
+@app.command()
+def parse(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx/.tds/.tdsx files")],
+    out: Annotated[Path, typer.Option(help="Directory for <name>.ir.json files.")] = Path("ir"),
+) -> None:
+    """Parse Tableau files into the TabFree IR and validate each one against its schema."""
+    from tabfree_migrate.twb import TableauFileError, parse_file
+    from tabfree_schemas import SchemaKind, schema_errors
+
+    out.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for path in paths:
+        try:
+            ir = parse_file(path)
+        except TableauFileError as exc:
+            failed += 1
+            typer.echo(f"FAIL {path}: {exc}")
+            continue
+        errors = schema_errors(SchemaKind.TABLEAU_IR, ir)
+        target = out / f"{path.stem}.ir.json"
+        target.write_text(json.dumps(ir, indent=2), encoding="utf-8")
+        if errors:
+            failed += 1
+            typer.echo(f"FAIL {path}: {errors[0]}")
+        else:
+            typer.echo(f"ok   {path} -> {target}")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def census(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx/.tds/.tdsx files")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+) -> None:
+    """Count constructs and score migration complexity per workbook and for the whole set."""
+    from tabfree_migrate.census import census_of, estate_census
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    per_file: dict[str, dict[str, object]] = {}
+    irs = []
+    for path in paths:
+        try:
+            ir = parse_file(path)
+        except TableauFileError as exc:
+            typer.echo(f"skip {path}: {exc}", err=True)
+            continue
+        irs.append(ir)
+        per_file[str(path)] = census_of(ir).to_dict()
+    total = estate_census(irs).to_dict()
+    if as_json:
+        typer.echo(json.dumps({"files": per_file, "estate": total}, indent=2))
+        return
+    ranked = sorted(per_file.items(), key=lambda kv: float(str(kv[1]["score"])), reverse=True)
+    for name, info in ranked:
+        typer.echo(f"{info['score']:>8}  {name}")
+    typer.echo("\nEstate totals:")
+    totals = cast("dict[str, int]", total["totals"])
+    for key, value in sorted(totals.items()):
+        typer.echo(f"  {key:<20} {value}")
+
+
+@app.command("convert-hyper")
+def convert_hyper_command(
+    path: Annotated[Path, typer.Argument(help=".hyper extract")],
+    out: Annotated[Path, typer.Option(help="Output directory for Parquet files.")] = Path("parquet"),
+) -> None:
+    """Export every table of a .hyper extract to Parquet with parity statistics (needs [hyper])."""
+    try:
+        from tabfree_migrate.hyper import convert_hyper, write_report
+    except ImportError as exc:  # pragma: no cover - depends on the platform
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    try:
+        results = convert_hyper(path, out)
+    except ImportError:
+        typer.echo("error: install tabfree-migrate[hyper] (Linux x86-64 or Windows)", err=True)
+        raise typer.Exit(code=2) from None
+    write_report(results, out / "conversion.json")
+    for result in results:
+        typer.echo(f"{result.glue_table:<30} {result.rows:>10} rows -> {result.parquet}")
