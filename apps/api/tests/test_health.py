@@ -9,7 +9,7 @@ from tabfree_api.settings import Settings
 
 
 def client() -> TestClient:
-    return TestClient(create_app(Settings(environment="test")))
+    return TestClient(create_app(Settings(environment="test", session_db=":memory:")))
 
 
 def test_healthz() -> None:

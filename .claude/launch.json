@@ -6,10 +6,12 @@
       "runtimeExecutable": "env",
       "runtimeArgs": [
         "TABFREE_PREVIEW=1",
+        "TABFREE_DEV_LOGIN=1",
         "uv",
         "run",
         "uvicorn",
-        "tabfree_api.main:app",
+        "tabfree_api.main:app_factory",
+        "--factory",
         "--host",
         "127.0.0.1",
         "--port",

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tabfree_api.main import create_app
-from tabfree_api.preview import MANAGERS, sample_rows
+from tabfree_api.sample import MANAGERS, sample_rows
 from tabfree_api.settings import Settings
 
 pytest.importorskip("duckdb")
@@ -15,8 +16,9 @@ STATE: dict[str, Any] = {"filters": {}, "parameters": {}, "highlight": None}
 
 
 @pytest.fixture(scope="module")
-def client() -> TestClient:
-    return TestClient(create_app(Settings(environment="test", preview=True)))
+def client(tmp_path_factory: pytest.TempPathFactory) -> TestClient:
+    db = tmp_path_factory.mktemp("sessions") / "s.db"
+    return TestClient(create_app(Settings(environment="test", preview=True, session_db=db)))
 
 
 def query(client: TestClient, user: str, name: str, **extra: Any) -> Any:
@@ -24,10 +26,11 @@ def query(client: TestClient, user: str, name: str, **extra: Any) -> Any:
     return client.post("/preview/api/query", json=body)
 
 
-def test_preview_is_off_by_default_and_refused_outside_dev() -> None:
-    assert TestClient(create_app(Settings(environment="test"))).get("/preview").status_code == 404
+def test_preview_is_off_by_default_and_refused_outside_dev(tmp_path: Path) -> None:
+    app = create_app(Settings(environment="test", session_db=tmp_path / "s.db"))
+    assert TestClient(app).get("/preview").status_code == 404
     with pytest.raises(RuntimeError, match="no authentication"):
-        create_app(Settings(environment="production", preview=True))
+        create_app(Settings(environment="production", preview=True, engine="aws"))
 
 
 def test_page_and_bundle(client: TestClient) -> None:

@@ -11,11 +11,15 @@ dependencies = [
   "pydantic-settings>=2.6",
   "tabfree-compiler",
   "tabfree-schemas",
+  "pyjwt[crypto]>=2.9",
 ]
 
 [project.optional-dependencies]
 # The local dashboard preview runs queries on DuckDB over generated sample data.
 preview = ["duckdb>=1.1"]
+aws = [
+    "boto3>=1.35",
+]
 
 [tool.uv.sources]
 tabfree-compiler = { workspace = true }

@@ -19,7 +19,7 @@ dev = [
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-extend-exclude = ["corpus", "third_party", "infra", "node_modules", "docs"]
+extend-exclude = ["corpus", "third_party", "infra", "node_modules", "docs", ".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "C4", "PT", "N"]
@@ -40,7 +40,7 @@ warn_unreachable = true
 files = ["packages/schemas/src", "packages/compiler/src", "packages/migrate/src", "apps/api/src"]
 
 [[tool.mypy.overrides]]
-module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*"]
+module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

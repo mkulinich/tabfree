@@ -1,0 +1,32 @@
+# Development site: who can see what. Phase 3 moves this into Postgres (P3.1).
+# Paths are relative to this file.
+dashboards: ../../../packages/schemas/examples/dashboards
+models: ../../../packages/schemas/examples/models
+defaultSiteRole: viewer
+
+projects:
+  - id: sales
+    name: Sales
+    # Locked: dashboards use the project's rules (Tableau's "locked to the project").
+    locked: true
+    permissions:
+      - group: Executives
+        capabilities: { view: allow, download_summary_data: allow }
+      - group: Managers
+        capabilities: { view: allow }
+      - group: Contractors
+        capabilities: { view: deny }
+    dashboards:
+      - id: sales-overview
+        owner: admin
+
+# Site roles and groups for the dev login. With OIDC, groups come from the ID token's groups claim.
+users:
+  - { username: admin, fullname: Site Admin, siteRole: site_administrator }
+  - { username: erin, fullname: Erin (executive), siteRole: explorer, groups: [Executives] }
+  - { username: alice, fullname: Alice (East manager), siteRole: viewer, groups: [Managers] }
+  - { username: bob, fullname: Bob (West manager), siteRole: viewer, groups: [Managers] }
+  - { username: carol, fullname: Carol (Central manager), siteRole: viewer, groups: [Managers] }
+  - { username: dave, fullname: Dave (South manager), siteRole: viewer, groups: [Managers] }
+  - { username: mallory, fullname: Mallory (contractor), siteRole: viewer, groups: [Managers, Contractors] }
+  - { username: ivan, fullname: Ivan (no groups), siteRole: viewer }
