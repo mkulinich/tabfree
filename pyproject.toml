@@ -1,7 +1,7 @@
 # Workspace root (virtual: not itself a package). Each member has its own pyproject.toml.
 
 [tool.uv.workspace]
-members = ["packages/schemas", "packages/migrate", "apps/api"]
+members = ["packages/schemas", "packages/compiler", "packages/migrate", "apps/api"]
 
 [dependency-groups]
 dev = [
@@ -13,6 +13,7 @@ dev = [
   "types-PyYAML>=6.0",
   "types-defusedxml>=0.7",
   "types-jsonschema>=4.23",
+  "duckdb>=2.0.0",
 ]
 
 [tool.ruff]
@@ -24,7 +25,7 @@ extend-exclude = ["corpus", "third_party", "infra", "node_modules", "docs"]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "C4", "PT", "N"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tabfree_api", "tabfree_migrate", "tabfree_schemas"]
+known-first-party = ["tabfree_api", "tabfree_compiler", "tabfree_migrate", "tabfree_schemas"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may assert and use obviously fake credentials.
@@ -36,13 +37,13 @@ known-first-party = ["tabfree_api", "tabfree_migrate", "tabfree_schemas"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["packages/schemas/src", "packages/migrate/src", "apps/api/src"]
+files = ["packages/schemas/src", "packages/compiler/src", "packages/migrate/src", "apps/api/src"]
 
 [[tool.mypy.overrides]]
 module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["packages/schemas/tests", "packages/migrate/tests", "apps/api/tests"]
+testpaths = ["packages/schemas/tests", "packages/compiler/tests", "packages/migrate/tests", "apps/api/tests"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = ["integration: needs a real Tableau Server or AWS account; skipped unless enabled"]

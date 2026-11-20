@@ -1,0 +1,29 @@
+[project]
+name = "tabfree-compiler"
+version = "0.0.1"
+description = "TabFree compiler: Tableau calculation language and semantic queries to Athena, Redshift and Trino SQL."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "defusedxml>=0.7",
+  "sqlglot>=30",
+  "tabfree-schemas",
+]
+
+[project.optional-dependencies]
+# The TDVT conformance runner executes compiled SQL on DuckDB.
+tdvt = ["duckdb>=1.1"]
+
+[project.scripts]
+tabfree-compile = "tabfree_compiler.cli:main"
+
+[tool.uv.sources]
+tabfree-schemas = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tabfree_compiler"]

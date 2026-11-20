@@ -20,12 +20,15 @@ uv run pytest packages/schemas -q            # one Python package
 npm test -w @tabfree/runtime                 # one TS package
 uv run tabfree-validate path/to/tabfree.json # validate a manifest, model or IR file
 uv run tabfree-migrate smoke                 # read-only Tableau Server check (needs TABLEAU_* env vars)
+uv run tabfree-compile tdvt                  # Tableau's TDVT calc tests through the compiler, on DuckDB
+uv run tabfree-compile query MODEL MANIFEST QUERY --dialect athena --user alice  # print compiled SQL
 ```
 
 ## Layout
 
 - `apps/api`: FastAPI service (`tabfree_api`).
 - `packages/schemas`: the JSON Schemas (`src/tabfree_schemas/json/*.schema.json`), plus validators and the `tabfree-validate` CLI. These are the contracts between components.
+- `packages/compiler`: `tabfree_compiler`, the Tableau-semantics compiler: calc parser, semantic queries → Athena/Redshift/Trino SQL with LODs, filters and RLS, and the TDVT runner (`tabfree-compile`).
 - `packages/migrate`: `tabfree-migrate` CLI (`tabfree_migrate`), covering the Tableau Server crawler and converters.
 - `packages/runtime`: `@tabfree/runtime` in TypeScript. The dashboard sandbox protocol now; the SDK and `<tf-*>` components arrive in Phase 1.
 - `infra/docker`, `infra/terraform`: local stack and AWS sandbox.

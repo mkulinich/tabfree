@@ -39,6 +39,7 @@ File names use four digits (`0001-…`); BUILD_PLAN.md and other documents cite 
 | [ADR-009](0009-aws-infrastructure-ecs-fargate.md) | AWS infrastructure on ECS Fargate and managed services, deployed with OpenTofu/Terraform | Accepted | — |
 | [ADR-010](0010-apache-2-license.md) | License the project under Apache-2.0 | Accepted | — (public name: P0.7) |
 | [ADR-011](0011-tableau-formula-syntax-as-calc-language.md) | Tableau's formula syntax is TabFree's calculation language | Accepted | — |
+| [ADR-012](0012-hand-written-calc-parser.md) | Parse Tableau calculations with a hand-written parser, checked against the official grammar | Proposed | — (amends ADR-003 item 1) |
 
 ## Adding an ADR
 
