@@ -1,0 +1,12 @@
+TabFree (working name)
+Copyright 2026 The TabFree Authors
+
+This product includes software developed by The TabFree Authors.
+
+Third-party files vendored into this repository, and the test corpus, keep
+their original licenses. See third_party/README.md and corpus/README.md for
+each component, its source and its license.
+
+Tableau is a trademark of Salesforce, Inc. This project is not affiliated
+with, sponsored by, or endorsed by Salesforce, Inc. or Tableau Software, LLC.
+References to Tableau describe compatibility only.

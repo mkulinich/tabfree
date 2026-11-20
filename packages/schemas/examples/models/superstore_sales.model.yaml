@@ -1,0 +1,123 @@
+# Example semantic model: what a migrated "Sample - Superstore" data source looks like.
+# Validate with: uv run tabfree-validate packages/schemas/examples/models/superstore_sales.model.yaml
+schema: tabfree/model@0
+id: superstore_sales
+title: Superstore Sales
+description: Orders and regional managers, converted from Tableau's "Sample - Superstore" data source.
+
+connection:
+  engine: athena
+  database: tabfree_lake
+  workgroup: tabfree-sandbox
+
+settings:
+  weekStart: sunday
+  fiscalYearStartMonth: 1
+
+tables:
+  - id: orders
+    source: { table: orders }
+    primaryKey: [row_id]
+    columns:
+      - { name: row_id, type: integer }
+      - { name: order_id, type: string }
+      - { name: order_date, type: date }
+      - { name: ship_mode, type: string }
+      - { name: customer_name, type: string }
+      - { name: segment, type: string }
+      - { name: region, type: string }
+      - { name: state, type: string }
+      - { name: category, type: string }
+      - { name: sub_category, type: string }
+      - { name: sales, type: float }
+      - { name: quantity, type: integer }
+      - { name: discount, type: float }
+      - { name: profit, type: float }
+  - id: people
+    source: { table: people }
+    primaryKey: [region]
+    columns:
+      - { name: region, type: string }
+      - { name: regional_manager, type: string }
+
+relationships:
+  - left: orders
+    right: people
+    on: [{ left: region, right: region }]
+    cardinality: many_to_one
+
+fields:
+  - { id: order_date, name: Order Date, role: dimension, type: date, table: orders, column: order_date }
+  - { id: ship_mode, name: Ship Mode, role: dimension, type: string, table: orders, column: ship_mode }
+  - { id: customer_name, name: Customer Name, role: dimension, type: string, table: orders, column: customer_name }
+  - { id: segment, name: Segment, role: dimension, type: string, table: orders, column: segment }
+  - { id: region, name: Region, role: dimension, type: string, table: orders, column: region, folder: Location }
+  - id: state
+    name: State
+    role: dimension
+    type: string
+    table: orders
+    column: state
+    folder: Location
+    semanticRole: state_province
+  - { id: category, name: Category, role: dimension, type: string, table: orders, column: category, folder: Product }
+  - { id: sub_category, name: Sub-Category, role: dimension, type: string, table: orders, column: sub_category, folder: Product }
+  - { id: regional_manager, name: Regional Manager, role: dimension, type: string, table: people, column: regional_manager }
+  - { id: sales, name: Sales, role: measure, type: float, table: orders, column: sales, defaultAggregation: sum, format: "$#,##0" }
+  - { id: profit, name: Profit, role: measure, type: float, table: orders, column: profit, defaultAggregation: sum, format: "$#,##0" }
+  - { id: quantity, name: Quantity, role: measure, type: integer, table: orders, column: quantity, defaultAggregation: sum }
+  - { id: discount, name: Discount, role: measure, type: float, table: orders, column: discount, defaultAggregation: avg, format: "0%" }
+  - id: profit_ratio
+    name: Profit Ratio
+    role: measure
+    type: float
+    formula: SUM([Profit]) / SUM([Sales])
+    format: "0.0%"
+  - id: customer_lifetime_sales
+    name: Customer Lifetime Sales
+    description: Level-of-detail expression, computed per customer regardless of the view.
+    role: measure
+    type: float
+    formula: "{FIXED [Customer Name] : SUM([Sales])}"
+    defaultAggregation: avg
+    format: "$#,##0"
+
+parameters:
+  - id: top_n
+    name: Top N
+    type: integer
+    default: 10
+    allowed: { range: { min: 1, max: 50, step: 1 } }
+
+hierarchies:
+  - { name: Product, levels: [Category, Sub-Category] }
+  - { name: Location, levels: [Region, State] }
+
+groups:
+  - id: coasts
+    name: Coasts
+    field: Region
+    groups: { Coasts: [East, West] }
+    otherLabel: Inland
+
+sets:
+  - id: top_customers
+    name: Top Customers
+    field: Customer Name
+    top: { n: { param: top_n }, by: "SUM([Sales])" }
+
+bins:
+  - { id: sales_bin, name: Sales (bin), field: Sales, size: 100 }
+
+rls:
+  - id: regional_managers
+    description: Regional managers see only their own region; the Executives group sees everything.
+    filter: "[Regional Manager] = USERNAME()"
+    exempt: { groups: [Executives] }
+
+source:
+  system: tableau
+  datasource: Sample - Superstore
+  published: true
+  connectionClass: excel-direct
+  extract: { converted: true, refresh: full }

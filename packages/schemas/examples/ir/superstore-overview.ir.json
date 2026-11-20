@@ -1,0 +1,137 @@
+{
+  "schema": "tabfree/tableau-ir@0",
+  "kind": "workbook",
+  "source": {
+    "file": "Superstore.twbx",
+    "sha256": "5f1c0b2a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
+    "packaged": true,
+    "sourceBuild": "2025.2.0 (20252.25.0612.0937)",
+    "version": "18.1",
+    "parser": "tabfree-migrate 0.0.1",
+    "parsedAt": "2026-11-20T12:00:00Z"
+  },
+  "datasources": [
+    {
+      "name": "federated.0a1b2c3",
+      "caption": "Sample - Superstore",
+      "kind": "embedded",
+      "connection": { "class": "federated" },
+      "namedConnections": [
+        { "name": "excel-direct.1", "class": "excel-direct", "filename": "Data/Superstore/Sample - Superstore.xls" }
+      ],
+      "relation": { "type": "table", "name": "Orders", "connection": "excel-direct.1", "table": "[Orders$]" },
+      "columns": [
+        { "name": "[Region]", "datatype": "string", "role": "dimension", "type": "nominal" },
+        { "name": "[Sales]", "datatype": "real", "role": "measure", "type": "quantitative", "aggregation": "Sum" },
+        { "name": "[Profit]", "datatype": "real", "role": "measure", "type": "quantitative", "aggregation": "Sum" },
+        {
+          "name": "[Calculation_1]",
+          "caption": "Profit Ratio",
+          "datatype": "real",
+          "role": "measure",
+          "type": "quantitative",
+          "calculation": { "class": "tableau", "formula": "SUM([Profit])/SUM([Sales])" }
+        }
+      ],
+      "extract": { "enabled": true, "file": "Data/Extracts/federated_0a1b2c3.hyper" }
+    }
+  ],
+  "parameters": [],
+  "worksheets": [
+    {
+      "name": "Sales by Region",
+      "datasources": ["federated.0a1b2c3"],
+      "fieldInstances": [
+        {
+          "ref": "[federated.0a1b2c3].[none:Region:nk]",
+          "datasource": "federated.0a1b2c3",
+          "field": "[Region]",
+          "derivation": "none",
+          "kind": "nk"
+        },
+        {
+          "ref": "[federated.0a1b2c3].[sum:Sales:qk]",
+          "datasource": "federated.0a1b2c3",
+          "field": "[Sales]",
+          "derivation": "sum",
+          "kind": "qk"
+        },
+        {
+          "ref": "[federated.0a1b2c3].[usr:Calculation_1:qk]",
+          "datasource": "federated.0a1b2c3",
+          "field": "[Calculation_1]",
+          "derivation": "usr",
+          "kind": "qk"
+        }
+      ],
+      "rows": {
+        "expr": "[federated.0a1b2c3].[none:Region:nk]",
+        "instances": ["[federated.0a1b2c3].[none:Region:nk]"]
+      },
+      "cols": {
+        "expr": "[federated.0a1b2c3].[sum:Sales:qk]",
+        "instances": ["[federated.0a1b2c3].[sum:Sales:qk]"]
+      },
+      "panes": [
+        {
+          "markClass": "Bar",
+          "encodings": { "color": ["[federated.0a1b2c3].[usr:Calculation_1:qk]"] }
+        }
+      ],
+      "filters": []
+    }
+  ],
+  "dashboards": [
+    {
+      "name": "Overview",
+      "size": { "mode": "fixed", "width": 1200, "height": 800 },
+      "zones": [
+        {
+          "id": "3",
+          "type": "layout-basic",
+          "x": 0,
+          "y": 0,
+          "w": 100000,
+          "h": 100000,
+          "children": [
+            {
+              "id": "4",
+              "type": "layout-flow",
+              "x": 0,
+              "y": 0,
+              "w": 100000,
+              "h": 100000,
+              "layout": { "direction": "vert" },
+              "children": [
+                { "id": "5", "type": "viz", "worksheet": "Sales by Region", "x": 0, "y": 0, "w": 100000, "h": 90000 },
+                {
+                  "id": "6",
+                  "type": "filter",
+                  "worksheet": "Sales by Region",
+                  "field": "[federated.0a1b2c3].[none:Region:nk]",
+                  "mode": "checkdropdown",
+                  "x": 0,
+                  "y": 90000,
+                  "w": 100000,
+                  "h": 10000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "name": "Filter 1",
+      "type": "filter",
+      "trigger": "select",
+      "source": { "dashboard": "Overview", "worksheets": ["Sales by Region"] },
+      "target": { "dashboard": "Overview" },
+      "command": "tsc:tsl-filter"
+    }
+  ],
+  "stories": [],
+  "notes": [{ "level": "info", "message": "Hand-written example of the IR shape; not produced by the parser yet." }]
+}

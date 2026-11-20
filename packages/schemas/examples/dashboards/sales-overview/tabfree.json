@@ -1,0 +1,86 @@
+{
+  "schema": "tabfree/dashboard@0",
+  "id": "sales-overview",
+  "title": "Sales Overview",
+  "description": "Example dashboard: KPIs, sales by region, a monthly trend with a running total, and top customers.",
+  "models": { "sales": "superstore_sales" },
+  "parameters": {
+    "top_n": {
+      "label": "Top N customers",
+      "type": "integer",
+      "default": 10,
+      "allowed": { "range": { "min": 1, "max": 50, "step": 1 } }
+    }
+  },
+  "filters": {
+    "region": {
+      "label": "Region",
+      "field": "Region",
+      "kind": "categorical",
+      "multi": true,
+      "appliesTo": "all"
+    },
+    "order_date": {
+      "label": "Order date",
+      "field": "Order Date",
+      "kind": "relative_date",
+      "context": true,
+      "appliesTo": "all",
+      "default": { "relative": { "period": "month", "from": -11, "to": 0 } }
+    }
+  },
+  "queries": {
+    "kpis": {
+      "measures": ["Sales", "Profit", "Profit Ratio"]
+    },
+    "by_region": {
+      "dimensions": ["Region"],
+      "measures": ["Sales", "Profit Ratio"],
+      "sort": [{ "by": "Sales", "dir": "desc" }]
+    },
+    "trend": {
+      "dimensions": [{ "field": "Order Date", "dateTrunc": "month", "as": "Month" }],
+      "measures": ["Sales"],
+      "tableCalcs": [
+        {
+          "name": "Running Sales",
+          "type": "running_sum",
+          "of": "Sales",
+          "computeUsing": "specific",
+          "addressing": ["Month"]
+        }
+      ],
+      "sort": [{ "by": "Month", "dir": "asc" }]
+    },
+    "top_customers": {
+      "dimensions": ["Customer Name"],
+      "measures": ["Sales"],
+      "where": [
+        {
+          "field": "Customer Name",
+          "kind": "top_n",
+          "topN": { "n": { "param": "top_n" }, "by": "SUM([Sales])" }
+        }
+      ],
+      "sort": [{ "by": "Sales", "dir": "desc" }]
+    }
+  },
+  "actions": [
+    {
+      "type": "filter",
+      "name": "Filter by region",
+      "source": ["by_region"],
+      "targets": ["trend", "top_customers"],
+      "fields": ["Region"],
+      "clear": "show_all"
+    },
+    {
+      "type": "highlight",
+      "source": ["top_customers"],
+      "targets": ["top_customers"],
+      "fields": ["Customer Name"],
+      "trigger": "hover"
+    }
+  ],
+  "source": { "system": "tableau", "workbook": "Superstore", "dashboard": "Overview" }
+}

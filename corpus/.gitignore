@@ -1,0 +1,3 @@
+# Customer and other private workbooks, extracts and captures: keep them local, never commit.
+# (The repository root .gitignore also lists corpus/private/; this is a second safeguard.)
+private/

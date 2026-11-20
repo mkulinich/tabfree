@@ -1,0 +1,604 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tabfree:schema:dashboard-manifest:0",
+  "title": "TabFree dashboard manifest (tabfree.json)",
+  "description": "The governed data contract of a dashboard bundle (ADR-0002). The bundle's HTML may obtain data only by running the named queries declared here. The server validates this file, compiles each query against its semantic model with the viewer's permissions and row-level security, and executes it. Expressions use Tableau's calculation syntax (ADR-0011) and are never SQL.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "title", "models", "queries"],
+  "properties": {
+    "schema": { "const": "tabfree/dashboard@0" },
+    "id": { "$ref": "#/$defs/slug" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "description": { "type": "string", "maxLength": 4000 },
+    "entry": {
+      "description": "The bundle's HTML entry point.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\\.html$",
+      "default": "index.html"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 },
+      "uniqueItems": true
+    },
+    "models": {
+      "description": "Semantic models the dashboard uses, keyed by a local alias that queries and filters refer to.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/modelId" }
+    },
+    "parameters": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/parameter" }
+    },
+    "filters": {
+      "description": "Filters the viewer can change (rendered by <tf-filter> or custom code). Each one applies to the queries it lists.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/filter" }
+    },
+    "queries": {
+      "description": "Named semantic queries: the only way the dashboard can obtain data.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/query" }
+    },
+    "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+    "source": { "$ref": "#/$defs/source" }
+  },
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$" },
+    "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$" },
+    "modelId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,99}$" },
+    "fieldName": {
+      "description": "A field name (caption) from the semantic model, e.g. \"Order Date\".",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "expression": {
+      "description": "Tableau calculation syntax, e.g. \"SUM([Profit]) / SUM([Sales])\". Compiled by the TabFree compiler; never SQL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "alias": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "format": {
+      "description": "Display format. Tableau format strings such as \"#,##0.00\" or \"0.0%\" are accepted.",
+      "type": "string",
+      "maxLength": 128
+    },
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "aggregation": {
+      "enum": ["sum", "avg", "min", "max", "count", "countd", "median", "attr", "stdev", "stdevp", "var", "varp"]
+    },
+    "datePart": {
+      "description": "Discrete date part, as Tableau's blue date pills (e.g. MONTH = 1..12).",
+      "enum": ["year", "quarter", "month", "week", "weekday", "day", "hour", "minute", "second", "iso_year", "iso_quarter", "iso_week", "iso_weekday"]
+    },
+    "dateTrunc": {
+      "description": "Continuous truncated date, as Tableau's green date pills (e.g. month and year).",
+      "enum": ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "iso_year", "iso_quarter", "iso_week"]
+    },
+    "period": { "enum": ["minute", "hour", "day", "week", "month", "quarter", "year"] },
+    "paramRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["param"],
+      "properties": { "param": { "$ref": "#/$defs/name" } }
+    },
+    "dimension": {
+      "description": "A grouping column. The output name is \"as\" if given, otherwise the field name.",
+      "oneOf": [
+        { "$ref": "#/$defs/fieldName" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field"],
+          "properties": {
+            "field": { "$ref": "#/$defs/fieldName" },
+            "as": { "$ref": "#/$defs/alias" },
+            "datePart": { "$ref": "#/$defs/datePart" },
+            "dateTrunc": { "$ref": "#/$defs/dateTrunc" }
+          },
+          "not": { "required": ["datePart", "dateTrunc"] }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expr", "as"],
+          "properties": {
+            "expr": { "$ref": "#/$defs/expression" },
+            "as": { "$ref": "#/$defs/alias" }
+          }
+        }
+      ]
+    },
+    "measure": {
+      "description": "An aggregated value. A plain field name uses the field's default aggregation (or is a calculated measure). The output name is \"as\" if given, otherwise the field name.",
+      "oneOf": [
+        { "$ref": "#/$defs/fieldName" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "agg"],
+          "properties": {
+            "field": { "$ref": "#/$defs/fieldName" },
+            "agg": { "$ref": "#/$defs/aggregation" },
+            "as": { "$ref": "#/$defs/alias" },
+            "format": { "$ref": "#/$defs/format" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expr", "as"],
+          "properties": {
+            "expr": { "$ref": "#/$defs/expression" },
+            "as": { "$ref": "#/$defs/alias" },
+            "format": { "$ref": "#/$defs/format" }
+          }
+        }
+      ]
+    },
+    "sort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by"],
+      "properties": {
+        "by": {
+          "description": "An output name (dimension, measure or table calculation) of the same query.",
+          "type": "string",
+          "minLength": 1
+        },
+        "dir": { "enum": ["asc", "desc"], "default": "asc" },
+        "order": {
+          "description": "Manual sort: members in display order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/scalar" }
+        }
+      }
+    },
+    "relativeDate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["period"],
+      "properties": {
+        "period": { "$ref": "#/$defs/period" },
+        "from": {
+          "description": "Offset of the first period from the anchor, e.g. -11 with to = 0 for the last 12 months.",
+          "type": "integer",
+          "default": 0
+        },
+        "to": { "type": "integer", "default": 0 },
+        "anchor": { "description": "Anchor date; defaults to today.", "type": "string", "format": "date" }
+      }
+    },
+    "wildcard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match", "value"],
+      "properties": {
+        "match": { "enum": ["contains", "starts_with", "ends_with", "exact"] },
+        "value": { "type": "string" },
+        "caseSensitive": { "type": "boolean", "default": false }
+      }
+    },
+    "topN": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "by"],
+      "properties": {
+        "n": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/paramRef" }] },
+        "by": { "$ref": "#/$defs/expression" },
+        "direction": { "enum": ["top", "bottom"], "default": "top" }
+      }
+    },
+    "queryFilter": {
+      "description": "A fixed filter that is part of a query (a Tableau worksheet filter not exposed to viewers).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "field": { "$ref": "#/$defs/fieldName" },
+        "expr": { "$ref": "#/$defs/expression" },
+        "kind": { "enum": ["categorical", "range", "relative_date", "wildcard", "condition", "top_n"] },
+        "members": { "type": "array", "items": { "$ref": "#/$defs/scalar" } },
+        "exclude": { "type": "boolean", "default": false },
+        "min": { "$ref": "#/$defs/scalar" },
+        "max": { "$ref": "#/$defs/scalar" },
+        "includeNulls": { "type": "boolean" },
+        "relative": { "$ref": "#/$defs/relativeDate" },
+        "wildcard": { "$ref": "#/$defs/wildcard" },
+        "condition": { "$ref": "#/$defs/expression" },
+        "topN": { "$ref": "#/$defs/topN" },
+        "context": {
+          "description": "Context filter: applied before FIXED level-of-detail expressions and Top N, as in Tableau's order of operations.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "oneOf": [{ "required": ["field"] }, { "required": ["expr"] }],
+      "allOf": [
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "categorical" } } },
+          "then": { "required": ["members"] }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "range" } } },
+          "then": { "anyOf": [{ "required": ["min"] }, { "required": ["max"] }] }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "relative_date" } } },
+          "then": { "required": ["relative"] }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "wildcard" } } },
+          "then": { "required": ["wildcard"] }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "condition" } } },
+          "then": { "required": ["condition"] }
+        },
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "top_n" } } },
+          "then": { "required": ["topN"] }
+        }
+      ]
+    },
+    "filterValue": {
+      "description": "A filter's current or default value. An absent value means no restriction.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["members"],
+          "properties": { "members": { "type": "array", "items": { "$ref": "#/$defs/scalar" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": { "min": { "$ref": "#/$defs/scalar" }, "max": { "$ref": "#/$defs/scalar" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relative"],
+          "properties": { "relative": { "$ref": "#/$defs/relativeDate" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wildcard"],
+          "properties": { "wildcard": { "$ref": "#/$defs/wildcard" } }
+        }
+      ]
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "appliesTo"],
+      "properties": {
+        "label": { "type": "string", "maxLength": 200 },
+        "model": {
+          "description": "Model alias; required when the dashboard uses more than one model.",
+          "$ref": "#/$defs/name"
+        },
+        "field": { "$ref": "#/$defs/fieldName" },
+        "expr": { "$ref": "#/$defs/expression" },
+        "kind": { "enum": ["categorical", "range", "relative_date", "wildcard"] },
+        "appliesTo": {
+          "description": "Query names this filter restricts, or \"all\".",
+          "oneOf": [
+            { "const": "all" },
+            { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/name" } }
+          ]
+        },
+        "multi": { "type": "boolean", "default": true },
+        "exclude": { "type": "boolean", "default": false },
+        "context": { "type": "boolean", "default": false },
+        "onlyRelevantValues": {
+          "description": "Cascading filter: offer only values that remain after the other filters.",
+          "type": "boolean",
+          "default": false
+        },
+        "includeNulls": { "type": "boolean" },
+        "default": { "$ref": "#/$defs/filterValue" }
+      },
+      "oneOf": [{ "required": ["field"] }, { "required": ["expr"] }]
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "default"],
+      "properties": {
+        "label": { "type": "string", "maxLength": 200 },
+        "type": { "enum": ["string", "integer", "float", "boolean", "date", "datetime"] },
+        "default": { "$ref": "#/$defs/scalar" },
+        "format": { "$ref": "#/$defs/format" },
+        "allowed": {
+          "oneOf": [
+            { "const": "any" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["list"],
+              "properties": {
+                "list": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/scalar" } },
+                "labels": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["range"],
+              "properties": {
+                "range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "min": { "type": ["number", "string"] },
+                    "max": { "type": ["number", "string"] },
+                    "step": { "type": "number", "exclusiveMinimum": 0 }
+                  }
+                }
+              }
+            },
+            {
+              "description": "Dynamic parameter: allowed values come from a query's field.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["query", "field"],
+              "properties": {
+                "query": { "$ref": "#/$defs/name" },
+                "field": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "tableCalcType": {
+      "enum": [
+        "running_sum", "running_avg", "running_min", "running_max", "running_count",
+        "window_sum", "window_avg", "window_min", "window_max", "window_count", "window_median",
+        "difference", "percent_difference", "percent_of_total", "percentile",
+        "rank", "rank_dense", "rank_modified", "rank_unique", "rank_percentile",
+        "moving_avg", "lookup", "index", "first", "last", "size", "total", "custom"
+      ]
+    },
+    "computeUsing": {
+      "enum": [
+        "table_across", "table_down", "table_across_then_down", "table_down_then_across",
+        "pane_across", "pane_down", "pane_across_then_down", "pane_down_then_across",
+        "cell", "specific"
+      ]
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": { "oneOf": [{ "type": "integer" }, { "const": "first" }] },
+        "end": { "oneOf": [{ "type": "integer" }, { "const": "last" }] }
+      }
+    },
+    "secondaryCalc": {
+      "description": "A secondary table calculation applied to the primary calculation's result.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "$ref": "#/$defs/tableCalcType" },
+        "computeUsing": { "$ref": "#/$defs/computeUsing" },
+        "addressing": { "type": "array", "items": { "type": "string" } },
+        "partitioning": { "type": "array", "items": { "type": "string" } },
+        "relativeTo": { "enum": ["previous", "next", "first", "last"] },
+        "frame": { "$ref": "#/$defs/frame" },
+        "direction": { "enum": ["asc", "desc"] }
+      }
+    },
+    "tableCalc": {
+      "description": "A Tableau-style table calculation computed over the query result (ADR-0004).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/alias" },
+        "type": { "$ref": "#/$defs/tableCalcType" },
+        "of": {
+          "description": "The measure (output name in this query) the calculation applies to.",
+          "type": "string",
+          "minLength": 1
+        },
+        "expr": {
+          "description": "For type \"custom\": a Tableau table-calculation expression, e.g. \"WINDOW_AVG(SUM([Sales]), -2, 0)\".",
+          "$ref": "#/$defs/expression"
+        },
+        "computeUsing": { "$ref": "#/$defs/computeUsing" },
+        "addressing": {
+          "description": "Output names the calculation moves along (computeUsing = specific).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "partitioning": { "type": "array", "items": { "type": "string" } },
+        "orderBy": { "type": "array", "items": { "$ref": "#/$defs/sort" } },
+        "frame": { "$ref": "#/$defs/frame" },
+        "relativeTo": { "enum": ["previous", "next", "first", "last"] },
+        "offset": { "type": "integer" },
+        "percentile": { "type": "number", "minimum": 0, "maximum": 1 },
+        "atLevel": { "type": "string" },
+        "restartEvery": { "type": "string" },
+        "nullIfIncomplete": { "type": "boolean", "default": false },
+        "direction": { "enum": ["asc", "desc"] },
+        "then": { "$ref": "#/$defs/secondaryCalc" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "custom" } } },
+          "then": { "required": ["expr"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "enum": ["index", "first", "last", "size", "custom"] } } },
+          "else": { "required": ["of"] }
+        }
+      ]
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "model": {
+          "description": "Model alias; required when the dashboard uses more than one model.",
+          "$ref": "#/$defs/name"
+        },
+        "dimensions": { "type": "array", "items": { "$ref": "#/$defs/dimension" } },
+        "measures": { "type": "array", "items": { "$ref": "#/$defs/measure" } },
+        "where": { "type": "array", "items": { "$ref": "#/$defs/queryFilter" } },
+        "sort": { "type": "array", "items": { "$ref": "#/$defs/sort" } },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "tableCalcs": { "type": "array", "items": { "$ref": "#/$defs/tableCalc" } },
+        "totals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "grand": { "type": "boolean" },
+            "subtotals": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "pivotMeasures": {
+          "description": "Return one row per measure, like Tableau's Measure Names / Measure Values.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "anyOf": [
+        { "required": ["dimensions"], "properties": { "dimensions": { "minItems": 1 } } },
+        { "required": ["measures"], "properties": { "measures": { "minItems": 1 } } }
+      ]
+    },
+    "queryList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/name" }
+    },
+    "targets": {
+      "oneOf": [{ "const": "all" }, { "$ref": "#/$defs/queryList" }]
+    },
+    "fieldMapping": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "target"],
+          "properties": {
+            "source": { "type": "string", "minLength": 1 },
+            "target": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "actionBase": {
+      "type": "object",
+      "required": ["type", "source"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 200 },
+        "source": { "$ref": "#/$defs/queryList" },
+        "trigger": { "enum": ["select", "hover", "menu"], "default": "select" }
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["targets"],
+          "properties": {
+            "type": { "const": "filter" },
+            "targets": { "$ref": "#/$defs/targets" },
+            "fields": { "type": "array", "items": { "$ref": "#/$defs/fieldMapping" } },
+            "clear": { "enum": ["keep_filter", "show_all", "exclude_all"], "default": "keep_filter" }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["targets"],
+          "properties": {
+            "type": { "const": "highlight" },
+            "targets": { "$ref": "#/$defs/targets" },
+            "fields": { "type": "array", "items": { "$ref": "#/$defs/fieldMapping" } }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["url"],
+          "properties": {
+            "type": { "const": "url" },
+            "url": {
+              "description": "URL template; <Field Name> placeholders are replaced with URL-encoded values from the selection.",
+              "type": "string",
+              "pattern": "^https?://"
+            },
+            "openIn": { "enum": ["new_tab", "same_tab"], "default": "new_tab" }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["parameter", "field"],
+          "properties": {
+            "type": { "const": "parameter" },
+            "parameter": { "$ref": "#/$defs/name" },
+            "field": { "description": "Output name in the source query whose value sets the parameter.", "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["set"],
+          "properties": {
+            "type": { "const": "set" },
+            "set": { "description": "Set name from the semantic model.", "type": "string", "minLength": 1 },
+            "mode": { "enum": ["assign", "add", "remove"], "default": "assign" },
+            "clear": { "enum": ["keep", "add_all", "remove_all"], "default": "keep" }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/actionBase" }],
+          "unevaluatedProperties": false,
+          "required": ["to"],
+          "properties": {
+            "type": { "const": "navigate" },
+            "to": { "description": "Id of another dashboard in the same workbook.", "$ref": "#/$defs/slug" }
+          }
+        }
+      ]
+    },
+    "source": {
+      "description": "Provenance for migrated dashboards.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system"],
+      "properties": {
+        "system": { "const": "tableau" },
+        "server": { "type": "string" },
+        "site": { "type": "string" },
+        "workbook": { "type": "string" },
+        "workbookLuid": { "type": "string" },
+        "dashboard": { "type": "string" },
+        "viewLuid": { "type": "string" },
+        "migratedAt": { "type": "string", "format": "date-time" },
+        "tool": { "type": "string" }
+      }
+    }
+  }
+}

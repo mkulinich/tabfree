@@ -1,0 +1,26 @@
+[project]
+name = "tabfree-migrate"
+version = "0.0.1"
+description = "TabFree migration toolkit: read-only Tableau Server crawler and converters."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "tableauserverclient>=0.30",
+  "typer>=0.12",
+  "defusedxml>=0.7",
+  "tabfree-schemas",
+]
+
+[project.scripts]
+tabfree-migrate = "tabfree_migrate.cli:app"
+
+[tool.uv.sources]
+tabfree-schemas = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tabfree_migrate"]

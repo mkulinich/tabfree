@@ -1,0 +1,21 @@
+[project]
+name = "tabfree-schemas"
+version = "0.0.1"
+description = "JSON Schemas and validators for TabFree dashboard manifests, semantic models and the Tableau IR."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "jsonschema>=4.23",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+tabfree-validate = "tabfree_schemas.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tabfree_schemas"]

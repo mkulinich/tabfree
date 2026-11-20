@@ -1,0 +1,26 @@
+{
+  "name": "tabfree-monorepo",
+  "private": true,
+  "type": "module",
+  "description": "TabFree TypeScript workspaces (dashboard runtime; the portal arrives in Phase 3).",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/runtime"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
+  }
+}

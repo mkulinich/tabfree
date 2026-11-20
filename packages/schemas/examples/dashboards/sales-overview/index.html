@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sales Overview</title>
+    <!--
+      Illustrative only: the <tf-*> components arrive in Phase 1 (BUILD_PLAN P1.11).
+      The host injects the TabFree runtime. Dashboards never load scripts from the
+      network, never contain SQL, and get data only through the named queries in
+      tabfree.json.
+    -->
+    <style>
+      tf-dashboard { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; padding: 16px; }
+      .filters, .kpis { grid-column: 1 / -1; display: flex; gap: 12px; }
+    </style>
+  </head>
+  <body>
+    <tf-dashboard layout="tiled">
+      <header class="filters">
+        <tf-filter name="region" control="dropdown"></tf-filter>
+        <tf-filter name="order_date" control="relative-date"></tf-filter>
+        <tf-parameter name="top_n" control="slider"></tf-parameter>
+      </header>
+      <section class="kpis">
+        <tf-kpi query="kpis" measure="Sales"></tf-kpi>
+        <tf-kpi query="kpis" measure="Profit"></tf-kpi>
+        <tf-kpi query="kpis" measure="Profit Ratio"></tf-kpi>
+      </section>
+      <tf-chart query="by_region" mark="bar" x="Sales" y="Region" color="Profit Ratio"></tf-chart>
+      <tf-chart query="trend" mark="line" x="Month" y="Running Sales"></tf-chart>
+      <tf-crosstab query="top_customers"></tf-crosstab>
+    </tf-dashboard>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# --- Node / TypeScript ---
+node_modules/
+*.tsbuildinfo
+coverage/
+
+# --- OpenTofu / Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# --- Secrets and local environment (never commit secrets) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Customer data: never commit ---
+# Real workbooks, extracts and Tableau Server captures stay local or in your own S3.
+corpus/private/
+captures/
+
+# --- OS / editors ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# OpenTofu plan files
+tfplan
+*.tfplan

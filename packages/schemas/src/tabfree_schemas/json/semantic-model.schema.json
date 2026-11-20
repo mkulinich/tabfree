@@ -1,0 +1,427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tabfree:schema:semantic-model:0",
+  "title": "TabFree semantic model",
+  "description": "Queryable data for dashboards: physical tables in Athena or Redshift, how they relate, the fields users see (calculated fields use Tableau's calculation syntax, ADR-0011), parameters, groups, sets, bins, hierarchies and row-level security policies. A migrated Tableau data source becomes one semantic model. Usually stored as YAML.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "title", "connection", "tables", "fields"],
+  "properties": {
+    "schema": { "const": "tabfree/model@0" },
+    "id": { "$ref": "#/$defs/id" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "description": { "type": "string" },
+    "connection": { "$ref": "#/$defs/connection" },
+    "settings": { "$ref": "#/$defs/settings" },
+    "tables": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/table" } },
+    "relationships": {
+      "description": "Tableau's logical layer: each related table is aggregated at its own grain before joining.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/relationship" }
+    },
+    "fields": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/field" } },
+    "parameters": { "type": "array", "items": { "$ref": "#/$defs/parameter" } },
+    "hierarchies": { "type": "array", "items": { "$ref": "#/$defs/hierarchy" } },
+    "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } },
+    "sets": { "type": "array", "items": { "$ref": "#/$defs/set" } },
+    "bins": { "type": "array", "items": { "$ref": "#/$defs/bin" } },
+    "dataSourceFilters": {
+      "description": "Filters every query on this model must apply; viewers cannot remove them.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/dataSourceFilter" }
+    },
+    "rls": {
+      "description": "Row-level security policies, enforced by the compiler for every query (ADR-0007).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rlsPolicy" }
+    },
+    "source": { "$ref": "#/$defs/source" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,99}$" },
+    "identifier": {
+      "description": "A physical SQL identifier (database, table or column). Identifiers are allow-listed through the model and never come from user input.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+    },
+    "fieldName": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "expression": {
+      "description": "Tableau calculation syntax; compiled by the TabFree compiler, never SQL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "dataType": { "enum": ["string", "integer", "float", "decimal", "boolean", "date", "datetime", "geography"] },
+    "aggregation": {
+      "enum": ["sum", "avg", "min", "max", "count", "countd", "median", "attr", "stdev", "stdevp", "var", "varp"]
+    },
+    "region": { "type": "string", "pattern": "^[a-z]{2}(-gov)?-[a-z]+-[0-9]$" },
+    "paramRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["param"],
+      "properties": { "param": { "$ref": "#/$defs/id" } }
+    },
+    "connection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine", "database"],
+          "properties": {
+            "engine": { "const": "athena" },
+            "catalog": { "type": "string", "default": "AwsDataCatalog" },
+            "database": { "$ref": "#/$defs/identifier" },
+            "workgroup": { "type": "string" },
+            "region": { "$ref": "#/$defs/region" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine", "database"],
+          "properties": {
+            "engine": { "const": "redshift" },
+            "database": { "$ref": "#/$defs/identifier" },
+            "schema": { "$ref": "#/$defs/identifier" },
+            "workgroup": { "description": "Redshift Serverless workgroup.", "type": "string" },
+            "clusterIdentifier": { "description": "Provisioned cluster.", "type": "string" },
+            "region": { "$ref": "#/$defs/region" },
+            "secretArn": {
+              "description": "Credentials reference in AWS Secrets Manager. Secrets themselves never appear in a model.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:secretsmanager:"
+            }
+          }
+        },
+        {
+          "description": "Local development stand-in for Athena (Trino with an Iceberg catalog).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine", "catalog", "schema"],
+          "properties": {
+            "engine": { "const": "trino" },
+            "catalog": { "$ref": "#/$defs/identifier" },
+            "schema": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      ]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "weekStart": {
+          "enum": ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+          "default": "sunday"
+        },
+        "fiscalYearStartMonth": { "type": "integer", "minimum": 1, "maximum": 12, "default": 1 },
+        "timezone": { "type": "string", "default": "UTC" },
+        "locale": { "type": "string", "default": "en-US" }
+      }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/dataType" },
+        "nullable": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string" },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["table"],
+              "properties": {
+                "table": { "$ref": "#/$defs/identifier" },
+                "schema": { "$ref": "#/$defs/identifier" },
+                "database": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            {
+              "description": "Custom SQL, already translated to the connection's dialect.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sql"],
+              "properties": {
+                "sql": { "type": "string", "minLength": 1 },
+                "originalSql": { "description": "The custom SQL as written in Tableau, before translation.", "type": "string" }
+              }
+            }
+          ]
+        },
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+        "primaryKey": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/identifier" } }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right", "on"],
+      "properties": {
+        "left": { "$ref": "#/$defs/id" },
+        "right": { "$ref": "#/$defs/id" },
+        "on": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["left", "right"],
+            "properties": {
+              "left": { "$ref": "#/$defs/identifier" },
+              "right": { "$ref": "#/$defs/identifier" },
+              "operator": { "enum": ["=", "<>", "<", "<=", ">", ">="], "default": "=" }
+            }
+          }
+        },
+        "cardinality": { "enum": ["one_to_one", "one_to_many", "many_to_one", "many_to_many"] },
+        "integrity": { "enum": ["some_records_match", "all_records_match"], "default": "some_records_match" }
+      }
+    },
+    "field": {
+      "description": "A field users and dashboards refer to by name. Either a physical column (table + column) or a calculated field (formula).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "role", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/fieldName" },
+        "role": { "enum": ["dimension", "measure"] },
+        "type": { "$ref": "#/$defs/dataType" },
+        "continuous": {
+          "description": "Tableau's continuous (green) or discrete (blue). Defaults: measures continuous, dimensions discrete.",
+          "type": "boolean"
+        },
+        "table": { "$ref": "#/$defs/id" },
+        "column": { "$ref": "#/$defs/identifier" },
+        "formula": { "$ref": "#/$defs/expression" },
+        "defaultAggregation": { "$ref": "#/$defs/aggregation" },
+        "format": { "type": "string", "maxLength": 128 },
+        "folder": { "type": "string" },
+        "hidden": { "type": "boolean", "default": false },
+        "description": { "type": "string" },
+        "semanticRole": {
+          "description": "Geographic role, used for maps.",
+          "enum": [
+            "country", "state_province", "county", "city", "postal_code", "latitude", "longitude",
+            "airport", "area_code", "cbsa_msa", "congressional_district", "nuts_europe"
+          ]
+        },
+        "aliases": {
+          "description": "Display aliases for members (Tableau \"Edit Aliases\").",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "sortOrder": { "description": "Default manual sort order of members.", "type": "array", "items": { "$ref": "#/$defs/scalar" } }
+      },
+      "oneOf": [
+        { "required": ["table", "column"], "not": { "required": ["formula"] } },
+        { "required": ["formula"], "not": { "anyOf": [{ "required": ["table"] }, { "required": ["column"] }] } }
+      ]
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "default"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/fieldName" },
+        "description": { "type": "string" },
+        "type": { "enum": ["string", "integer", "float", "boolean", "date", "datetime"] },
+        "default": { "$ref": "#/$defs/scalar" },
+        "format": { "type": "string", "maxLength": 128 },
+        "allowed": {
+          "oneOf": [
+            { "const": "any" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["list"],
+              "properties": {
+                "list": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/scalar" } },
+                "labels": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["range"],
+              "properties": {
+                "range": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "min": { "type": ["number", "string"] },
+                    "max": { "type": ["number", "string"] },
+                    "step": { "type": "number", "exclusiveMinimum": 0 }
+                  }
+                }
+              }
+            },
+            {
+              "description": "Dynamic parameter: allowed values come from a field of this model.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["field"],
+              "properties": { "field": { "$ref": "#/$defs/fieldName" } }
+            }
+          ]
+        }
+      }
+    },
+    "hierarchy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "levels"],
+      "properties": {
+        "name": { "$ref": "#/$defs/fieldName" },
+        "levels": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/fieldName" } }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "field", "groups"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/fieldName" },
+        "field": { "$ref": "#/$defs/fieldName" },
+        "groups": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/scalar" } }
+        },
+        "otherLabel": { "description": "Label for members not in any group (Tableau's \"Include Other\").", "type": "string" }
+      }
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "field"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/fieldName" },
+        "field": { "$ref": "#/$defs/fieldName" },
+        "members": { "type": "array", "items": { "$ref": "#/$defs/scalar" } },
+        "condition": { "$ref": "#/$defs/expression" },
+        "top": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["n", "by"],
+          "properties": {
+            "n": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "#/$defs/paramRef" }] },
+            "by": { "$ref": "#/$defs/expression" },
+            "direction": { "enum": ["top", "bottom"], "default": "top" }
+          }
+        }
+      },
+      "oneOf": [{ "required": ["members"] }, { "required": ["condition"] }, { "required": ["top"] }]
+    },
+    "bin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "field", "size"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "$ref": "#/$defs/fieldName" },
+        "field": { "$ref": "#/$defs/fieldName" },
+        "size": { "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "$ref": "#/$defs/paramRef" }] }
+      }
+    },
+    "dataSourceFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formula"],
+      "properties": {
+        "formula": { "$ref": "#/$defs/expression" },
+        "description": { "type": "string" }
+      }
+    },
+    "rlsPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string" },
+        "filter": {
+          "description": "Boolean row filter in Tableau syntax. May use USERNAME(), FULLNAME(), USERDOMAIN(), ISMEMBEROF('group') and USERATTRIBUTE('name').",
+          "$ref": "#/$defs/expression"
+        },
+        "entitlement": {
+          "description": "Entitlement table: a row is visible when the viewer has a matching row in this table.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["table", "userColumn", "keys"],
+          "properties": {
+            "table": { "$ref": "#/$defs/id" },
+            "userColumn": { "$ref": "#/$defs/identifier" },
+            "matchOn": { "enum": ["username", "email", "group"], "default": "username" },
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["field", "column"],
+                "properties": {
+                  "field": { "$ref": "#/$defs/fieldName" },
+                  "column": { "$ref": "#/$defs/identifier" }
+                }
+              }
+            }
+          }
+        },
+        "exempt": {
+          "description": "Principals the policy does not restrict.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "groups": { "type": "array", "items": { "type": "string" } },
+            "users": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "oneOf": [{ "required": ["filter"] }, { "required": ["entitlement"] }]
+    },
+    "source": {
+      "description": "Provenance for models converted from Tableau data sources.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system"],
+      "properties": {
+        "system": { "const": "tableau" },
+        "datasource": { "type": "string" },
+        "luid": { "type": "string" },
+        "published": { "type": "boolean" },
+        "contentUrl": { "type": "string" },
+        "connectionClass": { "type": "string" },
+        "extract": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "converted": { "type": "boolean" },
+            "refresh": { "enum": ["full", "incremental", "none"] },
+            "incrementalKey": { "type": "string" },
+            "extractFilters": { "type": "array", "items": { "$ref": "#/$defs/expression" } }
+          }
+        },
+        "migratedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

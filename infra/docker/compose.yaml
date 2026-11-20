@@ -1,0 +1,183 @@
+# TabFree local development stack (Phase 0, task P0.3).
+#
+#   docker compose -f infra/docker/compose.yaml up -d --wait   # start; returns once bootstrap is done
+#   docker compose -f infra/docker/compose.yaml down           # stop (keeps data volumes)
+#   docker compose -f infra/docker/compose.yaml down -v        # stop and delete all local data
+#
+# Local stand-ins for the AWS services in ADR-007/ADR-009:
+#   postgres      -> Aurora PostgreSQL (TabFree metadata DB)
+#   objectstore   -> S3 (RustFS, S3-compatible)
+#   iceberg-rest  -> Glue Data Catalog (Apache Iceberg REST catalog)
+#   trino         -> Athena engine v3 (Trino with an Iceberg catalog)
+#   aws-emulator  -> SQS + SES (Moto server)
+#   bootstrap     -> creates buckets, queues, the SES sender identity, the
+#                    tabfree_dev namespace and a sample Iceberg table
+#
+# Image choices and the reasons for them are in README.md. Every tag is pinned.
+#
+# All credentials below are fixed, public, local-only placeholders. They are
+# not secrets and protect nothing: every port is bound to 127.0.0.1 only.
+
+name: tabfree
+
+x-local-credentials:
+  s3-access-key: &s3-access-key tabfree-local
+  s3-secret-key: &s3-secret-key tabfree-local-not-a-secret
+
+# Defensive setting for S3-compatible stores: only send the AWS SDKs' CRC
+# checksums when an operation requires them. Harmless against real S3.
+x-s3-client-env: &s3-client-env
+  AWS_REGION: us-east-1
+  AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+
+services:
+  postgres:
+    image: postgres:17.12-trixie
+    environment:
+      POSTGRES_USER: tabfree
+      POSTGRES_PASSWORD: tabfree-local-not-a-secret
+      POSTGRES_DB: tabfree
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${TABFREE_PG_PORT:-5432}:5432"
+    healthcheck:
+      # TCP (-h) so the check does not pass early against the socket-only
+      # server the entrypoint runs during first-time initialisation.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U tabfree -d tabfree"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  objectstore:
+    image: rustfs/rustfs:1.0.6
+    environment:
+      RUSTFS_ACCESS_KEY: *s3-access-key
+      RUSTFS_SECRET_KEY: *s3-secret-key
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_OBS_LOGGER_LEVEL: warn
+    volumes:
+      - objectstore-data:/data
+    ports:
+      - "127.0.0.1:${TABFREE_S3_PORT:-9000}:9000"          # S3 API
+      - "127.0.0.1:${TABFREE_S3_CONSOLE_PORT:-9001}:9001"  # web console
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    environment:
+      <<: *s3-client-env
+      # The fixture maps CATALOG_* variables to catalog properties:
+      # strip the prefix, "__" -> "-", "_" -> ".", lower-case.
+      CATALOG_URI: jdbc:sqlite:/home/iceberg/iceberg_catalog.db   # persisted on the volume below
+      CATALOG_WAREHOUSE: s3://tabfree-lake/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://objectstore:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_S3_ACCESS__KEY__ID: *s3-access-key
+      CATALOG_S3_SECRET__ACCESS__KEY: *s3-secret-key
+      CATALOG_CLIENT_REGION: us-east-1
+    volumes:
+      # /home/iceberg is owned by the image's non-root user, so a new named
+      # volume mounted there inherits that ownership and SQLite can write.
+      - iceberg-catalog:/home/iceberg
+    ports:
+      - "127.0.0.1:${TABFREE_ICEBERG_REST_PORT:-8181}:8181"
+    depends_on:
+      objectstore:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8181/v1/config"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  trino:
+    image: trinodb/trino:484
+    environment:
+      <<: *s3-client-env
+      TABFREE_S3_ACCESS_KEY: *s3-access-key   # read by trino/catalog/iceberg.properties
+      TABFREE_S3_SECRET_KEY: *s3-secret-key
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+    ports:
+      - "127.0.0.1:${TABFREE_TRINO_PORT:-8080}:8080"
+    # The image's JVM takes 80% of the container limit as heap.
+    mem_limit: 4g
+    depends_on:
+      iceberg-rest:
+        condition: service_healthy
+      objectstore:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  aws-emulator:
+    image: motoserver/moto:5.2.5
+    ports:
+      # 4566 on the host (LocalStack's usual port; macOS uses 5000 for AirPlay).
+      - "127.0.0.1:${TABFREE_AWS_PORT:-4566}:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:5000/moto-api/"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  bootstrap:
+    image: amazon/aws-cli:2.41.2
+    entrypoint: ["/bin/bash", "/bootstrap/bootstrap.sh"]
+    init: true   # forwards SIGTERM to the idle process so `down` is fast
+    environment:
+      <<: *s3-client-env
+      AWS_ACCESS_KEY_ID: *s3-access-key        # Moto accepts any credentials
+      AWS_SECRET_ACCESS_KEY: *s3-secret-key
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_PAGER: ""
+      AWS_ENDPOINT_URL_S3: http://objectstore:9000
+      AWS_ENDPOINT_URL_SQS: http://aws-emulator:5000
+      AWS_ENDPOINT_URL_SES: http://aws-emulator:5000
+      AWS_ENDPOINT_URL_SESV2: http://aws-emulator:5000
+      TRINO_URL: http://trino:8080
+      SES_SENDER_DOMAIN: example.com
+    volumes:
+      - ./bootstrap:/bootstrap:ro
+    depends_on:
+      objectstore:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      aws-emulator:
+        condition: service_healthy
+        restart: true   # Moto keeps state in memory: re-run bootstrap when it restarts
+    # The bootstrap stays up after it finishes and reports healthy only once
+    # it has succeeded, so `up --wait` returns when the stack is ready. On
+    # failure it exits non-zero and `up --wait` fails.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/bootstrap.done"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 60s
+
+volumes:
+  pgdata:
+  objectstore-data:
+  iceberg-catalog:

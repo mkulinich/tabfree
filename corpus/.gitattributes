@@ -1,0 +1,7 @@
+# Corpus files are kept byte-for-byte as published upstream (SHA-256 in manifest.json), so never
+# let git convert line endings or treat Tableau files as diffable text.
+* -text
+*.twbx binary
+*.tdsx binary
+*.hyper binary
+*.tde binary
