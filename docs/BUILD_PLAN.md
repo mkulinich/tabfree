@@ -367,7 +367,7 @@ tabfree/
 
 **Goal:** Tableau's calculation and query semantics, reproduced faithfully on Athena and Redshift.
 
-- [ ] **P2.1** Full TWB/TDS parser → Tableau IR:
+- [x] **P2.1** Full TWB/TDS parser → Tableau IR:
   - **Normalisation:** `_.fcp.*` feature-flag element names; version read from `source-build`, not `version='18.1'`.
   - **Data sources:** connections, named connections, relations, joins, unions, custom SQL, relationships (object graph), extract settings.
   - **Columns:** calcs, parameters, groups, sets, bins, hierarchies, aliases, folders, default formats, geographic roles.
@@ -377,8 +377,8 @@ tabfree/
   - **Stories.**
   - **Validation:** against the official XSD, keeping a list of known deviations.
   - **Target:** 100% of the corpus parses.
-- [ ] **P2.2** Calc parser: vendor `TableauCalculationGrammar.g4` (Apache-2.0) → typed AST. Build the dependency DAG and classify each calc as row-level, aggregate, LOD or table calc.
-- [ ] **P2.3** Expression translator: AST → SQLGlot → `athena` / `redshift`.
+- [x] **P2.2** Calc parser: vendor `TableauCalculationGrammar.g4` (Apache-2.0) → typed AST. Build the dependency DAG and classify each calc as row-level, aggregate, LOD or table calc.
+- [x] **P2.3** Expression translator: AST → SQLGlot → `athena` / `redshift`.
   - Full function map.
   - Semantics shims:
     - `/` is float division and returns NULL on a zero divisor
@@ -389,12 +389,12 @@ tabfree/
     - fiscal years
     - collation and case behaviour
   - A list of unsupported constructs: `SCRIPT_*`, `MODEL_*`, and `RAWSQL` (needs dialect review).
-- [ ] **P2.4** Semantic model (YAML) and a generator from Tableau data sources:
+- [x] **P2.4** Semantic model (YAML) and a generator from Tableau data sources:
   - tables (Iceberg/Redshift), relationships with native-grain aggregation, joins
   - calc fields, parameters, hierarchies, groups, sets, bins
   - formats and aliases
   - RLS policy slots
-- [ ] **P2.5** Query planner (VizQL-style):
+- [x] **P2.5** Query planner (VizQL-style):
   - grain from shelves and encodings
   - **filters staged in Tableau's order:** extract/data source → context → FIXED → dimension → measure → table calc
   - FIXED/INCLUDE/EXCLUDE as staged CTEs with null-safe joins
@@ -403,8 +403,8 @@ tabfree/
   - Measure Names/Values
   - blending as a secondary query left-joined on the link fields
   - computed and manual sorts
-- [ ] **P2.6** Table-calc engine: SQL window push-down templates, plus `@tabfree/tablecalc` in JS (partitioning and addressing, all `RANK_*` variants, `WINDOW_*`, `LOOKUP`, `PREVIOUS_VALUE`, `TOTAL`, densification, secondary calcs, table-calc filters).
-- [ ] **P2.7** Query service:
+- [x] **P2.6** Table-calc engine: SQL window push-down templates, plus `@tabfree/tablecalc` in JS (partitioning and addressing, all `RANK_*` variants, `WINDOW_*`, `LOOKUP`, `PREVIOUS_VALUE`, `TOTAL`, densification, secondary calcs, table-calc filters).
+- [x] **P2.7** Query service:
   - semantic query API
   - Athena executor (workgroup per site, `ExecutionParameters`, result reuse)
   - Redshift Data API executor
@@ -423,8 +423,25 @@ tabfree/
   - **VizQL Data Service** oracle for calc results (Server 2025.1+)
   - **per-view CSV parity** across the corpus
 - [ ] **P2.10** Benchmark Athena vs Redshift Serverless (p50/p95, cold and warm, concurrency) on representative dashboards, and set the default engine by data size.
-- [ ] **P2.11** Cube spike: can Cube Core run the compiler's staged LOD SQL while handling pre-aggregations, caching and access policies? Decide the execution and caching layer (ADR-003).
+- [x] **P2.11** Cube spike: can Cube Core run the compiler's staged LOD SQL while handling pre-aggregations, caching and access policies? Decide the execution and caching layer (ADR-003).
 - [ ] **P2.12** Release the compiler and the conformance suite as standalone Apache-2.0 packages, with TDVT pass rates published, so other converter projects can build on them.
+
+**Phase 2 status (2026-11-20).** The conversion engine is built and tested offline (`make check`). Runs on Athena, Redshift, our Tableau Server (VizQL Data Service, CSV ground truth) and Fargate wait for AWS or the server.
+
+| Task | Status |
+|---|---|
+| P2.1 parser | Done: every corpus file parses to `tabfree/tableau-ir@1`, with the shelf grammar, panes, filters, sorts, table-calc settings, dashboards, actions and stories; XSD validation with a list of known deviations. |
+| P2.2 calc DAG | Done with the hand-written parser ([ADR-012](adr/0012-hand-written-calc-parser.md), proposed) instead of the vendored ANTLR grammar: `analyze_calcs` gives each calc's kind, dependencies, cycles and unknown references. |
+| P2.3 translator | Done: TDVT 1135/1146 (99.0%) on DuckDB across all 8 suites, the rest documented; regex, ISO-8601, DATEPARSE, PERCENTILE, CORR/COVAR, fiscal years; unsupported functions refused with a reason. SQL parses for Athena, Redshift and Trino. |
+| P2.4 model generator | Done (`tabfree-migrate generate-model`): 163 corpus models, 97% of 1,368 calcs analyse cleanly; reproduces Superstore totals, LODs, groups and Top N sets. |
+| P2.5 planner | Done: staged filters, LODs, sets, totals and subtotals, Measure Names/Values, blending, computed and manual sorts, native-grain relationships; worksheet IR → query (`tabfree-migrate worksheet-query`): 88% of 582 corpus worksheets convert fully, 71% compile against their generated models (the rest mostly lack primary keys or have custom SQL to fix). |
+| P2.6 table calcs | Done: `@tabfree/tablecalc` (source of truth, ADR-004) plus SQL window push-down. |
+| P2.7 query service | Done: explore API, result cache, guardrails, Athena and Redshift executors (tested with fake clients). |
+| P2.8 extract converter | Built (types, settings, `.tde` legacy image, batch runner, parity check, Fargate module); needs AWS to run. |
+| P2.9 conformance | TDVT and CSV parity harnesses built; nightly Athena/Redshift workflow dormant until `AWS_CONFORMANCE_ROLE_ARN` is set; VDS client built, needs the server. |
+| P2.10 benchmark | Needs AWS (probe harness from P1.16). |
+| P2.11 Cube spike | Desk result: our own query service and cache ([notes](research/notes/p2-11-cube-spike.md), ADR-003). |
+| P2.12 release | Release workflow ready (trusted publishing), gated on clearing the public name. |
 
 **Milestone M2:**
 - At least 95% of TDVT tests pass on both dialects, with the rest documented.

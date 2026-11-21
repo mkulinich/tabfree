@@ -90,6 +90,10 @@ class GenerationReport:
     review: list[str] = field(default_factory=list)
     invalid_calcs: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
+    #: Tableau local names ("[Calculation_123]", "[Sales]") → model field names, for worksheet queries.
+    names: dict[str, str] = field(default_factory=dict)
+    #: Parameter local names → parameter names.
+    params: dict[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -149,6 +153,29 @@ class _Ids:
             n += 1
         self.used.add(candidate)
         return candidate
+
+
+def rewrite_formula(formula: str, names: Mapping[str, str], params: Mapping[str, str]) -> str:
+    """Replace Tableau local names ("[Calculation_1]") with model field names, outside literals."""
+
+    def replace(match: re.Match[str]) -> str:
+        ref = match.group(0)
+        if ref.lower().startswith("[parameters]."):
+            inner = ref[len("[Parameters].") :]
+            return "[Parameters].[" + params.get(inner, unbracket(inner)).replace("]", "]]") + "]"
+        if "].[" in ref:  # [datasource].[field] from another source (a blend): keep the field
+            ref = "[" + ref.split("].[", 1)[1]
+        name = names.get(ref)
+        return "[" + name.replace("]", "]]") + "]" if name else ref
+
+    # Leave string literals and comments alone.
+    out, i = [], 0
+    for literal in re.finditer(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|//[^\n]*', formula):
+        out.append(_REF.sub(replace, formula[i : literal.start()]))
+        out.append(literal.group(0))
+        i = literal.end()
+    out.append(_REF.sub(replace, formula[i:]))
+    return "".join(out)
 
 
 def _leaves(relation: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
@@ -300,24 +327,7 @@ def generate_model(
             local_to_name.setdefault(s["name"], str(s["caption"]))
 
     def rewrite(formula: str) -> str:
-        def replace(match: re.Match[str]) -> str:
-            ref = match.group(0)
-            if ref.lower().startswith("[parameters]."):
-                inner = ref[len("[Parameters].") :]
-                return "[Parameters].[" + param_names.get(inner, unbracket(inner)).replace("]", "]]") + "]"
-            if "].[" in ref:  # [datasource].[field] from another source (a blend): keep the field
-                ref = "[" + ref.split("].[", 1)[1]
-            name = local_to_name.get(ref)
-            return "[" + name.replace("]", "]]") + "]" if name else ref
-
-        # Leave string literals and comments alone.
-        out, i = [], 0
-        for literal in re.finditer(r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|//[^\n]*', formula):
-            out.append(_REF.sub(replace, formula[i : literal.start()]))
-            out.append(literal.group(0))
-            i = literal.end()
-        out.append(_REF.sub(replace, formula[i:]))
-        return "".join(out)
+        return rewrite_formula(formula, local_to_name, param_names)
 
     # -- fields ---------------------------------------------------------------------------------------
     fields: list[dict[str, Any]] = []
@@ -565,6 +575,10 @@ def generate_model(
     if ds.get("extract"):
         source_info["extract"] = {"converted": False}
     doc["source"] = source_info
+    report.names = dict(local_to_name)
+    report.params = dict(param_names)
+    for g in groups + bins + sets:
+        report.names.setdefault(f"[{g['name']}]", str(g["name"]))
     _check(doc, report)
     return doc, report
 

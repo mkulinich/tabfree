@@ -190,6 +190,11 @@ def test_computed_sort_by_an_aggregate_not_in_the_view(con: Any) -> None:
     assert [r["Customer"] for r in rows] == ["Cal", "Ann", "Bob", "Dee"]
 
 
+def test_manual_sort_lists_members_first(con: Any) -> None:
+    rows = run(con, {"dimensions": ["Customer"], "sort": [{"by": "Customer", "order": ["Dee", "Bob"]}]})
+    assert [r["Customer"] for r in rows] == ["Dee", "Bob", "Ann", "Cal"]
+
+
 def test_unlinked_or_keyless_related_measures_are_refused(con: Any) -> None:
     keyless = {**MODEL, "tables": [MODEL["tables"][0], {**MODEL["tables"][1], "primaryKey": None}]}
     keyless["tables"][1].pop("primaryKey")

@@ -652,3 +652,34 @@ def generate_model_command(
                 typer.echo(f"  - {item}")
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+@app.command("worksheet-query")
+def worksheet_query_command(
+    path: Annotated[Path, typer.Argument(help="A .twb/.twbx file")],
+    worksheet: Annotated[str, typer.Argument(help="Worksheet name")],
+) -> None:
+    """Print the TabFree query behind a worksheet (P2.5), against the model generate-model writes."""
+    from tabfree_migrate.modelgen import generate_model
+    from tabfree_migrate.twb import TableauFileError, parse_file
+    from tabfree_migrate.worksheets import worksheet_query
+
+    try:
+        workbook = parse_file(path)
+        sheet = next((w for w in workbook["worksheets"] if w["name"] == worksheet), None)
+        if sheet is None:
+            raise ValueError(f"no worksheet {worksheet!r}")
+        sources = [d for d in sheet.get("datasources", []) if d != "Parameters"]
+        _, model = generate_model(workbook, datasource=sources[0] if sources else None)
+        query, report = worksheet_query(workbook, worksheet, model)
+    except (TableauFileError, ValueError) as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    typer.echo(json.dumps(query, indent=2, ensure_ascii=False))
+    for title, items in (("not converted", report.unsupported), ("notes", report.notes)):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if not report.ok:
+        raise typer.Exit(code=1)

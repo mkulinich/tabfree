@@ -420,7 +420,22 @@ class _Planner:
             if spec["by"] not in names:
                 raise CompileError(f"sort by unknown output {spec['by']!r}")
             if spec.get("order"):
-                raise UnsupportedError("manual sort orders are applied by the runtime")
+                # Manual sort: listed members first, in the listed order; the rest after, ascending.
+                members = list(spec["order"])
+                case = exp.Case(
+                    ifs=[
+                        exp.If(
+                            this=exp.EQ(this=_col(None, spec["by"]), expression=exp.convert(m)),
+                            true=exp.convert(i),
+                        )
+                        for i, m in enumerate(members)
+                        if m is not None
+                    ],
+                    default=exp.convert(len(members)),
+                )
+                order.append(exp.Ordered(this=case, nulls_first=False))
+                order.append(exp.Ordered(this=_col(None, spec["by"]), nulls_first=False))
+                continue
             key = f"__sort{i}" if spec.get("expr") else spec["by"]
             order.append(exp.Ordered(this=_col(None, key), desc=spec.get("dir") == "desc", nulls_first=False))
         if order:
