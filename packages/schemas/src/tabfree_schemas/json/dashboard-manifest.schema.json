@@ -156,6 +156,7 @@
           "minLength": 1
         },
         "dir": { "enum": ["asc", "desc"], "default": "asc" },
+        "expr": { "description": "Computed sort: order the \"by\" dimension by this aggregate, e.g. \"SUM([Sales])\", even when it is not an output.", "$ref": "#/$defs/expression" },
         "order": {
           "description": "Manual sort: members in display order.",
           "type": "array",
@@ -469,6 +470,32 @@
           "properties": {
             "grand": { "type": "boolean" },
             "subtotals": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "blend": {
+          "description": "Data blending: secondary data sources aggregated at the link fields and left-joined to this query (Tableau blends).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["model", "measures", "links"],
+            "properties": {
+              "model": { "$ref": "#/$defs/name" },
+              "measures": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/measure" } },
+              "links": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["primary", "secondary"],
+                  "properties": {
+                    "primary": { "description": "A dimension output of this query.", "type": "string", "minLength": 1 },
+                    "secondary": { "$ref": "#/$defs/fieldName" }
+                  }
+                }
+              }
+            }
           }
         },
         "pivotMeasures": {

@@ -287,6 +287,9 @@ class _Planner:
         self.week_start = _WEEKDAYS.index(model.week_start) if model.week_start in _WEEKDAYS else 6
         self.counter = 0
         self.table_calc_mode: Literal["runtime", "sql"] = "runtime"
+        self.root_table: str | None = None
+        self.pk_columns: dict[str, list[str]] = {}
+        self.native_atoms: set[Call] = set()
 
     # -- entry point ---------------------------------------------------------------------------
     def compile(self, query: Mapping[str, Any], where: list[Mapping[str, Any]]) -> CompiledQuery:
@@ -295,6 +298,16 @@ class _Planner:
         names = [n for n, _, _ in dims] + [n for n, _ in measures]
         if len(set(names)) != len(names):
             raise CompileError("output names must be unique within a query")
+        # Computed sorts ("sort Customer by SUM(Sales)") aggregate a hidden measure.
+        hidden: list[tuple[str, Node]] = []
+        for i, spec in enumerate(query.get("sort", [])):
+            if spec.get("expr"):
+                node = self.model.expand_formula(spec["expr"])
+                if not any(is_aggregate_call(n) for n in _outside_lods(node)):
+                    node = Call("SUM", (node,))
+                hidden.append((f"__sort{i}", node))
+        visible_measures = measures
+        measures = measures + hidden
 
         context, dimension_filters, measure_filters = self._split_filters(where)
         rls = self._rls_conditions()
@@ -347,20 +360,8 @@ class _Planner:
                 )
             out = out.where(exp.and_(*[_col("mf", f"m{i}") for i in range(len(measure_filters))]))
 
-        sort = list(query.get("sort", []))
-        if sort:
-            order = []
-            for s in sort:
-                if s["by"] not in names:
-                    raise CompileError(f"sort by unknown output {s['by']!r}")
-                if s.get("order"):
-                    raise UnsupportedError("manual sort orders are applied by the runtime")
-                order.append(
-                    exp.Ordered(this=_col(None, s["by"]), desc=s.get("dir") == "desc", nulls_first=False)
-                )
-            out = out.order_by(*order)
-        if query.get("limit"):
-            out = out.limit(int(query["limit"]))
+        out, columns_extra = self._finish(query, out, dims, measures, hidden, names)
+        sort = [x for x in query.get("sort", []) if not x.get("expr")]
 
         calcs = list(query.get("tableCalcs", []))
         deferred = [str(c["name"]) for c in calcs]
@@ -368,7 +369,7 @@ class _Planner:
         if calcs and self.table_calc_mode == "sql":
             from tabfree_compiler.windows import push_down
 
-            plan = push_down(calcs, [n for n, _, _ in dims], [n for n, _ in measures])
+            plan = push_down(calcs, [n for n, _, _ in dims], [n for n, _ in visible_measures])
             pushed, deferred = plan.columns, plan.deferred
             if pushed:
                 wrapper = exp.select(
@@ -385,12 +386,140 @@ class _Planner:
                         ]
                     )
                 out = wrapper
+        pivot = bool(query.get("pivotMeasures"))
+        if pivot:
+            out = self._pivot(out, dims, visible_measures, columns_extra)
+            columns_extra = [
+                *columns_extra,
+                OutputColumn("Measure Names", "dimension", "string"),
+                OutputColumn("Measure Values", "measure", "float"),
+            ]
         for cte in self.ctes:
             out = out.with_(cte.name, as_=cte.select)
-        compiled = _render(self, out, dims, measures)
+        compiled = _render(self, out, dims, [] if pivot else visible_measures)
         extra = tuple(OutputColumn(n, "measure", "float") for n, _ in pushed)
         return dataclasses.replace(
-            compiled, columns=compiled.columns + extra, deferred_table_calcs=tuple(deferred)
+            compiled,
+            columns=compiled.columns + tuple(columns_extra) + extra,
+            deferred_table_calcs=tuple(deferred),
+        )
+
+    # -- query tail: sorts, limit, totals ------------------------------------------------------
+    def _finish(
+        self,
+        query: Mapping[str, Any],
+        out: exp.Select,
+        dims: list[tuple[str, Node, str]],
+        measures: list[tuple[str, Node]],
+        hidden: list[tuple[str, Node]],
+        names: list[str],
+    ) -> tuple[exp.Select, list[OutputColumn]]:
+        sort = list(query.get("sort", []))
+        order: list[exp.Ordered] = []
+        for i, spec in enumerate(sort):
+            if spec["by"] not in names:
+                raise CompileError(f"sort by unknown output {spec['by']!r}")
+            if spec.get("order"):
+                raise UnsupportedError("manual sort orders are applied by the runtime")
+            key = f"__sort{i}" if spec.get("expr") else spec["by"]
+            order.append(exp.Ordered(this=_col(None, key), desc=spec.get("dir") == "desc", nulls_first=False))
+        if order:
+            out = out.order_by(*order)
+        if query.get("limit"):
+            out = out.limit(int(query["limit"]))
+        shown = [(n, node) for n, node in measures if not n.startswith("__sort")]
+        visible = [n for n, _, _ in dims] + [n for n, _ in shown]
+        extra: list[OutputColumn] = []
+
+        totals = query.get("totals") or {}
+        dim_names = [n for n, _, _ in dims]
+        levels: list[tuple[str, int]] = []  # (label, number of leading dimensions kept)
+        for sub in totals.get("subtotals", []):
+            if sub not in dim_names:
+                raise CompileError(f"subtotal on unknown dimension {sub!r}")
+            levels.append((sub, dim_names.index(sub) + 1))
+        if totals.get("grand"):
+            levels.append(("grand", 0))
+        if levels:
+            # Totals are re-aggregated at their own grain (COUNTD, AVG and LODs stay right), never summed.
+            detail = exp.select(
+                *[_col("d", n) for n in visible],
+                exp.alias_(_cast(exp.Null(), "string"), "__total", quoted=True),
+            ).from_(out.subquery("d"))
+            union: exp.Query = detail
+            for label, keep in levels:
+                grain = tuple(node for _, node, _ in dims[:keep])
+                agg = self._aggregate("filtered", grain, tuple(node for _, node in shown))
+                cols: list[exp.Expr] = []
+                for i, (name, _, _) in enumerate(dims):
+                    value = _col("t", f"k{i}") if i < keep else exp.Null()
+                    cols.append(exp.alias_(value, name, quoted=True))
+                for j, (name, _) in enumerate(shown):
+                    cols.append(exp.alias_(_col("t", f"m{j}"), name, quoted=True))
+                cols.append(exp.alias_(_str(label), "__total", quoted=True))
+                total = exp.select(*cols).from_(
+                    exp.Table(this=_ident(agg), alias=exp.TableAlias(this=_ident("t")))
+                )
+                union = exp.union(union, total, distinct=False)
+            ordering = [
+                exp.Ordered(this=exp.Not(this=exp.Is(this=_col(None, "__total"), expression=exp.Null())))
+            ]
+            ordering += [
+                exp.Ordered(this=_col(None, x["by"]), desc=x.get("dir") == "desc", nulls_first=False)
+                for x in sort
+                if not x.get("expr")
+            ]
+            out = exp.select(exp.Star()).from_(union.subquery("u")).order_by(*ordering)
+            extra.append(OutputColumn("__total", "dimension", "string"))
+        elif hidden:
+            # Drop the hidden sort measures but keep their order.
+            out = (
+                exp.select(*[_col("q", n) for n in visible])
+                .from_(out.subquery("q"))
+                .order_by(
+                    *[
+                        exp.Ordered(
+                            this=_col("q", o.this.name), desc=bool(o.args.get("desc")), nulls_first=False
+                        )
+                        for o in order
+                    ]
+                )
+            )
+        return out, extra
+
+    def _pivot(
+        self,
+        out: exp.Select,
+        dims: list[tuple[str, Node, str]],
+        measures: list[tuple[str, Node]],
+        extra: list[OutputColumn],
+    ) -> exp.Select:
+        """Tableau's Measure Names / Measure Values: one row per dimension member and measure."""
+        if not measures:
+            raise CompileError("pivotMeasures needs at least one measure")
+        passthrough = [n for n, _, _ in dims] + [c.name for c in extra]
+        parts: list[exp.Select] = []
+        for i, (name, _) in enumerate(measures):
+            parts.append(
+                exp.select(
+                    *[_col("q", n) for n in passthrough],
+                    exp.alias_(_str(name), "Measure Names", quoted=True),
+                    exp.alias_(_cast(_col("q", name), "float"), "Measure Values", quoted=True),
+                    exp.alias_(_num(i), "__measure_order", quoted=True),
+                ).from_(out.subquery("q"))
+            )
+        union: exp.Query = parts[0]
+        for part in parts[1:]:
+            union = exp.union(union, part, distinct=False)
+        ordering = [exp.Ordered(this=_col(None, n), nulls_first=False) for n, _, _ in dims]
+        return (
+            exp.select(
+                *[_col(None, n) for n in passthrough],
+                _col(None, "Measure Names"),
+                _col(None, "Measure Values"),
+            )
+            .from_(union.subquery("p"))
+            .order_by(*ordering, exp.Ordered(this=_col(None, "__measure_order")))
         )
 
     # -- requests ------------------------------------------------------------------------------
@@ -550,6 +679,24 @@ class _Planner:
         by = self.model.expand_formula(top["by"])
         return self._semi_join(target, by, scope, (n, top.get("direction", "top") == "bottom"))
 
+    def _set_membership(self, node: Call, scope: _RowScope) -> exp.Expr:
+        """A computed set: members of its field ranked by Top N, or passing a condition."""
+        set_id = str(node.args[0].value) if isinstance(node.args[0], Lit) else ""
+        spec = self.model.sets.get(set_id.casefold())
+        if spec is None:
+            raise CompileError(f"unknown set {set_id!r}")
+        target = node.args[1]
+        if "condition" in spec:
+            return self._semi_join(target, self.model.expand_formula(spec["condition"]), scope, None)
+        top = spec["top"]
+        n = top["n"]
+        if isinstance(n, Mapping):
+            n = self._param_value(n["param"])
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise CompileError(f"set {spec['name']!r}: Top N needs a positive integer")
+        by = self.model.expand_formula(top["by"])
+        return self._semi_join(target, by, scope, (n, top.get("direction", "top") == "bottom"))
+
     def _semi_join(
         self, target: Node, value: Node, scope: _RowScope, top: tuple[int, bool] | None
     ) -> exp.Expr:
@@ -580,6 +727,11 @@ class _Planner:
                 raise UnsupportedError(
                     f"{n.name} is a table calculation; declare it in the query's tableCalcs"
                 )
+            if isinstance(n, Call) and n.name == "_SET" and isinstance(n.args[0], Lit):
+                spec = self.model.sets.get(str(n.args[0].value).casefold(), {})
+                formula = spec.get("condition") or (spec.get("top") or {}).get("by")
+                if formula:
+                    self._register_columns(self.model.expand_formula(formula))
 
     def _table_ref(self, table_id: str, alias: str) -> exp.Expr:
         table = self.model.tables[table_id]
@@ -604,13 +756,27 @@ class _Planner:
     def _build_src(self) -> None:
         tables = sorted(self.tables_used) or [next(iter(self.model.tables))]
         root, joins = self._join_tree(tables)
+        self.root_table = root
         aliases = {t: f"t{i}" for i, t in enumerate([root, *[j[0] for j in joins]])}
-        select = exp.select(
-            *[
-                exp.alias_(_col(aliases[f.column.table], f.column.name), alias, quoted=True)
-                for fid, alias in self.columns.items()
-                if (f := self.model.fields[fid]).column is not None
+        # Primary keys of joined ("one"-side) tables: measures from those tables are aggregated over
+        # their own rows (Tableau's native grain), not over the fanned-out join.
+        keys: list[exp.Expr] = []
+        for table, _parent, _on in joins:
+            pk = self.model.tables[table].primary_key
+            self.pk_columns[table] = [f"pk_{table}_{_validated(c, 'column')}" for c in pk]
+            keys += [
+                exp.alias_(_col(aliases[table], c), alias, quoted=True)
+                for c, alias in zip(pk, self.pk_columns[table], strict=True)
             ]
+        select = exp.select(
+            *(
+                [
+                    exp.alias_(_col(aliases[f.column.table], f.column.name), alias, quoted=True)
+                    for fid, alias in self.columns.items()
+                    if (f := self.model.fields[fid]).column is not None
+                ]
+                + keys
+            )
             or [exp.alias_(exp.Literal.number(1), "one", quoted=True)]
         ).from_(self._table_ref(root, aliases[root]))
         for table, parent, on in joins:
@@ -738,7 +904,11 @@ class _Planner:
             *[exp.alias_(p.e, f"m{i}", quoted=True) for i, p in enumerate(posts)],
         ).from_(exp.Table(this=_ident(main_name), alias=exp.TableAlias(this=_ident("g"))))
         for call, alias in domain_atoms.items():
-            sub = self._domain_atom(call, source, grain)
+            sub = (
+                self._native_atom(call, source, grain)
+                if call in self.native_atoms
+                else self._domain_atom(call, source, grain)
+            )
             if grain:
                 on = exp.and_(
                     *[_null_safe_eq(_col("g", f"k{i}"), _col(alias, f"k{i}")) for i in range(len(grain))]
@@ -770,6 +940,10 @@ class _Planner:
             if isinstance(n, Call) and is_aggregate_call(n):
                 type_ = self._agg_type(n, scope)
                 if any(isinstance(x, Lod) for x in walk(n)) and not self._reads_columns(n):
+                    alias = domain_atoms.setdefault(n, f"d{len(domain_atoms)}")
+                    return T(_col(alias, "v"), type_)
+                if self._fan_out_table(n) is not None:
+                    self.native_atoms.add(n)
                     alias = domain_atoms.setdefault(n, f"d{len(domain_atoms)}")
                     return T(_col(alias, "v"), type_)
                 alias = atoms.setdefault(n, f"a{len(atoms)}")
@@ -806,6 +980,56 @@ class _Planner:
         ):
             return "float"
         return self._row(call.args[0], scope, probe=True).type if call.args else "unknown"
+
+    def _fan_out_table(self, call: Call) -> str | None:
+        """The joined ("one"-side) table an aggregate reads only from, if any: its rows repeat."""
+        if any(isinstance(x, Lod) for x in walk(call)):
+            return None
+        tables = set()
+        for ref in (n for n in walk(call) if isinstance(n, Field) and self.model.parameter_for(n) is None):
+            column = self.model.column_of(ref).column
+            if column is not None:
+                tables.add(column.table)
+        if len(tables) != 1:
+            return None
+        table = next(iter(tables))
+        if table == self.root_table or table not in self.pk_columns:
+            return None
+        if not self.pk_columns[table]:
+            raise UnsupportedError(
+                f"measures from table {table!r} repeat across the join; give the table a primaryKey "
+                "so they can be aggregated at its own grain"
+            )
+        return table
+
+    def _native_atom(self, call: Call, source: str, grain: tuple[Node, ...]) -> str:
+        """AGG over the distinct rows of the measure's own table within each view-grain member."""
+        table = self._fan_out_table(call)
+        if table is None:  # pragma: no cover - only called for fan-out atoms
+            raise CompileError("not a related-table measure")
+        src_scope = self._scope(source, "s", source, grain)
+        args = [a for a in call.args if not isinstance(a, Lit)]
+        domain = exp.select(
+            *[exp.alias_(self._row(g, src_scope).e, f"k{i}", quoted=True) for i, g in enumerate(grain)],
+            *[_col("s", alias) for alias in self.pk_columns[table]],
+            *[exp.alias_(self._row(a, src_scope).e, f"v{j}", quoted=True) for j, a in enumerate(args)],
+        )
+        domain = self._from(src_scope, domain).distinct()
+        domain_name = self._add_cte(self._new_name("native"), domain)
+        scope = self._scope(domain_name, "dm", source, grain)
+        scope.keymap = {g: f"k{i}" for i, g in enumerate(grain)}
+        scope.keymap.update({a: f"v{j}" for j, a in enumerate(args)})
+        value = self._agg_call(call, scope)
+        select = self._from(
+            scope,
+            exp.select(
+                *[exp.alias_(_col("dm", f"k{i}"), f"k{i}", quoted=True) for i in range(len(grain))],
+                exp.alias_(value.e, "v", quoted=True),
+            ),
+        )
+        if grain:
+            select = select.group_by(*[exp.Literal.number(i + 1) for i in range(len(grain))])
+        return self._add_cte(self._new_name("nativeagg"), select)
 
     def _domain_atom(self, call: Call, source: str, grain: tuple[Node, ...]) -> str:
         """AGG(f({LOD}...)) over the distinct (view grain + LOD dimensions) domain."""
@@ -961,6 +1185,10 @@ class _Planner:
                 if probe:
                     return T(exp.Null(), "float")
                 return self._lod_value(n, scope)
+            if isinstance(n, Call) and n.name == "_SET":
+                if probe:
+                    return T(exp.Null(), "boolean")
+                return T(self._set_membership(n, scope), "boolean")
             if is_aggregate_call(n):
                 raise CompileError(f"aggregate {to_formula(n)} used where a row-level value is required")
             return None

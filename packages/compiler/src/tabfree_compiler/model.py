@@ -50,6 +50,7 @@ class Table:
     id: str
     source: Mapping[str, Any]
     columns: Mapping[str, Column]
+    primary_key: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,9 @@ class SemanticModel:
     parameters: dict[str, Parameter]  # by id
     data_source_filters: list[str]
     rls: list[RlsPolicy]
+    groups: dict[str, Mapping[str, Any]] = field(default_factory=dict)  # by casefolded name and id
+    sets: dict[str, Mapping[str, Any]] = field(default_factory=dict)
+    bins: dict[str, Mapping[str, Any]] = field(default_factory=dict)
     _by_name: dict[str, ModelField] = field(default_factory=dict)
     _params_by_name: dict[str, Parameter] = field(default_factory=dict)
     _expanded: dict[str, Node] = field(default_factory=dict)
@@ -89,7 +93,7 @@ class SemanticModel:
         tables: dict[str, Table] = {}
         for t in doc.get("tables", []):
             cols = {c["name"]: Column(t["id"], c["name"], c["type"]) for c in t.get("columns", [])}
-            tables[t["id"]] = Table(t["id"], t["source"], cols)
+            tables[t["id"]] = Table(t["id"], t["source"], cols, tuple(t.get("primaryKey") or ()))
         rels = [
             Relationship(
                 r["left"],
@@ -144,6 +148,10 @@ class SemanticModel:
             data_source_filters=[f["formula"] for f in doc.get("dataSourceFilters", [])],
             rls=rls,
         )
+        for kind, store in (("groups", model.groups), ("sets", model.sets), ("bins", model.bins)):
+            for item in doc.get(kind, []):
+                store.setdefault(str(item["name"]).casefold(), item)
+                store.setdefault(str(item["id"]).casefold(), item)
         for f in fields.values():
             model._by_name.setdefault(f.name.casefold(), f)
             model._by_name.setdefault(f.id.casefold(), f)
@@ -187,6 +195,11 @@ class SemanticModel:
                 return node
             if len(node.parts) != 1:
                 raise UnsupportedError(f"qualified field reference {'.'.join(node.parts)!r}")
+            key = node.name.casefold()
+            if key not in self._by_name:
+                derived = self._derived(key, stack)
+                if derived is not None:
+                    return derived
             f = self.field(node.name)
             if f.formula is None:
                 return Field((f.id,))
@@ -199,12 +212,58 @@ class SemanticModel:
             return cached
         return _rebuild(node, [self._expand(c, stack) for c in children(node)])
 
+    def _derived(self, key: str, stack: tuple[str, ...]) -> Node | None:
+        """Groups, bins and sets as expressions over their source field."""
+        from tabfree_compiler.calc import Binary, Case, InList
+
+        if key in self.groups:
+            g = self.groups[key]
+            base = self._expand(Field((str(g["field"]),)), stack)
+            whens = tuple(
+                (_literal(member), Lit("string", str(label)))
+                for label, members in g["groups"].items()
+                for member in members
+            )
+            # Ungrouped members keep their own name unless the group has an "Other" bucket.
+            other: Node = Lit("string", str(g["otherLabel"])) if g.get("otherLabel") else base
+            return Case(base, whens, other)
+        if key in self.bins:
+            b = self.bins[key]
+            base = self._expand(Field((str(b["field"]),)), stack)
+            size = b["size"]
+            size_node: Node = (
+                Field(("Parameters", self.parameters[size["param"]].name))
+                if isinstance(size, Mapping)
+                else _literal(size)
+            )
+            return Binary("*", Call("FLOOR", (Binary("/", base, size_node),)), size_node)
+        if key in self.sets:
+            st = self.sets[key]
+            base = self._expand(Field((str(st["field"]),)), stack)
+            if "members" in st:
+                return InList(base, tuple(_literal(m) for m in st["members"]))
+            # Computed sets (Top N or a condition) are semi-joins, planned by the compiler.
+            return Call("_SET", (Lit("string", str(st["id"])), base))
+        return None
+
     def column_of(self, ref: Field) -> ModelField:
         """The column field behind an expanded leaf ``Field`` (always a field id)."""
         f = self.fields.get(ref.name) or self.field(ref.name)
         if f.column is None:
             raise CompileError(f"{ref.name!r} is not a column")
         return f
+
+
+def _literal(value: Any) -> Node:
+    if value is None:
+        return Lit("null", None)
+    if isinstance(value, bool):
+        return Lit("boolean", value)
+    if isinstance(value, int):
+        return Lit("integer", value)
+    if isinstance(value, float):
+        return Lit("float", value)
+    return Lit("string", str(value))
 
 
 def _rebuild(node: Node, kids: Sequence[Node]) -> Node:
