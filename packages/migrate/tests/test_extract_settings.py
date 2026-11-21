@@ -132,4 +132,4 @@ def test_settings_from_a_parsed_workbook(tmp_path: Path) -> None:
     assert found[0].file == "Data/Extracts/orders.hyper"
     assert found[0].incremental_key == "[Order Date]"
     assert found[0].filters
-    assert found[0].filters[0]["column"] == "[Region]"
+    assert found[0].filters[0]["field"] == "[Region]"  # IR @1 names the filtered field "field"

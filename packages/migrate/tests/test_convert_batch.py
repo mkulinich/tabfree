@@ -94,7 +94,9 @@ def test_directory_batch_converts_flags_and_records(inputs: Path, tmp_path: Path
     assert sink.exists(table["parquet"])
     assert table["parquet"] == f"extracts/{member_sha}/{table['glue_table']}/data.parquet"
     assert table["definition"]["incremental"]["glue_column"] == "order_date"
-    assert table["definition"]["filters"]["tableau"][0]["column"] == "[Region]"
+    assert (
+        table["definition"]["filters"]["tableau"][0]["field"] == "[Region]"
+    )  # IR @1 names the filtered field "field"
     assert table["glue_parameters"]["tabfree.extract.incremental_key"] == "order_date"
     assert table["glue_parameters"]["tabfree.geo.location.srid"] == "4326"
     staging_ddl, ctas, _drop = table["athena_ddl"]
