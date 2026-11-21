@@ -31,6 +31,7 @@ from tabfree_api.cache import CachedResult, CacheStats, Clock, NoCache, ResultCa
 from tabfree_api.engines import Engine, EngineError, ExecuteOptions
 from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
 from tabfree_compiler import CompiledQuery, CompileError, SemanticModel, Session, compile_query
+from tabfree_compiler.blend import compile_blend
 from tabfree_compiler.dashboard import BoundQuery, bind_domain, bind_query
 from tabfree_schemas import SchemaKind, load_schema
 
@@ -161,14 +162,27 @@ class QueryService:
         query = dict(bound.query)
         cap = min(int(query.get("limit", limits.row_limit)), limits.row_limit)
         query["limit"] = cap + 1  # one extra row tells us the result was truncated
-        compiled = compile_query(
-            model,
-            query,
-            dialect=engine.dialect,
-            session=session,
-            parameters=bound.parameters,
-            filters=bound.filters,
-        )
+        if query.get("blend"):
+            # Data blending: every secondary model joins in the same statement (same connection).
+            primary = next((a for a, m in bound.models.items() if m == bound.model), bound.model)
+            compiled = compile_blend(
+                {alias: self._model(model_id)[0] for alias, model_id in bound.models.items()},
+                primary,
+                query,
+                dialect=engine.dialect,
+                session=session,
+                parameters=bound.parameters,
+                filters=bound.filters,
+            )
+        else:
+            compiled = compile_query(
+                model,
+                query,
+                dialect=engine.dialect,
+                session=session,
+                parameters=bound.parameters,
+                filters=bound.filters,
+            )
         columns = _columns(compiled, doc, bound.query)
         version = self._data_version(bound.model)
         today = session.today or dt.datetime.fromtimestamp(self._clock(), dt.UTC).date()

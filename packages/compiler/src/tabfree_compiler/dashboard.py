@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tabfree_compiler.model import CompileError
@@ -25,6 +25,8 @@ class BoundQuery:
     query: Mapping[str, Any]
     filters: tuple[Mapping[str, Any], ...]
     parameters: Mapping[str, Any]
+    #: The manifest's model aliases (alias → model id), for blended queries.
+    models: Mapping[str, str] = field(default_factory=dict)
 
 
 def _applies(spec: Mapping[str, Any], query: str) -> bool:
@@ -190,7 +192,11 @@ def bind_query(
         if source not in queries:
             raise CompileError(f"unknown selection source {source!r}")
     filters += _action_filters(manifest, query, selections or {})
-    return BoundQuery(_model_for(manifest, spec), spec, tuple(filters), _parameters(manifest, state))
+    aliases = {str(k): str(v) for k, v in manifest.get("models", {}).items()}
+    for blend in spec.get("blend", []):
+        if blend.get("model") not in aliases:
+            raise CompileError(f"blend: unknown model alias {blend.get('model')!r}")
+    return BoundQuery(_model_for(manifest, spec), spec, tuple(filters), _parameters(manifest, state), aliases)
 
 
 def bind_domain(manifest: Mapping[str, Any], filter_name: str, state: Mapping[str, Any]) -> BoundQuery:

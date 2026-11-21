@@ -53,7 +53,7 @@ def test_triage_reasons_blockers_and_retirement() -> None:
     assert by["blended"].triage == "rebuild"
     assert "data blending" in by["blended"].reasons[0]
     assert by["regex"].triage == "rebuild"  # RAWSQL
-    assert by["regex"].blockers == ["compiler support for REGEXP_MATCH, RAWSQL_INT"]
+    assert by["regex"].blockers == ["compiler support for RAWSQL_INT"]  # REGEXP_MATCH is supported (P2.3)
     assert by["unused"].triage == "retire"
     assert by["rls"].census.totals["user_functions"] == 1
     assert estate.totals["calculated_fields"] == 4
