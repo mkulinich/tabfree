@@ -71,3 +71,69 @@ For each view: PNG (`resolution=high`, fixed `--viz-width`/`--viz-height`, defau
 ```
 
 Filters are sent as `vf_<field>=<value>` and parameters as `vf_Parameters.<name>=<value>`. `ground_truth/index.json` records, per capture, the view and workbook, the workbook `updated_at`, the exact options **and the query parameters sent**, the hash, size and time, so every capture can be reproduced. Failed captures are recorded and retried on the next run; successful ones are skipped until the workbook changes (`--force` re-captures).
+
+## Extract conversion at scale (P2.8)
+
+`convert-batch` converts many `.hyper` extracts to Parquet plus Athena DDL, with per-column parity statistics, in parallel and resumably. `parity-check` compares a converted copy with the statistics Hyper recorded. Conversion needs the `hyper` extra (Linux x86-64 or Windows; there is no macOS arm64 wheel), so locally it runs in the converter image (`infra/docker/converter/`) and in CI's `hyper` job.
+
+```bash
+# From a directory of .hyper/.tde/.twbx/.tdsx files, or from the store written by `download`:
+uv run tabfree-migrate convert-batch --input-dir extracts/ --out converted/ --workers 4
+uv run tabfree-migrate convert-batch --store s3://RAW-BUCKET --out s3://LAKE-BUCKET/staging \
+    --database tabfree_sandbox --iceberg-root s3://LAKE-BUCKET/warehouse/tabfree_sandbox --shard 0/8
+# Verify: DuckDB over the local Parquet, or Athena (needs AWS and the aws extra)
+uv run tabfree-migrate parity-check converted/extracts/<sha256>/report.json --root converted/
+uv run tabfree-migrate parity-check report.json --engine athena --workgroup tabfree-sandbox
+```
+
+- **Identity and resume.** Each extract is keyed by the sha256 of its bytes (a package member is copied out of the zip and hashed; its name never reaches the file system). Output goes under `extracts/<sha256>/`: `<glue_table>/data.parquet` per table and `report.json`. `extracts/manifest.json` records sources and extracts; a re-run skips everything already converted, retries failures, and `--force` redoes all. Parallel Fargate tasks split the work with `--shard INDEX/COUNT` (each shard keeps its own manifest); within a task `--workers` processes each run their own `hyperd`.
+- **Report.** Per extract: status (`converted`, `needs-upgrade`, `upgraded`, `unsupported`, `failed`), origin and package member, the IR extract settings, and per table the column mapping with notes, Hyper-side statistics, the table definition, Glue parameters, the Athena DDL (staging table, Iceberg CTAS, drop), an explicit Iceberg `CREATE TABLE` for rebuilds, and the Athena parity query.
+- **Extract settings become table definitions.** Filters (kept verbatim, already applied in the data), aggregation/roll-up, sampling and the incremental refresh key are read from the IR's `datasources[].extract` (every key optional). The incremental key is resolved to its Glue column and recorded explicitly (`tabfree.extract.incremental_key`) for the Phase 6 refresh pipeline. Athena accepts only a fixed list of Iceberg table properties, so the recipe goes into the staging table's `TBLPROPERTIES` and into Glue table parameters (`tabfree.*`, applied with `glue:UpdateTable` after the CTAS).
+- **Legacy `.tde`.** Detected by magic bytes (`20 02 01 62 a0 1e ab 07`; `.hyper` starts with `Hyper`), never by name, and reported as `needs-upgrade` with the two documented ways out: upgrade on Tableau (Server refresh, or Desktop 2024.2 or earlier) and download again, or run `convert-batch --tde upgrade` in the legacy image (`infra/docker/converter/Dockerfile.tde-legacy`, `tableauhyperapi==0.0.17537`, the build Tableau's `tde-to-hyper` sample needs). That writes `upgraded/<sha256>.hyper` to the output; the next run in the normal image converts it. The legacy path is untested: no `.tde` reader is available in CI.
+
+### Type mapping
+
+Generated from `tabfree_migrate.extract_types` (a test keeps this table in sync):
+
+| Hyper type | Athena / Iceberg type | Export | Parity rule | Notes |
+|---|---|---|---|---|
+| `BOOL` | `boolean` | as is | boolean | Parity also counts true values. |
+| `SMALL_INT` | `integer` | as is | integer | Widened: Iceberg has no 16-bit integer type. Lossless. |
+| `INT` | `integer` | as is | integer |  |
+| `BIG_INT` | `bigint` | as is | integer |  |
+| `OID` | `bigint` | as is | integer | Unsigned 32-bit; fits in bigint. |
+| `NUMERIC` | `decimal(p,s)` | as is | decimal | Precision and scale kept up to 38 digits; wider values become double (lossy, flagged). |
+| `DOUBLE` | `double` | as is | float | Sums compared with a relative tolerance. |
+| `FLOAT` | `float` | as is | float32 | 32-bit REAL; compared with a looser float32 tolerance. |
+| `TEXT` | `string` | as is | text | Collation is recorded; Athena compares code points (case-sensitive). |
+| `VARCHAR` | `string` | as is | text | Length limit is not enforced by Iceberg. |
+| `CHAR` | `string` | as is | text | Fixed length is not kept. |
+| `JSON` | `string` | as is | text | Kept as JSON text; parse with json_extract. |
+| `DATE` | `date` | as is | date |  |
+| `TIMESTAMP` | `timestamp` | as is | timestamp | Wall-clock time without zone; Iceberg timestamp (microseconds). |
+| `TIMESTAMP_TZ` | `timestamp` | as is | timestamp_tz | Stored as the UTC instant (Parquet isAdjustedToUTC); zone recorded in tabfree.tz.* parameters. |
+| `TIME` | `string` | `CAST(... AS TEXT)` | text | Athena tables have no TIME type: HH:MM:SS[.ffffff] text. |
+| `INTERVAL` | `string` | `CAST(... AS TEXT)` | text | Hyper's interval text form. |
+| `GEOGRAPHY` | `string` | `CAST(... AS TEXT)` | wkt | WKT text, SRID 4326 (WGS 84) recorded; use ST_GeometryFromText in Athena. |
+| `BYTES` | `binary` | as is | binary | Parity checks counts only. |
+| `(other)` | `string` | `CAST(... AS TEXT)` | text | Unknown Hyper type: exported as text and flagged in the report. |
+
+Geography is exported as WKT text. WKT carries no SRID, so the table definition records `tabfree.geo.<column>.srid = 4326` (Tableau stores WGS 84 longitude/latitude); query it with `ST_GeometryFromText`. Text collations other than binary are recorded per column (`tabfree.collation.<column>`): Athena compares by code point and case-sensitively, so case-insensitive Tableau filters need `lower()`.
+
+### Parity rules
+
+One query per table computes the statistics in Hyper, in Athena and in DuckDB (the local stand-in for Athena, reading the exported Parquet); `tabfree_migrate.parity` compares them:
+
+| Statistic | Column kinds | Rule |
+|---|---|---|
+| rows, non-null count, nulls | all | exact |
+| distinct count | all but binary | exact; a warning only for text under a non-binary collation |
+| sum | integer, decimal | exact, in 38-digit decimal arithmetic (Athena's `SUM(bigint)` would overflow) |
+| sum, min, max | double / float | relative tolerance 1e-9 (1e-6 for 32-bit float); NaN equals NaN |
+| true count | boolean | exact |
+| min, max | integer, decimal, date | exact |
+| min, max | timestamp, timestamp with zone | normalised to naive UTC, microseconds |
+| min, max | text | exact; a warning only under a non-binary collation |
+| min, max | WKT | normalised: upper case, whitespace collapsed |
+
+**Where it runs.** Mapping, settings, `.tde` detection, the batch runner (with a fake converter) and parity (DuckDB over Parquet) are unit-tested on any platform. Real Hyper conversion and Hyper-vs-Parquet parity on corpus extracts run only in CI's `hyper` job. Athena DDL, Glue parameters, the Athena parity run, S3 and the Fargate task need AWS and have not been run yet.

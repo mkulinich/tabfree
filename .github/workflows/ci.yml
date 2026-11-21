@@ -40,7 +40,23 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --all-packages --extra hyper --locked
-      - run: uv run pytest packages/migrate/tests/test_hyper.py -rs
+      # Real Hyper conversion, Hyper-vs-Parquet parity (DuckDB stands in for Athena) and the batch runner.
+      - run: >-
+          uv run pytest -rs
+          packages/migrate/tests/test_hyper.py
+          packages/migrate/tests/test_parity.py
+          packages/migrate/tests/test_convert_batch.py
+          packages/migrate/tests/test_extract_types.py
+
+  converter-image:
+    # Builds the Fargate converter image (P2.8) and smoke-runs it as non-root with a read-only root fs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -f infra/docker/converter/Dockerfile -t tabfree/converter:ci .
+      - run: >-
+          docker run --rm --read-only --tmpfs /scratch:uid=10001,gid=10001
+          tabfree/converter:ci convert-batch --help
 
   node:
     runs-on: ubuntu-latest

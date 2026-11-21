@@ -3,56 +3,38 @@
 Uses Tableau's Hyper API (Apache-2.0, optional extra ``tabfree-migrate[hyper]``; wheels exist for
 Linux x86-64 and Windows, so conversion runs in CI and on Fargate). For every table the converter:
 
-1. writes Parquet with Hyper's own ``COPY ... TO ... (FORMAT PARQUET)``; geography is cast to text,
-2. records the row count and per-column parity aggregates (COUNT, and SUM for numeric columns)
-   so the Athena copy can be verified against the original extract,
-3. emits Athena DDL: an external staging table over the Parquet files plus a CTAS into Iceberg.
+1. maps each column with :mod:`tabfree_migrate.extract_types` (geography, time and interval are
+   cast to text; geography becomes WKT, SRID 4326),
+2. writes Parquet with Hyper's own ``COPY ... TO ... (FORMAT PARQUET)``,
+3. computes per-column parity statistics in Hyper (:mod:`tabfree_migrate.parity`) so the Athena
+   copy can be verified against the original extract,
+4. and :func:`athena_ddl` emits the Athena DDL: an external staging table over the Parquet files,
+   a CTAS into Iceberg, and the staging drop.
 
-Telemetry to Tableau is always disabled.
+Telemetry to Tableau is always disabled. Hyper writes its log into ``log_dir`` (default: the
+output directory), so the converter also runs with a read-only root file system.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-#: Hyper SQL type (as reported by the catalog) → Athena/Iceberg column type.
-_TYPE_MAP = {
-    "BOOL": "boolean",
-    "SMALL_INT": "smallint",
-    "INT": "integer",
-    "BIG_INT": "bigint",
-    "OID": "bigint",
-    "DOUBLE": "double",
-    "FLOAT": "double",
-    "TEXT": "string",
-    "VARCHAR": "string",
-    "CHAR": "string",
-    "JSON": "string",
-    "DATE": "date",
-    "TIMESTAMP": "timestamp",
-    "TIMESTAMP_TZ": "timestamp",
-    "TIME": "string",
-    "INTERVAL": "string",
-    "GEOGRAPHY": "string",
-    "BYTES": "binary",
-}
-_NUMERIC = {"SMALL_INT", "INT", "BIG_INT", "DOUBLE", "FLOAT", "NUMERIC"}
-_TEXT_CAST = {"GEOGRAPHY", "TIME", "INTERVAL"}
+from tabfree_migrate.extract_types import map_type
+from tabfree_migrate.parity import StatsQuery, TableStats, athena_table, parse_stats, stats_query
+
 _IDENT = re.compile(r"[^a-z0-9_]+")
 
 
-def athena_type(hyper_type: str, precision: int | None = None, scale: int | None = None) -> str:
+def athena_type(
+    hyper_type: str, precision: int | None = None, scale: int | None = None, collation: str | None = None
+) -> str:
     """Map a Hyper type name (e.g. ``NUMERIC``, ``TEXT``) to an Athena/Iceberg type."""
-    name = hyper_type.upper()
-    if name == "NUMERIC":
-        if precision and precision <= 38:
-            return f"decimal({precision},{scale or 0})"
-        return "double"
-    return _TYPE_MAP.get(name, "string")
+    return map_type(hyper_type, precision, scale, collation).athena
 
 
 def glue_identifier(name: str, *, prefix: str = "c") -> str:
@@ -90,6 +72,21 @@ class ColumnInfo:
     hyper_type: str
     athena_type: str
     nullable: bool
+    export_as_text: bool = False
+    parity: str = ""
+    collation: str | None = None
+    scale: int | None = None
+    notes: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.parity:
+            mapped = map_type(self.hyper_type, None, self.scale, self.collation)
+            self.parity = mapped.parity.value
+            self.export_as_text = self.export_as_text or mapped.export_as_text
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ColumnInfo:
+        return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
 
 
 @dataclass
@@ -100,18 +97,53 @@ class TableResult:
     rows: int
     columns: list[ColumnInfo]
     parquet: str
-    parity: dict[str, dict[str, float | int | None]] = field(default_factory=dict)
+    #: Per-column statistics computed in Hyper (``parity.TableStats.to_dict()``).
+    stats: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TableResult:
+        return cls(
+            schema=str(data.get("schema", "")),
+            table=str(data["table"]),
+            glue_table=str(data["glue_table"]),
+            rows=int(data["rows"]),
+            columns=[ColumnInfo.from_dict(c) for c in data["columns"]],
+            parquet=str(data.get("parquet", "")),
+            stats=dict(data.get("stats", {})),
+        )
+
+    def hyper_stats(self) -> TableStats:
+        return TableStats.from_dict(self.stats)
+
+
+def _properties(properties: Mapping[str, str]) -> str:
+    pairs = ",\n  ".join(f"{_quote_sql_string(k)} = {_quote_sql_string(v)}" for k, v in properties.items())
+    return f"\nTBLPROPERTIES (\n  {pairs}\n)"
+
+
+def _column_list(result: TableResult) -> str:
+    return ",\n  ".join(f"`{c.glue_name}` {c.athena_type}" for c in result.columns)
 
 
 def athena_ddl(
-    result: TableResult, *, database: str, staging_location: str, iceberg_location: str
+    result: TableResult,
+    *,
+    database: str,
+    staging_location: str,
+    iceberg_location: str,
+    table_properties: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Athena statements: external Parquet staging table, then CTAS into an Iceberg table."""
+    """Athena statements: external Parquet staging table, then CTAS into an Iceberg table, then drop.
+
+    ``table_properties`` (the extract recipe, ``tabfree.*`` keys) go on the staging table; Athena
+    allows only a fixed set of Iceberg properties, so the same keys are also applied to the Iceberg
+    table as Glue parameters (``glue:UpdateTable``) after the CTAS.
+    """
     staging = f"{result.glue_table}__staging"
-    cols = ",\n  ".join(f"`{c.glue_name}` {c.athena_type}" for c in result.columns)
+    props = _properties(table_properties) if table_properties else ""
     return [
-        f"CREATE EXTERNAL TABLE IF NOT EXISTS `{database}`.`{staging}` (\n  {cols}\n)\n"
-        f"STORED AS PARQUET\nLOCATION {_quote_sql_string(staging_location)}",
+        f"CREATE EXTERNAL TABLE IF NOT EXISTS `{database}`.`{staging}` (\n  {_column_list(result)}\n)\n"
+        f"STORED AS PARQUET\nLOCATION {_quote_sql_string(staging_location)}{props}",
         f"CREATE TABLE `{database}`.`{result.glue_table}`\n"
         f"WITH (table_type = 'ICEBERG', format = 'PARQUET', "
         f"location = {_quote_sql_string(iceberg_location)}, is_external = false)\n"
@@ -120,14 +152,31 @@ def athena_ddl(
     ]
 
 
-def convert_hyper(path: Path, out_dir: Path) -> list[TableResult]:
+def iceberg_table_ddl(result: TableResult, *, database: str, location: str) -> str:
+    """Explicit Iceberg ``CREATE TABLE`` (no data): what a Phase 6 full rebuild starts from."""
+    return (
+        f"CREATE TABLE `{database}`.`{result.glue_table}` (\n  {_column_list(result)}\n)\n"
+        f"LOCATION {_quote_sql_string(location)}\n"
+        "TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')"
+    )
+
+
+def athena_parity_query(result: TableResult, *, database: str) -> StatsQuery:
+    """The per-column statistics query for the converted table, in Athena SQL."""
+    return stats_query(athena_table(database, result.glue_table), result.columns, "athena")
+
+
+def convert_hyper(
+    path: Path, out_dir: Path, *, table_prefix: str = "", log_dir: Path | None = None
+) -> list[TableResult]:
     """Export every table of a .hyper file to Parquet under ``out_dir``; return table metadata."""
     from tableauhyperapi import Connection, CreateMode, HyperProcess, Telemetry
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    parameters = {"log_dir": str(log_dir or out_dir)}
     results: list[TableResult] = []
     with (
-        HyperProcess(telemetry=Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU) as hyper,
+        HyperProcess(telemetry=Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, parameters=parameters) as hyper,
         Connection(hyper.endpoint, str(path), CreateMode.NONE) as conn,
     ):
         table_names = [
@@ -135,25 +184,33 @@ def convert_hyper(path: Path, out_dir: Path) -> list[TableResult]:
             for schema in conn.catalog.get_schema_names()
             for table in conn.catalog.get_table_names(schema)
         ]
-        glue_tables = unique_identifiers([t.name.unescaped for t in table_names])
+        prefix = f"{table_prefix}__" if table_prefix else ""
+        glue_tables = unique_identifiers([prefix + t.name.unescaped for t in table_names])
         for table_name, glue_table in zip(table_names, glue_tables, strict=True):
             definition = conn.catalog.get_table_definition(table_name)
             raw_names = [c.name.unescaped for c in definition.columns]
             columns = []
             for col, glue_name in zip(definition.columns, unique_identifiers(raw_names), strict=True):
                 tag = str(col.type.tag).split(".")[-1]
+                collation = getattr(col, "collation", None)
+                collation = str(collation) if collation else None
+                mapped = map_type(tag, col.type.precision, col.type.scale, collation)
                 columns.append(
                     ColumnInfo(
                         name=col.name.unescaped,
                         glue_name=glue_name,
                         hyper_type=tag,
-                        athena_type=athena_type(tag, col.type.precision, col.type.scale),
-                        nullable=str(col.nullability).endswith("NULLABLE")
-                        and "NOT" not in str(col.nullability),
+                        athena_type=mapped.athena,
+                        nullable="NOT" not in str(col.nullability).upper(),
+                        export_as_text=mapped.export_as_text,
+                        parity=mapped.parity.value,
+                        collation=collation,
+                        scale=mapped.scale,
+                        notes=mapped.notes,
                     )
                 )
             select = ", ".join(
-                (f"CAST({_quote_hyper(c.name)} AS TEXT)" if c.hyper_type in _TEXT_CAST
+                (f"CAST({_quote_hyper(c.name)} AS TEXT)" if c.export_as_text
                  else _quote_hyper(c.name)) + f" AS {_quote_hyper(c.glue_name)}"
                 for c in columns
             )  # fmt: skip
@@ -162,33 +219,25 @@ def convert_hyper(path: Path, out_dir: Path) -> list[TableResult]:
                 f"COPY (SELECT {select} FROM {table_name}) TO "
                 f"{_quote_sql_string(str(target))} WITH (FORMAT PARQUET)"
             )
-            rows = int(conn.execute_scalar_query(f"SELECT COUNT(*) FROM {table_name}"))
-            parity: dict[str, dict[str, float | int | None]] = {}
-            for c in columns:
-                quoted = _quote_hyper(c.name)
-                stats: dict[str, float | int | None] = {
-                    "count": int(conn.execute_scalar_query(f"SELECT COUNT({quoted}) FROM {table_name}"))
-                }
-                if c.hyper_type in _NUMERIC:
-                    total = conn.execute_scalar_query(f"SELECT SUM({quoted}) FROM {table_name}")
-                    stats["sum"] = None if total is None else float(total)
-                parity[c.glue_name] = stats
+            query = stats_query(str(table_name), columns, "hyper")
+            row = conn.execute_list_query(query.sql)[0]
+            stats = parse_stats(query, row, columns)
             results.append(
                 TableResult(
                     schema=table_name.schema_name.name.unescaped if table_name.schema_name else "",
                     table=table_name.name.unescaped,
                     glue_table=glue_table,
-                    rows=rows,
+                    rows=stats.rows,
                     columns=columns,
                     parquet=str(target),
-                    parity=parity,
+                    stats=stats.to_dict(),
                 )
             )
     return results
 
 
 def write_report(results: list[TableResult], path: Path) -> None:
-    path.write_text(json.dumps([asdict(r) for r in results], indent=2), encoding="utf-8")
+    path.write_text(json.dumps(report_dicts(results), indent=2, default=str), encoding="utf-8")
 
 
 def report_dicts(results: list[TableResult]) -> list[dict[str, Any]]:

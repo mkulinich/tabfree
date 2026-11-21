@@ -186,3 +186,32 @@ class FakeS3Client:
         if (Bucket, Key) not in self.objects:
             raise FakeS3Error("NoSuchKey")
         return {"Body": _Body(self.objects[(Bucket, Key)][0])}
+
+    def download_file(self, Bucket: str, Key: str, Filename: str) -> None:  # noqa: N803
+        if (Bucket, Key) not in self.objects:
+            raise FakeS3Error("404")
+        Path(Filename).write_bytes(self.objects[(Bucket, Key)][0])
+
+
+def fake_convert_extract(path: Path, out_dir: Path, *, table_prefix: str = "") -> list[Any]:
+    """Stand-in for ``hyper.convert_hyper`` (module-level, so a process pool can pickle it).
+
+    Writes a placeholder Parquet file and returns fixed metadata. A file whose first bytes
+    contain ``FAIL`` raises, to exercise error handling.
+    """
+    from tabfree_migrate.hyper import ColumnInfo, TableResult
+
+    with path.open("rb") as handle:
+        if b"FAIL" in handle.read(4096):
+            raise RuntimeError("fake conversion failure")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    glue_table = f"{table_prefix}__extract" if table_prefix else "extract"
+    target = out_dir / f"{glue_table}.parquet"
+    target.write_bytes(b"PAR1fakePAR1")
+    columns = [
+        ColumnInfo("Order Date", "order_date", "DATE", "date", True),
+        ColumnInfo("Sales", "sales", "DOUBLE", "double", True),
+        ColumnInfo("Location", "location", "GEOGRAPHY", "string", True),
+    ]
+    stats = {"rows": 2, "columns": {"order_date": {"count": 2, "nulls": 0}}}
+    return [TableResult("Extract", "Extract", glue_table, 2, columns, str(target), stats)]

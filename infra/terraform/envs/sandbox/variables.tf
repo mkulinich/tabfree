@@ -142,3 +142,35 @@ variable "force_destroy" {
   type        = bool
   default     = false
 }
+
+# --- Extract converter (P2.8) ------------------------------------------------
+
+variable "enable_extract_converter" {
+  description = "Create the converter task definition and IAM roles (no cost until tasks run)."
+  type        = bool
+  default     = true
+}
+
+variable "converter_image_tag" {
+  description = "Tag of the converter image in the converter ECR repository (use the git SHA)."
+  type        = string
+  default     = "unset"
+}
+
+variable "converter_cpu" {
+  description = "Converter task vCPU units (1024 = 1 vCPU)."
+  type        = number
+  default     = 4096
+}
+
+variable "converter_memory" {
+  description = "Converter task memory in MiB."
+  type        = number
+  default     = 16384
+}
+
+variable "converter_workers" {
+  description = "Parallel conversions inside one converter task."
+  type        = number
+  default     = 2
+}

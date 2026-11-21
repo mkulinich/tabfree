@@ -69,3 +69,27 @@ module "redshift" {
   app_security_group_id = module.compute.app_security_group_id
   base_capacity         = var.redshift_base_capacity
 }
+
+# Extract converter (P2.8): a Fargate task definition and its IAM roles; runs only on RunTask.
+module "extract_converter" {
+  source = "../../modules/extract_converter"
+  count  = var.enable_extract_converter ? 1 : 0
+
+  name                      = local.name
+  image                     = "${module.compute.ecr_repository_urls["converter"]}:${var.converter_image_tag}"
+  ecr_repository_arn        = module.compute.ecr_repository_arns["converter"]
+  log_group_name            = module.compute.log_group_name
+  log_group_arn             = module.compute.log_group_arn
+  raw_bucket_arn            = module.lake.bucket_arns["raw"]
+  lake_bucket_arn           = module.lake.bucket_arns["lake"]
+  athena_results_bucket_arn = module.lake.bucket_arns["athena"]
+  glue_database_name        = module.lake.glue_database_name
+  athena_workgroup_name     = module.lake.athena_workgroup_name
+  athena_workgroup_arn      = module.lake.athena_workgroup_arn
+  store_location            = "s3://${module.lake.raw_bucket}"
+  output_location           = "s3://${module.lake.lake_bucket}/staging"
+  iceberg_root              = trimsuffix(module.lake.warehouse_location, "/")
+  cpu                       = var.converter_cpu
+  memory                    = var.converter_memory
+  workers                   = var.converter_workers
+}
