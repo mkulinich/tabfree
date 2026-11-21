@@ -14,7 +14,7 @@ import datetime as dt
 import math
 import re
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,7 @@ from defusedxml import ElementTree
 
 from tabfree_compiler.calc import CalcSyntaxError
 from tabfree_compiler.model import CompileError, SemanticModel
-from tabfree_compiler.sql import Session, compile_expression
+from tabfree_compiler.sql import CompiledQuery, Dialect, Session, compile_expression
 
 CALCS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("key", "string"),
@@ -84,12 +84,12 @@ def deviation_key(case: TestCase) -> str:
     return f"{name} | {case.expression}"
 
 
-def calcs_model() -> SemanticModel:
+def calcs_model(database: str = "main") -> SemanticModel:
     return SemanticModel.from_dict(
         {
             "schema": "tabfree/model@0",
             "id": "tdvt_calcs",
-            "connection": {"engine": "athena", "database": "main"},
+            "connection": {"engine": "athena", "database": database},
             "settings": {"weekStart": "sunday"},
             "tables": [
                 {
@@ -245,16 +245,37 @@ def _matches(expected: list[list[Any]], actual: list[list[Any]]) -> bool:
     return True
 
 
+Executor = Callable[[CompiledQuery], Sequence[Sequence[Any]]]
+
+
 def run(cases: Iterable[TestCase], con: Any, model: SemanticModel | None = None) -> list[Result]:
+    """Run on a DuckDB connection loaded with :func:`load_calcs`."""
+
+    def execute(compiled: CompiledQuery) -> Sequence[Sequence[Any]]:
+        rows: Sequence[Sequence[Any]] = con.execute(compiled.sql, list(compiled.parameters)).fetchall()
+        return rows
+
+    return run_with(cases, execute, "duckdb", model, skip=ENGINE_SPECIFIC)
+
+
+def run_with(
+    cases: Iterable[TestCase],
+    execute: Executor,
+    dialect: Dialect,
+    model: SemanticModel | None = None,
+    skip: Mapping[str, str] | None = None,
+) -> list[Result]:
+    """Run the cases on any engine: ``execute`` runs compiled SQL and returns rows (P2.9 runs this on
+    Athena and Redshift, where Calcs is loaded with :func:`calcs_ddl`)."""
     model = model or calcs_model()
     session = Session(username="tdvt", today=dt.date(2020, 1, 1))
     results: list[Result] = []
     for case in cases:
-        if not any(case.expected) or case.suite in ENGINE_SPECIFIC:
-            continue  # not applicable here (no expected tuples, or features DuckDB lacks)
+        if not any(case.expected) or case.suite in (skip or {}):
+            continue  # not applicable here (no expected tuples, or features this engine lacks)
         try:
-            compiled = compile_expression(model, case.expression, dialect="duckdb", session=session)
-            rows = con.execute(compiled.sql, list(compiled.parameters)).fetchall()
+            compiled = compile_expression(model, case.expression, dialect=dialect, session=session)
+            rows = execute(compiled)
         except (CompileError, CalcSyntaxError) as exc:
             results.append(Result(case, False, f"{type(exc).__name__}: {exc}"))
             continue
@@ -265,6 +286,70 @@ def run(cases: Iterable[TestCase], con: Any, model: SemanticModel | None = None)
         passed = any(_matches(variant, actual) for variant in case.expected)
         results.append(Result(case, passed, None, actual))
     return results
+
+
+def calcs_ddl(
+    dialect: Dialect, *, location: str, database: str = "tdvt", iam_role: str | None = None
+) -> list[str]:
+    """SQL that loads TDVT's Calcs.csv (uploaded to ``location``) into Athena or Redshift.
+
+    Athena: an external CSV table over ``location`` (an S3 prefix) and a typed view ``calcs``.
+    Redshift: a typed table filled with COPY from ``location`` using ``iam_role``.
+    The ``calcs_model`` connection must then point at ``database``.
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", database):
+        raise ValueError(f"invalid database name {database!r}")
+    if not re.fullmatch(r"s3://[a-z0-9.\-]{3,63}(/[A-Za-z0-9_.\-/]*)?", location):
+        raise ValueError(f"invalid S3 location {location!r}")
+    if iam_role is not None and not re.fullmatch(
+        r"arn:aws[a-z-]*:iam::\d{12}:role/[A-Za-z0-9+=,.@_\-/]+", iam_role
+    ):
+        raise ValueError("invalid IAM role ARN")
+    # Validated identifiers and locations only: the statements below are built from them.
+    names = [n for n, _ in CALCS_COLUMNS]
+    if dialect in ("athena", "trino"):
+        raw = ", ".join(f"`{n}` string" for n in names)
+        casts = ", ".join(_athena_cast(n, t) for n, t in CALCS_COLUMNS)
+        return [
+            f"CREATE DATABASE IF NOT EXISTS {database}",
+            f"CREATE EXTERNAL TABLE IF NOT EXISTS {database}.calcs_raw ({raw}) "
+            "ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' "
+            f"LOCATION '{location}'",
+            f"CREATE OR REPLACE VIEW {database}.calcs AS SELECT {casts} FROM {database}.calcs_raw",  # noqa: S608
+        ]
+    if dialect == "redshift":
+        if not iam_role:
+            raise ValueError("Redshift COPY needs an IAM role ARN")
+        types = {
+            "string": "VARCHAR(255)",
+            "float": "DOUBLE PRECISION",
+            "integer": "INTEGER",
+            "boolean": "BOOLEAN",
+            "date": "DATE",
+            "datetime": "TIMESTAMP",
+        }
+        columns = ", ".join(f'"{n}" {types[t]}' for n, t in CALCS_COLUMNS)
+        return [
+            f"CREATE SCHEMA IF NOT EXISTS {database}",
+            f"CREATE TABLE IF NOT EXISTS {database}.calcs ({columns})",
+            f"COPY {database}.calcs FROM '{location}' IAM_ROLE '{iam_role}' CSV EMPTYASNULL",
+        ]
+    raise ValueError(f"no Calcs loader for {dialect}")
+
+
+def _athena_cast(name: str, type_: str) -> str:
+    target = {
+        "string": "varchar",
+        "float": "double",
+        "integer": "integer",
+        "boolean": "boolean",
+        "date": "date",
+        "datetime": "timestamp",
+    }[type_]
+    value = f"NULLIF(\"{name}\", '')" if type_ != "string" else f'"{name}"'
+    if type_ == "boolean":
+        return f"CAST({value} = '1' AS boolean) AS \"{name}\""
+    return f'TRY_CAST({value} AS {target}) AS "{name}"'
 
 
 def summarise(results: list[Result]) -> dict[str, tuple[int, int]]:
