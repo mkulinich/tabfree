@@ -372,6 +372,7 @@ def datasource(element: Element) -> dict[str, Any]:
         rel = conn_el.find("relation")
         if rel is not None:
             ds["relation"] = relation(rel)
+        put(ds, "metadataRecords", metadata_records(conn_el))
     graph = element.find("object-graph")
     if graph is not None:
         ds["objectGraph"] = object_graph(graph)
@@ -411,4 +412,35 @@ def blend_relationships(root: Element) -> list[dict[str, Any]]:
     return out
 
 
-__all__ = ["blend_relationships", "connection", "datasource", "field_ref", "relation"]
+def metadata_records(conn_el: Element) -> list[dict[str, Any]]:
+    """Physical columns from ``<metadata-records>``: remote name, parent table and types.
+
+    Tableau's local name (``[Order Date]``) maps to the column's ``remote-name`` in the table named by
+    ``parent-name``; the semantic-model generator uses this to place fields in tables.
+    """
+    out = []
+    for record in conn_el.findall("metadata-records/metadata-record"):
+        if record.get("class") != "column":
+            continue
+        entry: dict[str, Any] = {}
+        for key, tag in (
+            ("remoteName", "remote-name"),
+            ("localName", "local-name"),
+            ("parentName", "parent-name"),
+            ("remoteType", "remote-type"),
+            ("localType", "local-type"),
+            ("aggregation", "aggregation"),
+            ("ordinal", "ordinal"),
+            ("objectId", "_.fcp.ObjectModelEncapsulateLegacy.true...object-id"),
+        ):
+            child = record.find(tag)
+            if child is not None and child.text is not None:
+                entry[key] = child.text
+        if entry.get("objectId") is None and (child := record.find("object-id")) is not None and child.text:
+            entry["objectId"] = child.text
+        if entry.get("localName"):
+            out.append(entry)
+    return out
+
+
+__all__ = ["blend_relationships", "connection", "datasource", "field_ref", "metadata_records", "relation"]

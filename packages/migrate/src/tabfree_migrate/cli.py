@@ -607,3 +607,48 @@ def capture(
         f"captured {stats.captured}, skipped {stats.skipped}, failed {len(stats.errors)}, "
         f"{stats.bytes} bytes -> {sink.describe()}"
     )
+
+
+@app.command("generate-model")
+def generate_model_command(
+    path: Annotated[Path, typer.Argument(help="A .twb/.twbx/.tds/.tdsx file")],
+    out: Annotated[Path, typer.Option(help="Where to write the model YAML.")] = Path("model.yaml"),
+    datasource: Annotated[
+        str | None, typer.Option(help="Data source name or caption (default: the first).")
+    ] = None,
+    model_id: Annotated[
+        str | None, typer.Option("--id", help="Model id (default: from the caption).")
+    ] = None,
+    engine: Annotated[str, typer.Option(help="athena or redshift")] = "athena",
+    database: Annotated[
+        str, typer.Option(help="Database (Athena) or schema holding the tables.")
+    ] = "tabfree_lake",
+) -> None:
+    """Generate a semantic model from a Tableau data source (P2.4) and print what needs review."""
+    import yaml
+
+    from tabfree_migrate.modelgen import generate_model
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    try:
+        doc, report = generate_model(
+            parse_file(path), datasource=datasource, model_id=model_id, engine=engine, database=database
+        )
+    except (TableauFileError, ValueError) as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    out.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    typer.echo(f"wrote {out}: {len(doc['fields'])} fields, {len(doc['tables'])} tables")
+    for title, items in (
+        ("schema errors", report.schema_errors),
+        ("calculations that do not compile", report.invalid_calcs),
+        ("not translated", report.unsupported),
+        ("review", report.review),
+        ("assumptions", report.assumptions),
+    ):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if not report.ok:
+        raise typer.Exit(code=1)

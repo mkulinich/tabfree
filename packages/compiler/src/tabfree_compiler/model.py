@@ -369,7 +369,9 @@ def analyze_calcs(model: SemanticModel) -> list[CalcInfo]:
             try:
                 deps.append(model.field(ref.name).id)
             except CompileError:
-                errors.setdefault(f.id, f"unknown field {ref.name!r}")
+                key = ref.name.casefold()
+                if key not in model.groups and key not in model.sets and key not in model.bins:
+                    errors.setdefault(f.id, f"unknown field {ref.name!r}")
         direct[f.id] = tuple(dict.fromkeys(deps))
         params[f.id] = tuple(dict.fromkeys(ps))
 

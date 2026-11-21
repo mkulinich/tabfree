@@ -720,6 +720,25 @@
             "$ref": "#/$defs/column"
           }
         },
+        "metadataRecords": {
+          "description": "Physical columns from <metadata-records>: remote name, parent table and types.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["localName"],
+            "properties": {
+              "remoteName": { "type": "string" },
+              "localName": { "type": "string" },
+              "parentName": { "type": "string" },
+              "remoteType": { "type": "string" },
+              "localType": { "type": "string" },
+              "aggregation": { "type": "string" },
+              "ordinal": { "type": "string" },
+              "objectId": { "type": "string" }
+            }
+          }
+        },
         "drillPaths": {
           "type": "array",
           "items": {
