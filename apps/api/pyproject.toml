@@ -20,6 +20,8 @@ dependencies = [
   "psycopg[binary]>=3.2",
   # P3.2: local account passwords.
   "argon2-cffi>=23.1",
+  # P3.7: crosstab downloads as Excel.
+  "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +30,8 @@ preview = ["duckdb>=1.1"]
 aws = [
     "boto3>=1.35",
 ]
+# P3.7: PNG/PDF exports render the dashboard in headless Chromium (`playwright install chromium`).
+render = ["playwright>=1.49"]
 
 [tool.uv.sources]
 tabfree-compiler = { workspace = true }

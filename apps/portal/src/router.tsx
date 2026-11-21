@@ -30,6 +30,15 @@ export const explore = createRoute({
 export const dashboard = createRoute({
   getParentRoute: () => root,
   path: "/dashboards/$id",
+  // print=1&state=<base64url JSON>: the export renderer's view (P3.7), no portal chrome.
+  validateSearch: (s: Record<string, unknown>): { print?: string; state?: string } => {
+    const out: { print?: string; state?: string } = {};
+    const print = text(s["print"] === 1 ? "1" : s["print"]);
+    const state = text(s["state"]);
+    if (print) out.print = print;
+    if (state) out.state = state;
+    return out;
+  },
   component: DashboardPage,
 });
 export const model = createRoute({ getParentRoute: () => root, path: "/models/$id", component: ModelPage });

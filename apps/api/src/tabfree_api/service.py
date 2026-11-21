@@ -22,8 +22,8 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 
@@ -72,6 +72,8 @@ class _Outcome:
     columns: list[dict[str, Any]]
     result: CachedResult
     cached: bool
+    #: Table calcs left for the browser engine (SQL mode only).
+    deferred: tuple[str, ...] = ()
 
     def payload(self) -> dict[str, Any]:
         # Exactly these keys: the runtime's protocol checks the shape of results it forwards.
@@ -119,6 +121,28 @@ class QueryService:
         bound = bind_query(manifest, name, state, selections)
         return self._run(bound, session, f"dashboard={manifest.get('id')} query:{name}").payload()
 
+    def export(
+        self,
+        manifest: Mapping[str, Any],
+        name: str,
+        state: Mapping[str, Any],
+        selections: Mapping[str, Any],
+        session: Session,
+        *,
+        row_limit: int,
+        max_bytes: int,
+    ) -> tuple[dict[str, Any], list[str]]:
+        """A query for download (P3.7): larger caps, and table calcs computed in SQL where they can be.
+
+        Returns the payload and the names of table calcs that only the browser engine can compute.
+        """
+        bound = bind_query(manifest, name, state, selections)
+        limits = replace(self.limits, row_limit=row_limit, max_bytes=max_bytes)
+        outcome = self._run(
+            bound, session, f"dashboard={manifest.get('id')} export:{name}", limits=limits, table_calcs="sql"
+        )
+        return outcome.payload(), list(outcome.deferred)
+
     def domain(
         self, manifest: Mapping[str, Any], filter_name: str, state: Mapping[str, Any], session: Session
     ) -> dict[str, Any]:
@@ -154,11 +178,19 @@ class QueryService:
             self._compiled[model_id] = SemanticModel.from_dict(doc)
         return self._compiled[model_id], doc
 
-    def _run(self, bound: BoundQuery, session: Session, what: str) -> _Outcome:
+    def _run(
+        self,
+        bound: BoundQuery,
+        session: Session,
+        what: str,
+        *,
+        limits: QueryLimits | None = None,
+        table_calcs: Literal["runtime", "sql"] = "runtime",
+    ) -> _Outcome:
         started = time.perf_counter()
         model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
-        limits = self.limits
+        limits = limits or self.limits
         query = dict(bound.query)
         cap = min(int(query.get("limit", limits.row_limit)), limits.row_limit)
         query["limit"] = cap + 1  # one extra row tells us the result was truncated
@@ -182,7 +214,9 @@ class QueryService:
                 session=session,
                 parameters=bound.parameters,
                 filters=bound.filters,
+                table_calcs=table_calcs,
             )
+        deferred = tuple(compiled.deferred_table_calcs)
         columns = _columns(compiled, doc, bound.query)
         version = self._data_version(bound.model)
         today = session.today or dt.datetime.fromtimestamp(self._clock(), dt.UTC).date()
@@ -198,7 +232,7 @@ class QueryService:
         if cached is not None:
             self.stats.cache.hits += 1
             self._audit(session, what, cached, "hit", 0, started)
-            return _Outcome(columns, cached, cached=True)
+            return _Outcome(columns, cached, cached=True, deferred=deferred)
         self.stats.cache.misses += 1
 
         try:
@@ -228,7 +262,7 @@ class QueryService:
         )
         self.cache.put(key, value)
         self._audit(session, what, value, "reuse" if result.reused else "miss", scanned, started)
-        return _Outcome(columns, value, cached=False)
+        return _Outcome(columns, value, cached=False, deferred=deferred)
 
     def _options(self, compiled: CompiledQuery, model: str, version: str) -> ExecuteOptions:
         limits = self.limits

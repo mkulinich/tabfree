@@ -12,10 +12,12 @@ image cannot send (CSRF defence).
 """
 
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -52,6 +54,8 @@ class Context:
         *,
         accounts: Any = None,
         audit: Any = None,
+        frame_signer: Any = None,
+        renderer: Any = None,
     ) -> None:
         self.settings, self.site, self.sessions, self.service, self.oidc = (
             settings,
@@ -64,12 +68,23 @@ class Context:
         #: Local accounts (``db.store.LocalAccounts``) and the audit log; None without a database.
         self.accounts = accounts
         self.audit_log = audit
+        #: Signs /frame URLs on the usercontent origin (P3.6); None serves bundles inline (dev).
+        self.frame_signer = frame_signer
+        #: Renders PNG/PDF exports (``exports.PlaywrightRenderer``); None refuses them.
+        self.renderer = renderer
 
     def audit(self, action: str, actor: str | None, outcome: str = "ok", **detail: Any) -> None:
         """An audit event: in the database when there is one, always in the service log."""
         log.info("audit %s actor=%s outcome=%s %s", action, actor, outcome, detail)
         if self.audit_log is not None:
             self.audit_log.record(action, actor=actor, outcome=outcome, **detail)
+
+
+class ExportBody(BaseModel):
+    format: Literal["csv", "crosstab", "png", "pdf"]
+    query: str | None = Field(default=None, max_length=64)
+    state: dict[str, Any] = Field(default_factory=dict)
+    selections: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
 class TokenBody(BaseModel):
@@ -366,6 +381,10 @@ def create_router(ctx: Context) -> APIRouter:
         require_view(info, dashboard)
         b = ctx.site.bundle(dashboard)
         ctx.audit("view", info.username, resource_kind="dashboard", resource_id=dashboard)
+        if ctx.frame_signer is not None and settings.usercontent_origin:
+            # The bundle runs from the usercontent origin; the page needs only the manifest.
+            url = ctx.frame_signer.url(settings.usercontent_origin, ctx.site.id, dashboard)
+            return {"manifest": b.manifest, "frameUrl": url}
         return {"manifest": b.manifest, "html": b.html}
 
     @router.post("/api/dashboards/{dashboard}/query")
@@ -377,12 +396,86 @@ def create_router(ctx: Context) -> APIRouter:
     ) -> dict[str, Any]:
         require_view(info, dashboard)
         try:
-            return ctx.service.query(
+            result = ctx.service.query(
                 ctx.site.bundle(dashboard).manifest,
                 body.query,
                 body.state,
                 body.selections,
                 viewer_session(info),
+            )
+            # Who asked for what, as a hash of the request (filter values are not logged).
+            request_hash = hashlib.sha256(
+                json.dumps([body.query, body.state, body.selections], sort_keys=True, default=str).encode()
+            ).hexdigest()[:16]
+            ctx.audit(
+                "query",
+                info.username,
+                resource_kind="dashboard",
+                resource_id=dashboard,
+                query=body.query,
+                request=request_hash,
+                rows=len(result["rows"]),
+                truncated=result["truncated"],
+            )
+            return result
+        except (CompileError, ContentError) as exc:
+            raise HTTPException(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise HTTPException(504, str(exc)) from None
+        except EngineError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @router.post("/api/dashboards/{dashboard}/export")
+    def export(
+        dashboard: str,
+        body: ExportBody,
+        info: Annotated[SessionInfo, Depends(current)],
+        _: Annotated[None, Depends(csrf)],
+    ) -> Response:
+        """Download summary data (CSV), a crosstab (Excel) or the view (PNG/PDF), if the viewer may."""
+        from tabfree_api import exports
+
+        require_view(info, dashboard)
+        picture = body.format in ("png", "pdf")
+        needed = Capability.DOWNLOAD_IMAGE_PDF if picture else Capability.DOWNLOAD_SUMMARY
+        if not ctx.site.can(info.principal(), needed, dashboard):
+            ctx.audit(
+                "export",
+                info.username,
+                "deny",
+                resource_kind="dashboard",
+                resource_id=dashboard,
+                format=body.format,
+            )
+            raise HTTPException(
+                403, f"you may not download {'images or PDFs' if picture else 'data'} of this dashboard"
+            )
+        manifest = ctx.site.bundle(dashboard).manifest
+        if picture:
+            if ctx.renderer is None:
+                raise HTTPException(
+                    501, "image and PDF exports need the export renderer (TABFREE_EXPORT_RENDERER)"
+                )
+            fmt: Literal["png", "pdf"] = "pdf" if body.format == "pdf" else "png"
+            state = {k: body.state[k] for k in ("filters", "parameters") if k in body.state}
+            content = ctx.renderer.render(info, dashboard, state, fmt)
+            ctx.audit("export", info.username, resource_kind="dashboard", resource_id=dashboard, format=fmt)
+            media = "application/pdf" if fmt == "pdf" else "image/png"
+            name = exports.filename(dashboard, extension=fmt)
+            return Response(
+                content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"'}
+            )
+        if body.query is None or body.query not in manifest.get("queries", {}):
+            raise HTTPException(422, "name the query to export")
+        try:
+            payload, omitted = ctx.service.export(
+                manifest,
+                body.query,
+                body.state,
+                body.selections,
+                viewer_session(info),
+                row_limit=settings.export_row_limit,
+                max_bytes=settings.export_max_bytes,
             )
         except (CompileError, ContentError) as exc:
             raise HTTPException(400, str(exc)) from None
@@ -390,6 +483,29 @@ def create_router(ctx: Context) -> APIRouter:
             raise HTTPException(504, str(exc)) from None
         except EngineError as exc:
             raise HTTPException(502, str(exc)) from None
+        if body.format == "csv":
+            content = exports.to_csv(payload)
+            media, ext = "text/csv; charset=utf-8", "csv"
+        else:
+            content = exports.to_xlsx(payload, str(manifest.get("title", dashboard)))
+            media, ext = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+        ctx.audit(
+            "export",
+            info.username,
+            resource_kind="dashboard",
+            resource_id=dashboard,
+            format=body.format,
+            query=body.query,
+            rows=len(payload["rows"]),
+            truncated=payload["truncated"],
+        )
+        name = exports.filename(dashboard, body.query, extension=ext)
+        headers = {"Content-Disposition": f'attachment; filename="{name}"'}
+        if omitted:
+            headers["X-TabFree-Omitted"] = ",".join(omitted)[:1000]
+        if payload["truncated"]:
+            headers["X-TabFree-Truncated"] = "true"
+        return Response(content, media_type=media, headers=headers)
 
     @router.post("/api/dashboards/{dashboard}/domain")
     def domain(
@@ -431,6 +547,27 @@ def create_router(ctx: Context) -> APIRouter:
         except EngineError as exc:
             raise HTTPException(502, str(exc)) from None
 
+    @router.get("/views/{rest:path}", include_in_schema=False)
+    @router.get("/t/{tableau_site}/views/{rest:path}", include_in_schema=False)
+    def tableau_link(request: Request, tabfree_session: Annotated[str | None, Cookie()] = None) -> Response:
+        """Old Tableau share and embed links (P3.9) go to the dashboard that replaced the view."""
+        from tabfree_api.redirects import normalise
+
+        info = ctx.sessions.get(tabfree_session)
+        if info is None:
+            return RedirectResponse(
+                f"/auth/login?return={quote(request.url.path, safe='/')}", status_code=303
+            )
+        key = normalise(request.url.path)
+        target = ctx.site.resolve_legacy(key) if key else None
+        if (
+            target is None
+            or target[0] != "dashboard"
+            or not ctx.site.can(info.principal(), Capability.VIEW, target[1])
+        ):
+            raise HTTPException(404, "no dashboard for that link")
+        return RedirectResponse(f"/dashboards/{quote(target[1], safe='')}", status_code=302)
+
     @router.get("/runtime/{name}", include_in_schema=False)
     def runtime(name: str) -> FileResponse:
         if name not in ("host.js", "frame.js"):
@@ -444,12 +581,20 @@ def create_router(ctx: Context) -> APIRouter:
 
     # The portal is a single-page app: its routes all serve index.html, which then calls the API.
     portal_index = settings.portal_dir / "index.html"
-    portal_headers = {
-        # Dashboards run in sandboxed srcdoc frames, which inherit this page's policy, so script-src
-        # cannot be locked down here until bundles move to their own origin (P3.6).
-        "Content-Security-Policy": (
+    if settings.usercontent_origin:
+        # Bundles run on the usercontent origin, so this page can refuse every inline script.
+        from tabfree_api.usercontent import origin_of
+
+        policy = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            f"connect-src 'self'; frame-src {origin_of(settings.usercontent_origin)}; "
             "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
-        ),
+        )
+    else:
+        # Inline srcdoc frames inherit this page's policy, so script-src stays open (development).
+        policy = "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+    portal_headers = {
+        "Content-Security-Policy": policy,
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "same-origin",
     }

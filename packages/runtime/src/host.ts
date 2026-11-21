@@ -17,6 +17,7 @@ import {
   type DashboardMessage,
   type DashboardState,
   type ErrorCode,
+  type ExportFormat,
   type FilterSpec,
   type FilterValue,
   type HostMessage,
@@ -91,6 +92,8 @@ export function tableCalcOptions(query: ManifestQuery): TableCalcOptions {
   };
 }
 
+export type { DashboardState, ExportFormat, Theme } from "./protocol.js";
+
 export interface Manifest {
   id: string;
   title: string;
@@ -143,6 +146,22 @@ export interface MountOptions {
   initialState?: Partial<DashboardState>;
   onStateChange?: (state: DashboardState, selections: Record<string, Tuple[]>) => void;
   onDashboardError?: (message: string) => void;
+  /** The dashboard asked for an export; the portal checks capabilities and downloads it. */
+  onExport?: (request: ExportRequest) => void;
+  /**
+   * Load the dashboard from this URL on the separate usercontent origin (P3.6) instead of an inline
+   * srcdoc. The server sends the bundle with its own CSP there, so the portal page can keep a strict
+   * policy of its own; ``html`` and ``runtime`` are then unused.
+   */
+  frameUrl?: string;
+}
+
+export interface ExportRequest {
+  dashboard: string;
+  format: ExportFormat;
+  query?: string;
+  state: DashboardState;
+  selections: Record<string, Tuple[]>;
 }
 
 export interface DashboardHost {
@@ -265,7 +284,11 @@ export function mountDashboard(options: MountOptions): DashboardHost {
   iframe.setAttribute("allow", "");
   iframe.setAttribute("title", manifest.title);
   iframe.style.cssText = "width:100%;border:0;display:block;min-height:200px";
-  iframe.srcdoc = buildSrcdoc(options.html, options.runtime);
+  const load = () => {
+    if (options.frameUrl) iframe.src = options.frameUrl;
+    else iframe.srcdoc = buildSrcdoc(options.html, options.runtime);
+  };
+  load();
 
   const send = (message: HostMessage) => port?.postMessage(message);
   const broadcast = () => {
@@ -376,6 +399,13 @@ export function mountDashboard(options: MountOptions): DashboardHost {
       case "error":
         options.onDashboardError?.(message.message);
         return;
+      case "export": {
+        if (message.query !== undefined && !manifest.queries[message.query]) return;
+        const request: ExportRequest = { dashboard: manifest.id, format: message.format, state, selections };
+        if (message.query !== undefined) request.query = message.query;
+        options.onExport?.(request);
+        return;
+      }
       default:
         return;
     }
@@ -392,7 +422,7 @@ export function mountDashboard(options: MountOptions): DashboardHost {
     setTheme(next: Theme) {
       theme = next;
       // The theme travels with init; a running frame picks it up on reload.
-      iframe.srcdoc = buildSrcdoc(options.html, options.runtime);
+      load();
     },
     setState(partial: Partial<DashboardState>) {
       state = { ...state, ...partial };

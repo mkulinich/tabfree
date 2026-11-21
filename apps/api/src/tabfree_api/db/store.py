@@ -935,6 +935,28 @@ class DbSite:
             )
         self.invalidate()
 
+    # ---- old Tableau URLs (P3.9) --------------------------------------------------------------------------
+
+    def set_legacy_url(self, path: str, kind: str, content_id: str) -> None:
+        lu = t.legacy_urls
+        with self.engine.begin() as conn:
+            conn.execute(delete(lu).where(lu.c.site_id == self.id, lu.c.path == path))
+            conn.execute(insert(lu).values(site_id=self.id, path=path, kind=kind, content_id=content_id))
+
+    def legacy_urls(self) -> list[dict[str, str]]:
+        lu = t.legacy_urls
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(lu).where(lu.c.site_id == self.id).order_by(lu.c.path)).mappings()
+            return [{"path": r["path"], "kind": r["kind"], "id": r["content_id"]} for r in rows]
+
+    def resolve_legacy(self, path: str) -> tuple[str, str] | None:
+        lu = t.legacy_urls
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(lu.c.kind, lu.c.content_id).where(lu.c.site_id == self.id, lu.c.path == path)
+            ).first()
+        return (str(row[0]), str(row[1])) if row else None
+
 
 def _chain(project: str, projects: Mapping[str, Project]) -> list[Project]:
     from tabfree_api.authz import ancestry

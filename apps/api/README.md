@@ -42,6 +42,16 @@ TABFREE_SITE_ID=dev TABFREE_DEV_LOGIN=1 uv run uvicorn tabfree_api.main:app_fact
 - **SAML** goes through the broker (Cognito, or Okta/Entra/Keycloak federation): TabFree speaks only OIDC.
 - **Caching:** permissions are read from a per-process snapshot refreshed after local writes and at most `TABFREE_PERMISSION_CACHE_S` (2 s) old.
 
+## Portal, exports and links (P3.5–P3.9)
+
+- **Portal:** `apps/portal` (React), built into `apps/portal/dist` and served at `/` and its routes. The APIs behind it are in `browse.py`: permission-filtered browse and search, favorites and recents, dashboard capabilities, the model browser, revisions, the permissions dialog (rules, project defaults, effective permissions with reasons), projects, and site administration (users, groups, settings, audit log, old Tableau URLs).
+- **Usercontent origin:** set `TABFREE_USERCONTENT_ORIGIN` to a second hostname pointing at this service. Dashboards then load from signed, five-minute `/frame/{id}` URLs there (`usercontent.py`). The frame response carries `sandbox allow-scripts` and a no-network CSP; the portal page gets `script-src 'self'`. That host serves nothing else, and the portal host serves no frames. With several processes, set the same `TABFREE_FRAME_SIGNING_KEY` on all of them (inject it).
+- **Exports** (`POST /api/dashboards/{id}/export`, `exports.py`):
+  - **What:** `csv` (summary data) and `crosstab` (Excel) of a named query need Download Summary Data. `png` and `pdf` need Download Image/PDF.
+  - **How:** data runs as the viewer, with export row and byte caps. Table calcs are computed in SQL where the compiler can push them down; any that only the browser engine can compute are named in `X-TabFree-Omitted`. Text that a spreadsheet would read as a formula is prefixed with `'`. Pictures come from headless Chromium (`TABFREE_EXPORT_RENDERER=playwright`, `tabfree-api[render]`, `playwright install chromium`), signed in as the requester with a two-minute session and opening the dashboard's print view.
+- **Old Tableau links:** `/views/<workbook>/<sheet>` and `/t/<site>/views/...` redirect to the dashboard that replaced the view. The portal resolves the fragment forms (`/#/site/<site>/views/...`) through `GET /api/redirects/resolve`. Mappings are added by an administrator or the migration factory with `PUT /api/admin/legacy-urls`; a link to something the viewer may not see answers 404.
+- **Audit:** sign-in and sign-out, views, queries (a hash of the request, never filter values), exports, denials, permission and admin changes, tokens. Administrators read it at `/api/admin/audit` and on the portal's Audit log page.
+
 State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). Dashboards a viewer may not see return 404, not 403.
 
 ## Query service (P2.7)
@@ -67,6 +77,10 @@ State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). D
 | `TABFREE_SITE_ID` | `default` | The database site this process serves. |
 | `TABFREE_DATABASE_AUTO_MIGRATE` | off | Run migrations at start-up (dev and test only). |
 | `TABFREE_PERMISSION_CACHE_S` | `2` | Most seconds a permission change made in another process takes to apply. |
+| `TABFREE_USERCONTENT_ORIGIN`, `TABFREE_FRAME_SIGNING_KEY` | none | Separate origin for dashboard frames, and the shared key for their signed URLs. |
+| `TABFREE_EXPORT_ROW_LIMIT`, `TABFREE_EXPORT_MAX_BYTES` | 1,000,000, 256 MiB | Caps for CSV and Excel exports. |
+| `TABFREE_EXPORT_RENDERER`, `TABFREE_EXPORT_BASE_URL` | `none`, base URL | `playwright` turns on PNG/PDF exports; the URL the renderer opens. |
+| `TABFREE_OIDC_ATTRIBUTE_CLAIMS` | `[]` | ID-token claims copied into user attributes for RLS (`USERATTRIBUTE`). |
 | `TABFREE_ENGINE` | `sample` | `sample` (DuckDB with generated data) or `aws` (each model's Athena/Redshift connection; needs `tabfree-api[aws]`). |
 | `TABFREE_OIDC_ISSUER`, `TABFREE_OIDC_CLIENT_ID`, `TABFREE_OIDC_CLIENT_SECRET` | — | Identity provider (Cognito, Okta, Entra ID, Keycloak…). |
 | `TABFREE_OIDC_USERNAME_CLAIM`, `TABFREE_OIDC_GROUPS_CLAIM` | `preferred_username`, `groups` | Claims for the username (RLS `USERNAME()`) and groups (permissions, `ISMEMBEROF()`). |

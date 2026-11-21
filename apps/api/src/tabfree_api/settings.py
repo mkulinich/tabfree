@@ -61,8 +61,23 @@ class Settings(BaseSettings):
     #: How long a query waits for a free slot before it is refused with 429.
     queue_timeout_s: float = Field(default=10.0, ge=0)
 
+    # ---- exports (P3.7) -----------------------------------------------------------------------------
+    #: Most rows and bytes a data export (CSV or Excel) may carry.
+    export_row_limit: int = Field(default=1_000_000, ge=1)
+    export_max_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
+    #: PNG/PDF exports: "playwright" renders in headless Chromium (needs tabfree-api[render]); "none" refuses.
+    export_renderer: Literal["none", "playwright"] = "none"
+    #: The URL the renderer opens (the portal as seen from the export worker); defaults to base_url.
+    export_base_url: str | None = None
+
     #: Built runtime bundles (npm run build -w @tabfree/runtime).
     runtime_dir: Path = REPO_ROOT / "packages" / "runtime" / "dist" / "bundle"
+    #: Separate origin that serves dashboard bundles (P3.6), e.g. https://usercontent.tabfree.example.
+    #: Point it at this service. With it set, the portal page gets a strict CSP and dashboards load from
+    #: signed, short-lived /frame URLs there; without it they load as inline srcdoc (development).
+    usercontent_origin: str | None = None
+    #: HMAC key for /frame URLs. Set it when several processes serve the API (any one may verify).
+    frame_signing_key: SecretStr | None = None
     #: The built portal (npm run build -w @tabfree/portal); without it, / serves a minimal page.
     portal_dir: Path = REPO_ROOT / "apps" / "portal" / "dist"
 

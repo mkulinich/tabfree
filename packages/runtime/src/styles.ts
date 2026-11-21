@@ -67,4 +67,26 @@ ${Array.from({ length: 8 }, (_, i) => `.tf-c${i} { fill: var(--tf-c${i}); } .tf-
 .tf-table tbody tr { cursor: pointer; }
 .tf-table tbody tr:hover { background: var(--tf-grid); }
 .tf-num { text-align: right !important; }
+.tf-table .tf-rowhead { font-weight: 500; text-align: left; position: static; cursor: default; background: none; }
+.tf-table tr.tf-total { font-weight: 600; cursor: default; }
+.tf-table tr.tf-total td, .tf-table tr.tf-total th { border-top: 1px solid var(--tf-border); }
+tf-container { min-width: 0; }
+tf-container > * { margin: 0; }
+tf-legend, tf-text, tf-image { display: block; min-width: 0; }
+tf-image .tf-image { width: 100%; height: 100%; display: block; }
+.tf-legend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tf-legend-item { display: flex; gap: 6px; align-items: center; border: none; background: none; color: inherit;
+  font: inherit; padding: 2px 4px; cursor: pointer; border-radius: 4px; text-align: left; }
+.tf-legend-item[aria-pressed="true"] { background: var(--tf-grid); }
+.tf-legend-item.tf-dim { opacity: 0.4; }
+.tf-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+${Array.from({ length: 8 }, (_, i) => `.tf-bg-c${i} { background: var(--tf-c${i}); }`).join("\n")}
+.tf-button { font: inherit; padding: 4px 10px; border: 1px solid var(--tf-border); border-radius: 6px;
+  background: var(--tf-bg); color: var(--tf-text); cursor: pointer; }
+.tf-button:hover { border-color: var(--tf-accent); }
+.tf-drill { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.tf-search { display: flex; flex-direction: column; gap: 4px; }
+.tf-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.tf-chip { font: inherit; font-size: 12px; border: 1px solid var(--tf-border); border-radius: 10px;
+  background: var(--tf-surface); color: var(--tf-text); padding: 1px 8px; cursor: pointer; }
 `;

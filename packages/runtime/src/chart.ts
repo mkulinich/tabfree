@@ -69,6 +69,22 @@ function key(value: Scalar): string {
   return value === null ? "\u0000null" : String(value);
 }
 
+/** The distinct values of a column in first-appearance order: the order charts give series colours. */
+export function seriesOf(data: { columns: Column[]; rows: Scalar[][] }, field: string): Scalar[] {
+  const index = data.columns.findIndex((c) => c.name === field);
+  if (index < 0) throw new ChartError(`the query has no column "${field}"`);
+  const seen = new Set<string>();
+  const out: Scalar[] = [];
+  for (const row of data.rows) {
+    const v = row[index] ?? null;
+    if (!seen.has(key(v))) {
+      seen.add(key(v));
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 function matches(tuple: Tuple, highlight: Tuple[]): boolean {
   return highlight.some((h) => Object.entries(h).every(([k, v]) => !(k in tuple) || tuple[k] === v));
 }

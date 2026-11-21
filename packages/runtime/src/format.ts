@@ -60,12 +60,14 @@ const DEFAULT_FLOAT: NumberFormat = { prefix: "", suffix: "", decimals: 2, group
 const DEFAULT_INTEGER: NumberFormat = { prefix: "", suffix: "", decimals: 0, grouping: true, percent: false };
 
 /** Format one value for display. Never returns HTML: callers put the result in textContent. */
-export function formatValue(value: Scalar, column: Pick<Column, "type" | "format">): string {
+export function formatValue(value: Scalar, column: Pick<Column, "type" | "format" | "role">): string {
   if (value === null) return NULL_LABEL;
   if (typeof value === "boolean") return value ? "True" : "False";
   if (typeof value === "number") {
     const explicit = column.format ? parseNumberFormat(column.format) : null;
     if (explicit) return formatNumber(value, explicit);
+    // Whole-number dimensions without a format (date parts such as YEAR, IDs) show no separators.
+    if (column.role === "dimension" && Number.isInteger(value)) return String(value);
     if (column.type === "integer" || Number.isInteger(value)) return formatNumber(value, DEFAULT_INTEGER);
     return formatNumber(value, DEFAULT_FLOAT);
   }

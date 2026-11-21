@@ -231,3 +231,25 @@ describe("tableCalcOptions", () => {
     });
   });
 });
+
+describe("usercontent frames and exports (P3.6, P3.7)", () => {
+  it("loads the bundle from frameUrl instead of srcdoc and forwards export requests", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const exports: unknown[] = [];
+    const host = mountDashboard({
+      container,
+      manifest: { id: "d", title: "D", queries: { q: { dimensions: [] } } } as unknown as Manifest,
+      html: "",
+      runtime: "",
+      frameUrl: "https://uc.example/frame/d?e=1&s=x",
+      runQuery: async () => ({ columns: [], rows: [], truncated: false }),
+      runDomain: async () => ({ columns: [], rows: [], truncated: false }),
+      onExport: (request) => exports.push(request),
+    });
+    expect(host.iframe.getAttribute("src")).toBe("https://uc.example/frame/d?e=1&s=x");
+    expect(host.iframe.hasAttribute("srcdoc")).toBe(false);
+    expect(host.iframe.getAttribute("sandbox")).toBe("allow-scripts");
+    host.destroy();
+  });
+});

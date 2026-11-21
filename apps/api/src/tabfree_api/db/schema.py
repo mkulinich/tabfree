@@ -279,3 +279,15 @@ favorites = Table(
     Column("created_at", Timestamp, nullable=False),
     CheckConstraint(_in("kind", RESOURCE_KINDS), name="kind"),
 )
+
+#: Old Tableau URLs (P3.9): "views/<workbook>/<sheet>" → a TabFree dashboard, filled by the migration.
+legacy_urls = Table(
+    "legacy_urls",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    #: Normalised path, e.g. "views/Superstore/Overview" (no site prefix, no query string).
+    Column("path", String(1024), primary_key=True),
+    Column("kind", String(16), nullable=False, server_default="dashboard"),
+    Column("content_id", String(100), nullable=False),
+    CheckConstraint(_in("kind", CONTENT_KINDS), name="kind"),
+)

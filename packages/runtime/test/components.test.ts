@@ -76,7 +76,7 @@ describe("<tf-*> components", () => {
   it("renders data as text, never as markup", async () => {
     const root = await mount('<tf-crosstab query="by_region"></tf-crosstab>');
     expect(root.querySelector("img")).toBeNull();
-    const cells = [...root.querySelectorAll("td")].map((td) => td.textContent);
+    const cells = [...root.querySelectorAll("tbody th, tbody td")].map((td) => td.textContent);
     expect(cells).toEqual(["East", "$300", "<img src=x onerror=alert(1)>", "$200"]);
   });
 

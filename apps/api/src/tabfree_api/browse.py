@@ -88,6 +88,12 @@ class GroupBody(BaseModel):
     minimumSiteRole: SiteRole | None = None  # noqa: N815
 
 
+class LegacyUrlBody(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+    kind: Kind = "dashboard"
+    id: str = Field(min_length=1, max_length=100)
+
+
 class SitePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     defaultSiteRole: SiteRole | None = None  # noqa: N815
@@ -628,6 +634,40 @@ def add_routes(
             info.username,
             changed=sorted(k for k, v in body.model_dump().items() if v is not None),
         )
+        return Response(status_code=204)
+
+    # ---- old Tableau URLs (P3.9) ----------------------------------------------------------------------
+
+    @router.get("/api/redirects/resolve")
+    def resolve(info: Me, path: Annotated[str, Query(max_length=2048)]) -> dict[str, str]:
+        """Where an old Tableau link now lives, if the viewer may see it (404 otherwise)."""
+        from tabfree_api.redirects import normalise
+
+        key = normalise(path)
+        target = site.resolve_legacy(key) if key else None
+        if target is None:
+            raise HTTPException(404, "no dashboard for that link")
+        kind, item = target
+        visible_entry(info, kind, item)
+        return {"to": f"/{'dashboards' if kind == 'dashboard' else 'models'}/{item}"}
+
+    @router.get("/api/admin/legacy-urls")
+    def legacy_urls(info: Me) -> list[dict[str, str]]:
+        require_admin(info)
+        return list(database().legacy_urls())
+
+    @router.put("/api/admin/legacy-urls", status_code=204)
+    def set_legacy_url(body: LegacyUrlBody, info: Me, _: Csrf) -> Response:
+        """Record an old Tableau view URL (the migration factory calls this for every view)."""
+        from tabfree_api.redirects import normalise
+
+        require_admin(info)
+        key = normalise(body.path)
+        if key is None:
+            raise HTTPException(422, "not a Tableau view URL (…/views/<workbook>/<sheet>)")
+        entry(body.kind, body.id)
+        database().set_legacy_url(key, body.kind, body.id)
+        ctx.audit("redirect_set", info.username, resource_kind=body.kind, resource_id=body.id)
         return Response(status_code=204)
 
     @router.get("/api/admin/audit")

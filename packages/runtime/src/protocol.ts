@@ -153,6 +153,14 @@ export interface DashboardErrorMessage {
   type: "error";
   message: string;
 }
+export type ExportFormat = "csv" | "crosstab" | "png" | "pdf";
+/** Ask the host to export: summary data or a crosstab of one query, or an image/PDF of the view. */
+export interface ExportMessage {
+  v: 0;
+  type: "export";
+  format: ExportFormat;
+  query?: string;
+}
 
 export type DashboardMessage =
   | HelloMessage
@@ -162,7 +170,8 @@ export type DashboardMessage =
   | SetParameterMessage
   | SelectMessage
   | ResizeMessage
-  | DashboardErrorMessage;
+  | DashboardErrorMessage
+  | ExportMessage;
 
 // ---- Host → dashboard ---------------------------------------------------------------------------
 
@@ -233,6 +242,7 @@ const COLUMN_TYPES: readonly unknown[] = [
   "geography",
 ];
 const FILTER_KINDS: readonly unknown[] = ["categorical", "range", "relative_date", "wildcard"];
+const EXPORT_FORMATS: readonly unknown[] = ["csv", "crosstab", "png", "pdf"];
 const PARAMETER_TYPES: readonly unknown[] = ["string", "integer", "float", "boolean", "date", "datetime"];
 const ERROR_CODES: readonly unknown[] = [
   "forbidden",
@@ -429,6 +439,12 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
       const { message } = data;
       if (!hasExactKeys(data, ["v", "type", "message"]) || typeof message !== "string") return null;
       return { v: 0, type: "error", message: message.slice(0, LIMITS.messageLength) };
+    }
+    case "export": {
+      const { format, query } = data;
+      if (!hasExactKeys(data, ["v", "type", "format"], ["query"]) || !EXPORT_FORMATS.includes(format)) return null;
+      if (query === undefined) return { v: 0, type: "export", format: format as ExportFormat };
+      return isName(query) ? { v: 0, type: "export", format: format as ExportFormat, query } : null;
     }
     default:
       return null;

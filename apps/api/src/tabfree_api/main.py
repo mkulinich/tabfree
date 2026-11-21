@@ -157,8 +157,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             groups_claim=config.oidc_groups_claim,
             attribute_claims=tuple(config.oidc_attribute_claims),
         )
-    app.state.context = Context(config, site, sessions, service, oidc, today, accounts=accounts, audit=audit)
+    signer = None
+    if config.usercontent_origin:
+        from tabfree_api import usercontent
+
+        key = config.frame_signing_key.get_secret_value().encode() if config.frame_signing_key else None
+        signer = usercontent.FrameSigner(key)
+        portal_origin = usercontent.origin_of(config.base_url)
+        if usercontent.origin_of(config.usercontent_origin) == portal_origin:
+            raise RuntimeError("TABFREE_USERCONTENT_ORIGIN must differ from the portal's origin")
+        app.middleware("http")(usercontent.host_guard(config.usercontent_origin))
+    renderer = None
+    if config.export_renderer == "playwright":
+        from tabfree_api.exports import PlaywrightRenderer
+
+        renderer = PlaywrightRenderer(config.export_base_url or config.base_url, sessions)
+    app.state.context = Context(
+        config,
+        site,
+        sessions,
+        service,
+        oidc,
+        today,
+        accounts=accounts,
+        audit=audit,
+        frame_signer=signer,
+        renderer=renderer,
+    )
     app.include_router(create_router(app.state.context))
+    if signer is not None:
+        app.include_router(
+            usercontent.create_router(app.state.context, signer, config.runtime_dir, portal_origin)
+        )
 
     if config.preview:
         from tabfree_api import preview

@@ -15,6 +15,7 @@ import {
   type DashboardMessage,
   type DashboardState,
   type ErrorCode,
+  type ExportFormat,
   type FilterSpec,
   type FilterValue,
   type HostMessage,
@@ -145,6 +146,14 @@ export class TabfreeClient extends EventTarget {
 
   resize(height: number): void {
     this.#send({ v: 0, type: "resize", height: Math.ceil(height) });
+  }
+
+  /**
+   * Ask the host to export: `"csv"` (summary data) or `"crosstab"` of a query, or `"png"`/`"pdf"` of the
+   * whole view. The host checks the viewer's download capabilities; the frame never sees a file.
+   */
+  export(format: ExportFormat, query?: string): void {
+    this.#send(query === undefined ? { v: 0, type: "export", format } : { v: 0, type: "export", format, query });
   }
 
   reportError(message: string): void {

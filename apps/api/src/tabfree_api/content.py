@@ -90,6 +90,7 @@ class SiteContent(Protocol):
     def data_version(self, model: str) -> str: ...
     def visible(self, principal: Principal) -> list[dict[str, str]]: ...
     def bundle(self, dashboard: str) -> Bundle: ...
+    def resolve_legacy(self, path: str) -> tuple[str, str] | None: ...
 
 
 class Site:
@@ -154,6 +155,8 @@ class Site:
             self.models[str(model["id"])] = model
         #: Model permissions and data versions. A model without an entry can be explored only by site
         #: administrators (default deny).
+        #: Old Tableau URLs (P3.9): "views/<workbook>/<sheet>" → dashboard id.
+        self.redirects: dict[str, str] = {str(k): str(v) for k, v in (doc.get("redirects") or {}).items()}
         self.model_entries: dict[str, ContentEntry] = {}
         for m in models_section.get("entries", []):
             if m["id"] not in self.models:
@@ -182,6 +185,10 @@ class Site:
     @property
     def name(self) -> str:
         return self.id
+
+    def resolve_legacy(self, path: str) -> tuple[str, str] | None:
+        target = self.redirects.get(path)
+        return ("dashboard", target) if target else None
 
     def can(self, principal: Principal, capability: Capability, dashboard: str) -> bool:
         entry = self.dashboards.get(dashboard)

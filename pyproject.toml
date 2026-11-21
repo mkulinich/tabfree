@@ -44,7 +44,7 @@ warn_unreachable = true
 files = ["packages/schemas/src", "packages/compiler/src", "packages/migrate/src", "apps/api/src"]
 
 [[tool.mypy.overrides]]
-module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*"]
+module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*", "openpyxl", "openpyxl.*", "playwright", "playwright.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

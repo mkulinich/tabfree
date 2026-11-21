@@ -1,7 +1,14 @@
-import { type DashboardHost, HostQueryError, type Manifest, mountDashboard } from "@tabfree/runtime/host";
+import {
+  type DashboardHost,
+  type DashboardState,
+  type ExportRequest,
+  HostQueryError,
+  type Manifest,
+  mountDashboard,
+} from "@tabfree/runtime/host";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { type DashboardInfo, enc, get } from "../api.js";
 import { FavoriteButton } from "../components/items.js";
@@ -34,7 +41,50 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return json as T;
 }
 
-function Viewer({ id }: { id: string }) {
+/** Exports run on the server, which checks the download capabilities (P3.7). */
+async function startExport(id: string, request: ExportRequest): Promise<void> {
+  const response = await fetch(`/api/dashboards/${enc(id)}/export`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tabfree-request": "1" },
+    body: JSON.stringify({
+      format: request.format,
+      query: request.query,
+      state: request.state,
+      selections: request.selections,
+    }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { detail?: string };
+    alert(body.detail ?? "The export failed.");
+    return;
+  }
+  const blob = await response.blob();
+  const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? `${id}.${request.format}`;
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+/** The filters and parameters passed to the print view (base64url JSON); anything malformed is ignored. */
+export function decodeState(encoded: string | undefined): Partial<DashboardState> | undefined {
+  if (!encoded) return undefined;
+  try {
+    const padded = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const value: unknown = JSON.parse(atob(padded));
+    if (!value || typeof value !== "object") return undefined;
+    const out: Partial<DashboardState> = {};
+    const { filters, parameters } = value as Record<string, unknown>;
+    if (filters && typeof filters === "object") out.filters = filters as DashboardState["filters"];
+    if (parameters && typeof parameters === "object") out.parameters = parameters as DashboardState["parameters"];
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+function Viewer({ id, initial }: { id: string; initial?: Partial<DashboardState> | undefined }) {
   const container = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -42,17 +92,19 @@ function Viewer({ id }: { id: string }) {
     let cancelled = false;
     setError(null);
     (async () => {
-      const [bundle, runtime] = await Promise.all([
-        get<{ manifest: Manifest; html: string }>(`/api/dashboards/${enc(id)}`),
-        runtimeSource(),
-      ]);
+      const bundle = await get<{ manifest: Manifest; html?: string; frameUrl?: string }>(`/api/dashboards/${enc(id)}`);
+      // With a usercontent origin the frame loads the bundle from there; otherwise it is inlined.
+      const runtime = bundle.frameUrl ? "" : await runtimeSource();
       if (cancelled || !container.current) return;
       const dark = matchMedia("(prefers-color-scheme: dark)").matches;
       host = mountDashboard({
         container: container.current,
         manifest: bundle.manifest,
-        html: bundle.html,
+        html: bundle.html ?? "",
         runtime,
+        ...(bundle.frameUrl ? { frameUrl: bundle.frameUrl } : {}),
+        ...(initial ? { initialState: initial } : {}),
+        onExport: (request) => void startExport(id, request),
         theme: { mode: dark ? "dark" : "light" },
         runQuery: (request) => post(`/api/dashboards/${enc(id)}/query`, request),
         runDomain: (request) => post(`/api/dashboards/${enc(id)}/domain`, request),
@@ -63,7 +115,7 @@ function Viewer({ id }: { id: string }) {
       cancelled = true;
       host?.destroy();
     };
-  }, [id]);
+  }, [id, initial]);
   return (
     <>
       {error ? <Problem error={new Error(error)} /> : null}
@@ -74,6 +126,13 @@ function Viewer({ id }: { id: string }) {
 
 export function DashboardPage() {
   const { id } = dashboard.useParams();
+  const search = dashboard.useSearch();
+  const initial = useMemo(() => decodeState(search.state), [search.state]);
+  if (search.print === "1") return <Viewer id={id} initial={initial} />;
+  return <InteractivePage id={id} />;
+}
+
+function InteractivePage({ id }: { id: string }) {
   const [dialog, setDialog] = useState<"permissions" | "revisions" | null>(null);
   const info = useQuery({
     queryKey: ["dashboard-info", id],

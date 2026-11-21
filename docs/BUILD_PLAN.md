@@ -452,9 +452,9 @@ tabfree/
 
 **Goal:** the governed server people actually log in to.
 
-- [ ] **P3.1** API skeleton with Postgres schema and migrations: sites, projects (nested), content (dashboards, data models, connections), immutable revisions, users, groups, memberships, permission rules, `audit_event`.
-- [ ] **P3.2** AuthN: OIDC (Cognito broker, or Okta/Entra/Keycloak direct), SAML through the broker, local accounts, PATs, secure sessions.
-- [ ] **P3.3** AuthZ, Tableau-compatible:
+- [x] **P3.1** API skeleton with Postgres schema and migrations: sites, projects (nested), content (dashboards, data models, connections), immutable revisions, users, groups, memberships, permission rules, `audit_event`.
+- [x] **P3.2** AuthN: OIDC (Cognito broker, or Okta/Entra/Keycloak direct), SAML through the broker, local accounts, PATs, secure sessions.
+- [x] **P3.3** AuthZ, Tableau-compatible:
   - site roles as ceilings (Creator, Explorer, Explorer-can-publish, Viewer, Site admin)
   - capabilities per content type: View, Filter, Download image/PDF, Download summary/full data, Web Edit (edit with Claude), Share, Subscribe, Overwrite, Move, Delete, Set permissions; Connect for models
   - allow / deny / unspecified
@@ -463,12 +463,12 @@ tabfree/
   - default project permissions and locked projects
   - list filtering for browse and search
   - a table-driven test suite
-- [ ] **P3.4** Row-level security:
+- [x] **P3.4** Row-level security:
   - policies on semantic models, keyed on user attributes, groups and entitlement tables
   - `USERNAME()`, `FULLNAME()` and `ISMEMBEROF()` translated
   - non-removable data source filters
   - enforced in the compiler and tested with impersonated personas
-- [ ] **P3.5** Portal:
+- [x] **P3.5** Portal:
   - **Navigation:** Home, Explore (project tree), search, favorites/recents.
   - **Content pages:** dashboard viewer (tabs for multi-dashboard workbooks), data model browser.
   - **Admin:** Tableau-style permissions dialog, user/group admin, site settings.
@@ -484,8 +484,22 @@ tabfree/
     - `tf-filter`: every Tableau control style (dropdown, list, slider, date range, relative date, wildcard)
     - `tf-parameter`, `tf-legend` (with highlight), `tf-kpi`, `tf-text`, `tf-image`
 - [ ] **P3.7** Exports: PDF/PNG through Playwright, rendered as the requesting user; crosstab CSV/Excel; summary and full data. Every export checks capabilities.
-- [ ] **P3.8** Audit log (sign-in, view, export, query hash, permission decisions) and basic admin views.
-- [ ] **P3.9** Old-URL redirects: Tableau `/#/site/<site>/views/<workbook>/<sheet>` → the matching TabFree dashboard, so bookmarks and links in emails keep working.
+- [x] **P3.8** Audit log (sign-in, view, export, query hash, permission decisions) and basic admin views.
+- [x] **P3.9** Old-URL redirects: Tableau `/#/site/<site>/views/<workbook>/<sheet>` → the matching TabFree dashboard, so bookmarks and links in emails keep working.
+
+**Phase 3 status (2026-11-20).** Built and tested offline (`make check`; the database tests also run on Postgres 16 locally and on Postgres 17 in CI). Not yet run with a real identity provider, on AWS or with Chromium installed.
+
+| Task | Status |
+|---|---|
+| P3.1 metadata database | Done: SQLAlchemy Core schema and four Alembic migrations. It covers sites, users, site roles, groups, nested projects, content with append-only revisions (enforced by a Postgres trigger), rules, sessions, tokens, favorites, old URLs and the audit log. `python -m tabfree_api.db` runs migrations and imports a site file. |
+| P3.2 authentication | Done: OIDC (SAML through the broker), sessions in the database, personal access tokens (15-day idle expiry, revocation), local accounts (argon2id, lockout), group minimum roles. Not yet tried against a real Cognito/Okta/Entra tenant. |
+| P3.3 authorization | Done: Tableau's documented order, re-checked 2026-11-20 (ADR-006), with table-driven tests. Group sets and per-view permissions are not implemented. |
+| P3.4 row-level security | Done: entitlement tables (by username, email or group) and filter policies, both applied before FIXED; user attributes from ID-token claims or the admin. Persona tests on DuckDB. |
+| P3.5 portal | Done: React and TanStack: Home, Explore (project tree), search, favorites and recents, the dashboard viewer with workbook tabs, the model browser, the permissions dialog, revisions, users, groups, settings, audit log and tokens. Checked in the browser. |
+| P3.6 runtime | Mostly done: the usercontent origin with signed frame URLs and a strict portal CSP; tiled and floating layout with fixed or automatic size; drill, sort and export hooks; nested crosstab headers, pivot and totals; every Tableau filter control style; `tf-legend`, `tf-text`, `tf-image` and `tf-export`. Still open: charts stay on the built-in SVG renderer until P1.15 picks Vega-Lite or ECharts, and `tf-map` needs MapLibre with boundary data (Phase 4). The in-app browser blocks cross-origin frames, so frames on the usercontent origin were checked with HTTP requests rather than visually. |
+| P3.7 exports | Partly done: CSV summary data and Excel crosstabs with capability checks, RLS, export caps, table calcs in SQL and formula-injection guards. PNG and PDF are built on Playwright but have not been run with a real Chromium (it needs `playwright install chromium`). Download Full Data (underlying rows) is still to do. |
+| P3.8 audit | Done: sign-in and sign-out, views, queries (request hash), exports, denials, permission and admin changes, tokens. Admin audit page. |
+| P3.9 old URLs | Done: share and embed links redirect on the server; portal fragment links resolve in the client; mappings are set by an admin or the migration. |
 
 **Milestone M3, internal alpha:**
 - Users sign in with SSO and see only what Tableau would have shown them.

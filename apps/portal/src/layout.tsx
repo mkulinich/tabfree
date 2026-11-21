@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { ApiError, get, type Me, ROLE_LABELS, send, type SiteInfo } from "./api.js";
 
@@ -12,11 +12,29 @@ export function useSite() {
   return useQuery({ queryKey: ["site"], queryFn: () => get<SiteInfo>("/api/site") });
 }
 
+/** Old Tableau links ("/#/site/x/views/Workbook/Sheet") keep their path in the fragment (P3.9). */
+function useTableauLinks(signedIn: boolean) {
+  const navigate = useNavigate();
+  const [missing, setMissing] = useState<string | null>(null);
+  useEffect(() => {
+    const hash = location.hash;
+    if (!signedIn || !/^#\/(site\/[^/]+\/)?views\//.test(hash)) return;
+    get<{ to: string }>("/api/redirects/resolve", { path: hash })
+      .then(({ to }) => {
+        history.replaceState(null, "", to);
+        void navigate({ to });
+      })
+      .catch(() => setMissing(hash));
+  }, [signedIn, navigate]);
+  return missing;
+}
+
 export function Layout() {
   const me = useMe();
   const site = useSite();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const missingLink = useTableauLinks(Boolean(me.data));
 
   if (me.error instanceof ApiError && me.error.status === 401) {
     return (
@@ -27,6 +45,14 @@ export function Layout() {
             Sign in
           </a>
         </p>
+      </main>
+    );
+  }
+
+  if (new URLSearchParams(location.search).get("print") === "1") {
+    return (
+      <main id="main" className="print">
+        <Outlet />
       </main>
     );
   }
@@ -81,6 +107,11 @@ export function Layout() {
         </details>
       </header>
       <main id="main">
+        {missingLink ? (
+          <p role="alert" className="note page">
+            That Tableau link has no dashboard here, or it is not shared with you.
+          </p>
+        ) : null}
         <Outlet />
       </main>
     </div>

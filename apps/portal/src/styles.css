@@ -426,3 +426,8 @@ tr.denied-row td {
 .facts dd {
   margin: 0;
 }
+
+main.print .viewer {
+  border: none;
+  margin: 0;
+}
