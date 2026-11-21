@@ -16,6 +16,10 @@ dependencies = [
 [project.optional-dependencies]
 # Tableau Hyper API (Apache-2.0) ships a native engine (~100 MB); only extract conversion needs it.
 hyper = ["tableauhyperapi>=0.0.21000", "pyarrow>=17"]
+# Read-only access to Tableau Server's workgroup repository (P1.3).
+repository = ["psycopg[binary]>=3.2"]
+# S3 raw-zone sink for downloads and ground truth (P1.4, P1.5).
+aws = ["boto3>=1.35"]
 
 [project.scripts]
 tabfree-migrate = "tabfree_migrate.cli:app"
