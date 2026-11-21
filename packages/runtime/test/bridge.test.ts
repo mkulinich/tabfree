@@ -212,3 +212,22 @@ describe("host and SDK", () => {
     expect(coerceParameter({ label: "b", type: "boolean", default: true }, "yes")).toBeUndefined();
   });
 });
+
+describe("tableCalcOptions", () => {
+  it("passes layout, densification, filters and TOTAL aggregations to the engine", async () => {
+    const { tableCalcOptions } = await import("../src/host.js");
+    expect(
+      tableCalcOptions({
+        measures: ["Sales", { field: "Profit", agg: "avg", as: "Avg Profit" }, { field: "Id", agg: "countd" }],
+        layout: { across: ["Month"] },
+        densify: ["Month"],
+        tableCalcFilters: [{ expr: "INDEX() <= 3" }],
+      }),
+    ).toEqual({
+      aggregations: { "Avg Profit": "avg" },
+      across: ["Month"],
+      densify: ["Month"],
+      filters: [{ expr: "INDEX() <= 3" }],
+    });
+  });
+});

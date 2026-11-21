@@ -113,6 +113,7 @@ def test_differences_lookups_and_positions(con: Any) -> None:
         ],
     )
     assert [rows[("E", m)]["Diff"] for m in (1, 2, 3)] == [None, 10, 10]
+    assert [rows[("W", m)]["Diff"] for m in (1, 2, 3)] == [None, -5, 15]  # ZN: a missing month counts as 0
     assert rows[("E", 3)]["PctFirst"] == pytest.approx(2.0)
     assert rows[("E", 1)]["Next"] == 20
     assert rows[("E", 3)]["Next"] is None

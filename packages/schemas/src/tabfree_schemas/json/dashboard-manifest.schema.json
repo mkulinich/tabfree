@@ -400,6 +400,12 @@
         "partitioning": { "type": "array", "items": { "type": "string" } },
         "relativeTo": { "enum": ["previous", "next", "first", "last"] },
         "frame": { "$ref": "#/$defs/frame" },
+        "orderBy": { "type": "array", "items": { "$ref": "#/$defs/sort" } },
+        "offset": { "type": "integer" },
+        "percentile": { "type": "number", "minimum": 0, "maximum": 1 },
+        "atLevel": { "type": "string" },
+        "restartEvery": { "type": "string" },
+        "nullIfIncomplete": { "type": "boolean", "default": false },
         "direction": { "enum": ["asc", "desc"] }
       }
     },
@@ -495,6 +501,37 @@
                   }
                 }
               }
+            }
+          }
+        },
+        "layout": {
+          "description": "Which dimensions are on the Columns shelf (\"across\"); table calculations use it for table/pane across and down. Every other dimension is down.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "across": { "type": "array", "uniqueItems": true, "items": { "type": "string" } } }
+        },
+        "densify": {
+          "description": "Domain completion for table calculations: true for every dimension, or a list of dimensions.",
+          "oneOf": [{ "type": "boolean" }, { "type": "array", "minItems": 1, "items": { "type": "string" } }]
+        },
+        "dropDensified": {
+          "description": "Remove rows added by densification after the calculations have used them.",
+          "type": "boolean",
+          "default": false
+        },
+        "tableCalcFilters": {
+          "description": "Table-calculation filters: keep rows where the expression is true, after the calculations ran (their values do not change).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["expr"],
+            "properties": {
+              "expr": { "$ref": "#/$defs/expression" },
+              "computeUsing": { "$ref": "#/$defs/computeUsing" },
+              "addressing": { "type": "array", "items": { "type": "string" } },
+              "partitioning": { "type": "array", "items": { "type": "string" } },
+              "orderBy": { "type": "array", "items": { "$ref": "#/$defs/sort" } }
             }
           }
         },

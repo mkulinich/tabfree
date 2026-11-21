@@ -163,6 +163,9 @@ def push_down(
                 )
                 out.append((name, ref))
                 continue
+            # Tableau's quick calc is ZN(x) - LOOKUP(ZN(x), -1): a missing value counts as 0, but a
+            # missing neighbour (the edge of the partition) gives NULL (matches @tabfree/tablecalc).
+            value = exp.Coalesce(this=value, expressions=[exp.Literal.number(0)])
             if relative == "previous":
                 ref = over(exp.Lag(this=value.copy(), offset=exp.Literal.number(1)))
             elif relative == "next":

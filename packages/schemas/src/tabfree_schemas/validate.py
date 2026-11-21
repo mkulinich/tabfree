@@ -143,6 +143,16 @@ def _query_outputs(where: str, query: Mapping[str, Any], errors: list[str]) -> s
             if name in outputs:
                 errors.append(f'{where}: duplicate output name {name!r}; give one of them "as"')
             outputs.add(name)
+    for i, blend in enumerate(query.get("blend", [])):
+        for item in blend.get("measures", []):
+            name = _output_name(item)
+            if name in outputs:
+                errors.append(f'{where}.blend[{i}]: duplicate output name {name!r}; give one of them "as"')
+            outputs.add(name)
+        dimension_names = {_output_name(d) for d in query.get("dimensions", [])}
+        for link in blend.get("links", []):
+            if link["primary"] not in dimension_names:
+                errors.append(f"{where}.blend[{i}]: link {link['primary']!r} is not a dimension of the query")
     return outputs
 
 

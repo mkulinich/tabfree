@@ -26,7 +26,13 @@ import {
   type Theme,
   type Tuple,
 } from "./protocol.js";
-import { applyTableCalcs, type TableCalc } from "./tablecalc.js";
+import {
+  applyTableCalcs,
+  type Aggregation,
+  type TableCalc,
+  type TableCalcFilter,
+  type TableCalcOptions,
+} from "./tablecalc.js";
 
 // ---- The parts of tabfree.json the host reads ------------------------------------------------
 
@@ -55,12 +61,42 @@ export interface ManifestAction {
   clear?: "keep_filter" | "show_all" | "exclude_all";
 }
 
+/** The parts of a manifest query the host needs for table calculations (computed in the browser). */
+export interface ManifestQuery {
+  measures?: (string | { field?: string; agg?: string; expr?: string; as?: string })[];
+  tableCalcs?: TableCalc[];
+  layout?: { across?: string[] };
+  densify?: boolean | string[];
+  dropDensified?: boolean;
+  tableCalcFilters?: TableCalcFilter[];
+}
+
+const TOTAL_AGGREGATIONS: readonly string[] = ["sum", "avg", "min", "max", "count", "attr"];
+
+/** Engine options for a query: layout, densification, filters and how TOTAL() re-aggregates. */
+export function tableCalcOptions(query: ManifestQuery): TableCalcOptions {
+  const aggregations: Record<string, Aggregation> = {};
+  for (const m of query.measures ?? []) {
+    if (typeof m !== "string" && m.agg && TOTAL_AGGREGATIONS.includes(m.agg)) {
+      aggregations[m.as ?? m.field ?? ""] = m.agg as Aggregation;
+    }
+  }
+  const options: TableCalcOptions = { aggregations };
+  return {
+    ...options,
+    ...(query.layout?.across ? { across: query.layout.across } : {}),
+    ...(query.densify !== undefined ? { densify: query.densify } : {}),
+    ...(query.dropDensified !== undefined ? { dropDensified: query.dropDensified } : {}),
+    ...(query.tableCalcFilters ? { filters: query.tableCalcFilters } : {}),
+  };
+}
+
 export interface Manifest {
   id: string;
   title: string;
   filters?: Record<string, ManifestFilter>;
   parameters?: Record<string, ManifestParameter>;
-  queries: Record<string, { tableCalcs?: TableCalc[] }>;
+  queries: Record<string, ManifestQuery>;
   actions?: ManifestAction[];
 }
 
@@ -268,7 +304,9 @@ export function mountDashboard(options: MountOptions): DashboardHost {
         if (!query) return fail(message.id, "not_found", `no query named "${message.query}"`);
         try {
           const response = await options.runQuery({ dashboard: manifest.id, query: message.query, state, selections });
-          const table = applyTableCalcs(response, query.tableCalcs ?? []);
+          const calcs = query.tableCalcs ?? [];
+          const needed = calcs.length > 0 || (query.tableCalcFilters ?? []).length > 0 || query.densify !== undefined;
+          const table = needed ? applyTableCalcs(response, calcs, tableCalcOptions(query)) : response;
           send({ v: 0, type: "result", id: message.id, query: message.query, ...table, truncated: response.truncated });
         } catch (error) {
           const code = error instanceof HostQueryError ? error.code : "query_failed";

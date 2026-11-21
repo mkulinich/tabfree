@@ -104,6 +104,13 @@ def query_outputs(query: Mapping[str, Any]) -> set[str]:
     for item in [*query.get("dimensions", []), *query.get("measures", [])]:
         names.add(item if isinstance(item, str) else str(item.get("as") or item.get("field")))
     names.update(str(c["name"]) for c in query.get("tableCalcs", []))
+    for blend in query.get("blend", []):
+        names.update(
+            item if isinstance(item, str) else str(item.get("as") or item.get("field"))
+            for item in blend.get("measures", [])
+        )
+    if query.get("pivotMeasures"):
+        names.update({"Measure Names", "Measure Values"})
     return names
 
 
