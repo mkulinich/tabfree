@@ -60,6 +60,21 @@ KNOWN_DEVIATIONS: dict[str, str] = {
     'string.contains.regex | CONTAINS(str1, "A\\(")': "stale expected file: expects a NULL; str1 has none",
     "string.find.empty | FIND(str1, 'F')": "stale expected file: its setup file tests FIND(x, '')",
     "string.find.empty | FIND(str1, 'f')": "stale expected file: its setup file tests FIND(x, '')",
+    'string.regexp.extract_nth.extended | REGEXP_EXTRACT_NTH("999-555-1234", "(\\d)", 1) //"1"': (
+        "expected file returns '1' for the first (\\d) group of '999-555-1234'; every regex engine gives '9'"
+    ),
+    "string.regexp.replace.extended | REGEXP_REPLACE(\"!@#abc| w-$ %^&\",'\\$','dollar')": (
+        "expected file has backslashes before # and % that are not in the input"
+    ),
+    "string.regexp.replace.extended | REGEXP_REPLACE(\"!@#abc$$| w-$ %^&\",'\\$','dollar')": (
+        "expected file has backslashes before # and % that are not in the input"
+    ),
+}
+
+#: Suites that exercise one engine's features which DuckDB (the local stand-in) lacks. They run on
+#: Athena and Redshift in the P2.9 CI job instead.
+ENGINE_SPECIFIC: dict[str, str] = {
+    "regexcalcs/setup.string.regex.icu_fallback.txt": "ICU possessive quantifiers, lookarounds (not RE2)",
 }
 
 
@@ -235,8 +250,8 @@ def run(cases: Iterable[TestCase], con: Any, model: SemanticModel | None = None)
     session = Session(username="tdvt", today=dt.date(2020, 1, 1))
     results: list[Result] = []
     for case in cases:
-        if not any(case.expected):
-            continue  # no expected tuples: TDVT records the test as not applicable
+        if not any(case.expected) or case.suite in ENGINE_SPECIFIC:
+            continue  # not applicable here (no expected tuples, or features DuckDB lacks)
         try:
             compiled = compile_expression(model, case.expression, dialect="duckdb", session=session)
             rows = con.execute(compiled.sql, list(compiled.parameters)).fetchall()

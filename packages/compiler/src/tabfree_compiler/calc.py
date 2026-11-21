@@ -404,6 +404,9 @@ AGGREGATES = frozenset(
         "VARP",
         "PERCENTILE",
         "COLLECT",
+        "CORR",
+        "COVAR",
+        "COVARP",
     ]
 )
 #: MIN and MAX with two arguments are row-level, like LEAST and GREATEST.

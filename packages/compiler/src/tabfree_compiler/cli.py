@@ -123,7 +123,16 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if getattr(args, "suite", "unset") is None:
-        args.suite = ["standard", "lodcalcs", "median", "pretest"]
+        args.suite = [
+            "standard",
+            "lodcalcs",
+            "median",
+            "pretest",
+            "regexcalcs",
+            "dateparse",
+            "percentile",
+            "iso8601week",
+        ]
     try:
         return int(args.func(args))
     except (CompileError, CalcSyntaxError) as exc:

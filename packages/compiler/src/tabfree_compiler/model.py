@@ -73,6 +73,7 @@ class SemanticModel:
     id: str
     connection: Mapping[str, Any]
     week_start: str
+    fiscal_year_start: int
     tables: dict[str, Table]
     relationships: list[Relationship]
     fields: dict[str, ModelField]  # by id
@@ -135,6 +136,7 @@ class SemanticModel:
             id=doc["id"],
             connection=doc.get("connection", {}),
             week_start=(doc.get("settings") or {}).get("weekStart", "sunday"),
+            fiscal_year_start=int((doc.get("settings") or {}).get("fiscalYearStartMonth", 1)),
             tables=tables,
             relationships=rels,
             fields=fields,

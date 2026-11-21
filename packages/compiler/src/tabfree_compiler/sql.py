@@ -368,10 +368,17 @@ class _Planner:
             node = self.model.expand_formula(spec["expr"])
         else:
             node = self.model.field_node(spec["field"])
+            fiscal = self.model.fiscal_year_start != 1
             if spec.get("dateTrunc"):
-                node = Call("DATETRUNC", (Lit("string", spec["dateTrunc"]), node))
+                fn = (
+                    "_FISCAL_DATETRUNC"
+                    if fiscal and spec["dateTrunc"] in ("year", "quarter")
+                    else "DATETRUNC"
+                )
+                node = Call(fn, (Lit("string", spec["dateTrunc"]), node))
             elif spec.get("datePart"):
-                node = Call("DATEPART", (Lit("string", spec["datePart"]), node))
+                fn = "_FISCAL_DATEPART" if fiscal and spec["datePart"] in ("year", "quarter") else "DATEPART"
+                node = Call(fn, (Lit("string", spec["datePart"]), node))
         if any(is_aggregate_call(n) for n in _outside_lods(node)):
             raise CompileError(f"dimension {spec!r} is an aggregate; use it as a measure")
         return spec.get("as") or spec["field"], node, "dimension"
@@ -752,7 +759,18 @@ class _Planner:
     def _agg_type(self, call: Call, scope: _RowScope) -> str:
         if call.name in ("COUNT", "COUNTD"):
             return "integer"
-        if call.name in ("AVG", "MEDIAN", "STDEV", "STDEVP", "VAR", "VARP", "PERCENTILE"):
+        if call.name in (
+            "AVG",
+            "MEDIAN",
+            "STDEV",
+            "STDEVP",
+            "VAR",
+            "VARP",
+            "PERCENTILE",
+            "CORR",
+            "COVAR",
+            "COVARP",
+        ):
             return "float"
         return self._row(call.args[0], scope, probe=True).type if call.args else "unknown"
 
@@ -835,7 +853,33 @@ class _Planner:
             mn, mx = exp.Min(this=arg.e), exp.Max(this=arg.e.copy())
             return T(_case([(exp.EQ(this=mn, expression=mx), mn.copy())], exp.Null()), arg.type)
         if name == "PERCENTILE":
-            raise UnsupportedError("PERCENTILE")
+            if (
+                len(call.args) != 2
+                or not isinstance(call.args[1], Lit)
+                or call.args[1].kind not in ("integer", "float")
+            ):
+                raise CompileError("PERCENTILE takes an expression and a literal fraction")
+            fraction = float(call.args[1].value)  # type: ignore[arg-type]
+            if not 0 <= fraction <= 1:
+                raise CompileError("PERCENTILE's fraction must be between 0 and 1")
+            x = _cast(self._row(call.args[0], scope).e, "float")
+            if self.dialect == "duckdb":
+                return T(exp.Anonymous(this="QUANTILE_CONT", expressions=[x, _num(fraction)]), "float")
+            if self.dialect == "redshift":
+                ordered = exp.WithinGroup(
+                    this=exp.Anonymous(this="PERCENTILE_CONT", expressions=[_num(fraction)]),
+                    expression=exp.Order(expressions=[exp.Ordered(this=x)]),
+                )
+                return T(ordered, "float")
+            # Athena has no exact percentile: approx_percentile (documented approximation).
+            return T(exp.Anonymous(this="APPROX_PERCENTILE", expressions=[x, _num(fraction)]), "float")
+        if name in ("CORR", "COVAR", "COVARP"):
+            if len(call.args) != 2:
+                raise CompileError(f"{name} takes two arguments")
+            x = _cast(self._row(call.args[0], scope).e, "float")
+            y = _cast(self._row(call.args[1], scope).e, "float")
+            fn = {"CORR": "CORR", "COVAR": "COVAR_SAMP", "COVARP": "COVAR_POP"}[name]
+            return T(exp.Anonymous(this=fn, expressions=[x, y]), "float")
         if len(call.args) != 1:
             raise CompileError(f"{name} takes one argument")
         arg = self._row(call.args[0], scope)
@@ -1106,7 +1150,8 @@ class _Planner:
             raise CompileError(f"aggregate {name} used where a row-level value is required")
         handler = _FUNCTIONS.get(name)
         if handler is None:
-            raise UnsupportedError(f"function {name}")
+            reason = UNSUPPORTED_FUNCTIONS.get(name)
+            raise UnsupportedError(f"function {name}: {reason}" if reason else f"function {name}")
         return handler(self, args, tr)
 
     def _date_part_name(self, node: Node) -> str:
@@ -1141,12 +1186,97 @@ class _Planner:
                 else trunc
             )
             return T(_cast(out, "datetime"), "datetime")
-        if part.startswith("iso_"):
-            base = {"iso_year": "YEAR", "iso_quarter": "QUARTER", "iso_week": "WEEK"}[part]
-            if base != "WEEK":
-                raise UnsupportedError(f"DATETRUNC {part}")
-            return T(exp.TimestampTrunc(this=ts, unit=exp.var("WEEK")), "datetime")
+        if part == "iso_week":
+            return T(_cast(self._monday(ts), "datetime"), "datetime")
+        if part == "iso_weekday":
+            part = "day"
+        if part == "iso_year":
+            return T(_cast(self._iso_week1(ts), "datetime"), "datetime")
+        if part == "iso_quarter":
+            weeks = exp.Mul(
+                this=exp.Paren(this=exp.Sub(this=self._iso_quarter(ts), expression=_num(1))),
+                expression=_num(91),
+            )
+            start = exp.DateAdd(this=self._iso_week1(ts), expression=weeks, unit=exp.var("DAY"))
+            return T(_cast(start, "datetime"), "datetime")
         return T(_cast(exp.TimestampTrunc(this=ts, unit=exp.var(part.upper())), "datetime"), "datetime")
+
+    # -- ISO-8601 calendar: weeks start on Monday; week 1 contains January 4th; quarters are 13 weeks
+    #    (the last one takes week 53). Built from portable date arithmetic for every dialect.
+    def _monday(self, ts: exp.Expr) -> exp.Expr:
+        return exp.TimestampTrunc(this=ts.copy(), unit=exp.var("WEEK"))
+
+    def _iso_year(self, ts: exp.Expr) -> exp.Expr:
+        thursday = exp.DateAdd(this=self._monday(ts), expression=_num(3), unit=exp.var("DAY"))
+        return self._extract("YEAR", thursday)
+
+    def _iso_week1(self, ts: exp.Expr, years: exp.Expr | None = None) -> exp.Expr:
+        """Monday of ISO week 1 of the ISO year of ``ts`` (plus ``years`` years)."""
+        thursday = exp.DateAdd(this=self._monday(ts), expression=_num(3), unit=exp.var("DAY"))
+        jan1: exp.Expr = exp.TimestampTrunc(this=thursday, unit=exp.var("YEAR"))
+        if years is not None:
+            jan1 = exp.DateAdd(this=jan1, expression=years, unit=exp.var("YEAR"))
+        jan4 = exp.DateAdd(this=jan1, expression=_num(3), unit=exp.var("DAY"))
+        return exp.TimestampTrunc(this=jan4, unit=exp.var("WEEK"))
+
+    def _iso_week(self, ts: exp.Expr) -> exp.Expr:
+        days = exp.DateDiff(
+            this=_cast(self._monday(ts), "date"),
+            expression=_cast(self._iso_week1(ts), "date"),
+            unit=exp.var("DAY"),
+        )
+        return exp.Add(this=_cast(exp.Div(this=days, expression=_num(7)), "integer"), expression=_num(1))
+
+    def _iso_quarter(self, ts: exp.Expr) -> exp.Expr:
+        q = exp.Add(
+            this=_cast(
+                exp.Floor(
+                    this=exp.Div(
+                        this=exp.Paren(this=exp.Sub(this=self._iso_week(ts), expression=_num(1))),
+                        expression=_num(13.0),
+                    )
+                ),
+                "integer",
+            ),
+            expression=_num(1),
+        )
+        return _case([(exp.GT(this=q, expression=_num(4)), _num(4))], q.copy())
+
+    def _iso_quarter_start(self, ts: exp.Expr, index: exp.Expr, base: exp.Expr) -> exp.Expr:
+        """Monday starting ISO quarter ``index`` (= iso_year * 4 + quarter - 1); ``base`` is ts's index."""
+        year = exp.Floor(this=exp.Div(this=_cast(index, "float"), expression=_num(4.0)))
+        base_year = exp.Floor(this=exp.Div(this=_cast(base, "float"), expression=_num(4.0)))
+        quarter = exp.Sub(
+            this=index.copy(), expression=exp.Mul(this=_cast(year, "integer"), expression=_num(4))
+        )
+        week1 = self._iso_week1(ts, _cast(exp.Sub(this=year.copy(), expression=base_year), "integer"))
+        days = exp.Mul(this=exp.Paren(this=quarter), expression=_num(91))
+        return exp.DateAdd(this=week1, expression=days, unit=exp.var("DAY"))
+
+    def _add_iso_quarters(self, ts: exp.Expr, n: exp.Expr) -> exp.Expr:
+        """Tableau keeps the distance from the end of the ISO quarter (a 53-week year's Q4 has 14 weeks)."""
+        index = exp.Add(
+            this=exp.Mul(this=self._iso_year(ts), expression=_num(4)),
+            expression=exp.Sub(this=self._iso_quarter(ts), expression=_num(1)),
+        )
+        next_start = self._iso_quarter_start(ts, exp.Add(this=index, expression=_num(1)), index.copy())
+        to_end = exp.DateDiff(
+            this=_cast(next_start, "date"), expression=_cast(ts.copy(), "date"), unit=exp.var("DAY")
+        )
+        target_next = self._iso_quarter_start(
+            ts,
+            exp.Add(this=exp.Add(this=index.copy(), expression=_paren(n)), expression=_num(1)),
+            index.copy(),
+        )
+        day = exp.DateAdd(
+            this=target_next, expression=exp.Neg(this=exp.Paren(this=to_end)), unit=exp.var("DAY")
+        )
+        time_of_day = exp.DateDiff(
+            this=ts.copy(),
+            expression=exp.TimestampTrunc(this=ts.copy(), unit=exp.var("DAY")),
+            unit=exp.var("SECOND"),
+        )
+        return exp.DateAdd(this=_cast(day, "datetime"), expression=time_of_day, unit=exp.var("SECOND"))
 
     def _extract(self, unit: str, e: exp.Expr) -> exp.Expr:
         return _cast(exp.Extract(this=exp.var(unit), expression=e), "integer")
@@ -1191,11 +1321,14 @@ class _Planner:
                 exp.Add(this=self._datediff("week", year_start, d, week_start).e, expression=_num(1)),
                 "integer",
             )
+        ts = e if d.type == "datetime" else _cast(e, "datetime")
         if part == "iso_week":
-            return T(self._extract("WEEK", e), "integer")
+            return T(self._iso_week(ts), "integer")
         if part == "iso_year":
-            return T(self._extract("ISOYEAR" if self.dialect == "duckdb" else "YEAR_OF_WEEK", e), "integer")
-        raise UnsupportedError(f"DATEPART {part} (the ISO-8601 calendar arrives in P2.3)")
+            return T(self._iso_year(ts), "integer")
+        if part == "iso_quarter":
+            return T(self._iso_quarter(ts), "integer")
+        raise UnsupportedError(f"DATEPART {part}")
 
     def _datediff(self, part: str, a: T, b: T, week_start: int) -> T:
         """Tableau counts boundaries crossed: DATEDIFF('month', #2024-01-31#, #2024-02-01#) = 1."""
@@ -1219,12 +1352,52 @@ class _Planner:
         if part in ("hour", "minute", "second"):
             ta, tb = self._trunc(part, a, week_start), self._trunc(part, b, week_start)
             return T(exp.DateDiff(this=tb.e, expression=ta.e, unit=exp.var(part.upper())), "integer")
+        if part.startswith("iso_"):
+            sa = a.e if a.type == "datetime" else _cast(a.e, "datetime")
+            sb = b.e if b.type == "datetime" else _cast(b.e, "datetime")
+            if part == "iso_weekday":
+                return self._datediff("day", a, b, week_start)
+            if part == "iso_week":
+                days = exp.DateDiff(
+                    this=_cast(self._monday(sb), "date"),
+                    expression=_cast(self._monday(sa), "date"),
+                    unit=exp.var("DAY"),
+                )
+                return T(_cast(exp.Div(this=days, expression=_num(7)), "integer"), "integer")
+            ya, yb = self._iso_year(sa), self._iso_year(sb)
+            if part == "iso_year":
+                return T(exp.Sub(this=yb, expression=ya), "integer")
+            ia = exp.Add(this=exp.Mul(this=ya, expression=_num(4)), expression=self._iso_quarter(sa))
+            ib = exp.Add(this=exp.Mul(this=yb, expression=_num(4)), expression=self._iso_quarter(sb))
+            return T(exp.Sub(this=exp.Paren(this=ib), expression=exp.Paren(this=ia)), "integer")
         raise UnsupportedError(f"DATEDIFF {part}")
 
     def _dateadd(self, part: str, n: T, d: T) -> T:
-        if part.startswith("iso_"):
-            raise UnsupportedError(f"DATEADD {part} (the ISO-8601 calendar arrives in P2.3)")
         amount = n.e
+        if n.type != "integer":
+            amount = _cast(exp.Floor(this=amount) if n.type in _NUMERIC else amount, "integer")
+        ts0 = d.e if d.type == "datetime" else _cast(d.e, "datetime")
+        if part == "iso_year":
+            # Same ISO week number and weekday, n ISO years later.
+            offset = exp.DateDiff(
+                this=_cast(ts0, "date"), expression=_cast(self._iso_week1(ts0), "date"), unit=exp.var("DAY")
+            )
+            target = exp.DateAdd(this=self._iso_week1(ts0, amount), expression=offset, unit=exp.var("DAY"))
+            time_of_day = exp.DateDiff(
+                this=ts0.copy(),
+                expression=exp.TimestampTrunc(this=ts0.copy(), unit=exp.var("DAY")),
+                unit=exp.var("SECOND"),
+            )
+            return T(
+                exp.DateAdd(this=_cast(target, "datetime"), expression=time_of_day, unit=exp.var("SECOND")),
+                "datetime",
+            )
+        if part == "iso_quarter":
+            return T(self._add_iso_quarters(ts0, amount), "datetime")
+        if part in ("iso_week", "iso_weekday"):
+            days = {"iso_week": 7, "iso_weekday": 1}[part]
+            step = exp.Mul(this=_paren(amount), expression=_num(days)) if days != 1 else amount
+            return T(exp.DateAdd(this=ts0, expression=step, unit=exp.var("DAY")), "datetime")
         unit = part.upper()
         if part == "quarter":
             amount, unit = exp.Mul(this=_paren(amount), expression=_num(3)), "MONTH"
@@ -1232,8 +1405,6 @@ class _Planner:
             amount, unit = exp.Mul(this=_paren(amount), expression=_num(7)), "DAY"
         elif part in ("weekday", "dayofyear"):
             unit = "DAY"
-        if n.type != "integer":
-            amount = _cast(exp.Floor(this=amount) if n.type in _NUMERIC else amount, "integer")
         ts = d.e if d.type == "datetime" else _cast(d.e, "datetime")
         return T(exp.DateAdd(this=ts, expression=amount, unit=exp.var(unit)), "datetime")
 
@@ -1703,6 +1874,325 @@ def _split(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
     return T(exp.Anonymous(this="REVERSE", expressions=[part]), "string")
 
 
+# -- regular expressions (Tableau uses ICU syntax; Athena/Trino use Java-style, Redshift POSIX with
+#    Perl extensions, DuckDB RE2: the common subset behaves the same) ------------------------------
+
+
+def _regex_match(p: _Planner, s: exp.Expr, pattern: exp.Expr) -> exp.Expr:
+    return exp.RegexpLike(this=s, expression=pattern)
+
+
+@_fn("REGEXP_MATCH", arity=(2, 2))
+def _regexp_match(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s, pattern = tr(args[0]), tr(args[1])
+    return T(_regex_match(p, s.e, pattern.e), "boolean")
+
+
+def _regex_group(p: _Planner, s: exp.Expr, pattern: exp.Expr, group: int) -> exp.Expr:
+    if p.dialect == "redshift":
+        # REGEXP_SUBSTR returns the whole match, or with 'e' only the first group (PCRE via 'p').
+        if group > 1:
+            raise UnsupportedError("REGEXP_EXTRACT_NTH beyond the first group on Redshift")
+        extracted: exp.Expr = exp.Anonymous(
+            this="REGEXP_SUBSTR", expressions=[s, pattern, _num(1), _num(1), _str("pe" if group else "p")]
+        )
+    else:
+        extracted = exp.RegexpExtract(this=s, expression=pattern, group=_num(group))
+    # Tableau returns NULL when nothing matches (DuckDB would return '').
+    return _case([(_regex_match(p, s.copy(), pattern.copy()), extracted)], exp.Null())
+
+
+@_fn("REGEXP_EXTRACT", arity=(2, 2))
+def _regexp_extract(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s, pattern = tr(args[0]), tr(args[1])
+    return T(_regex_group(p, s.e, pattern.e, 1), "string")
+
+
+def _capture_groups(pattern: str) -> int:
+    """Capturing groups in a regex: "(" not escaped, not in a character class, not "(?"."""
+    count, i, in_class = 0, 0, False
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(" and not pattern.startswith("(?", i):
+            count += 1
+        i += 1
+    return count
+
+
+@_fn("REGEXP_EXTRACT_NTH", arity=(3, 3))
+def _regexp_extract_nth(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s, pattern = tr(args[0]), tr(args[1])
+    n = args[2]
+    if not isinstance(n, Lit) or not isinstance(n.value, int) or isinstance(n.value, bool):
+        raise UnsupportedError("REGEXP_EXTRACT_NTH needs a literal group number")
+    groups = _capture_groups(str(args[1].value)) if isinstance(args[1], Lit) else None
+    if n.value < 0 or (groups is not None and n.value > groups):
+        return T(exp.Null(), "string")  # Tableau: no such group gives NULL; group 0 is the whole match
+    return T(_regex_group(p, s.e, pattern.e, n.value), "string")
+
+
+@_fn("REGEXP_REPLACE", arity=(3, 3))
+def _regexp_replace(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s, pattern, replacement = (tr(a) for a in args)
+    # Tableau replaces every match (sqlglot adds the 'g' flag where an engine needs it).
+    return T(exp.RegexpReplace(this=s.e, expression=pattern.e, replacement=replacement.e), "string")
+
+
+# -- DATEPARSE: ICU date patterns translated per engine ------------------------------------------
+
+#: ICU pattern letter runs → (strptime for DuckDB, MySQL-style for Athena/Trino date_parse, Redshift).
+_DATE_TOKENS: dict[str, tuple[str, str, str]] = {
+    "yyyy": ("%Y", "%Y", "YYYY"),
+    "yyy": ("%Y", "%Y", "YYYY"),
+    "y": ("%Y", "%Y", "YYYY"),
+    "yy": ("%y", "%y", "YY"),
+    "MMMM": ("%B", "%M", "Month"),
+    "MMM": ("%b", "%b", "Mon"),
+    "MM": ("%m", "%m", "MM"),
+    "M": ("%m", "%c", "MM"),
+    "dd": ("%d", "%d", "DD"),
+    "d": ("%d", "%e", "DD"),
+    "HH": ("%H", "%H", "HH24"),
+    "H": ("%H", "%k", "HH24"),
+    "hh": ("%I", "%h", "HH12"),
+    "h": ("%I", "%l", "HH12"),
+    "mm": ("%M", "%i", "MI"),
+    "m": ("%M", "%i", "MI"),
+    "ss": ("%S", "%s", "SS"),
+    "s": ("%S", "%s", "SS"),
+    "a": ("%p", "%p", "AM"),
+    "EEEE": ("%A", "%W", "Day"),
+    "eeee": ("%A", "%W", "Day"),
+    "EEE": ("%a", "%a", "Dy"),
+    "eee": ("%a", "%a", "Dy"),
+}
+
+
+def translate_date_pattern(icu: str, dialect: Dialect) -> str:
+    """Translate an ICU date pattern (Tableau's DATEPARSE) into the engine's format string."""
+    column = {"duckdb": 0, "athena": 1, "trino": 1, "redshift": 2}[dialect]
+    out: list[str] = []
+    i = 0
+    while i < len(icu):
+        c = icu[i]
+        if c == "'":  # quoted literal text
+            end = icu.find("'", i + 1)
+            end = len(icu) if end < 0 else end
+            out.append(icu[i + 1 : end] or "'")
+            i = end + 1
+            continue
+        if c.isalpha():
+            j = i
+            while j < len(icu) and icu[j] == c:
+                j += 1
+            run = icu[i:j]
+            token = _DATE_TOKENS.get(run) or _DATE_TOKENS.get(run[:4])
+            if token is None:
+                raise UnsupportedError(f"DATEPARSE pattern letters {run!r}")
+            out.append(token[column])
+            i = j
+            continue
+        out.append("%%" if c == "%" and column < 2 else c)
+        i += 1
+    return "".join(out)
+
+
+@_fn("DATEPARSE", arity=(2, 2))
+def _dateparse(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    if not isinstance(args[0], Lit) or args[0].kind != "string":
+        raise UnsupportedError("DATEPARSE needs a literal format")
+    fmt = _str(translate_date_pattern(str(args[0].value), p.dialect))
+    s = p._to_string(tr(args[1])).e
+    if p.dialect == "duckdb":
+        parsed: exp.Expr = exp.Anonymous(this="TRY_STRPTIME", expressions=[s, fmt])
+    elif p.dialect == "redshift":
+        parsed = exp.Anonymous(this="TO_TIMESTAMP", expressions=[s, fmt])
+    else:  # Athena / Trino: date_parse raises on bad input, TRY turns that into NULL like Tableau
+        parsed = exp.Anonymous(
+            this="TRY", expressions=[exp.Anonymous(this="DATE_PARSE", expressions=[s, fmt])]
+        )
+    return T(_cast(parsed, "datetime"), "datetime")
+
+
+# -- fiscal years: date pills on shelves follow the data source's fiscal year start (Tableau names a
+#    fiscal year after the calendar year it ends in). Formula functions stay calendar-based.
+
+
+def _fiscal_shift(p: _Planner) -> int:
+    return (13 - p.model.fiscal_year_start) % 12
+
+
+@_fn("_FISCAL_DATEPART", arity=(2, 2))
+def _fiscal_datepart(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    part = p._date_part_name(args[0])
+    d = tr(args[1])
+    shifted = p._dateadd("month", T(_num(_fiscal_shift(p)), "integer"), d)
+    return p._datepart(part, shifted, p.week_start)
+
+
+@_fn("_FISCAL_DATETRUNC", arity=(2, 2))
+def _fiscal_datetrunc(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    part = p._date_part_name(args[0])
+    d = tr(args[1])
+    shift = _fiscal_shift(p)
+    truncated = p._trunc(part, p._dateadd("month", T(_num(shift), "integer"), d), p.week_start)
+    return p._dateadd("month", T(_num(-shift), "integer"), truncated)
+
+
+# -- more string and date functions ------------------------------------------------------------
+
+
+@_fn("FINDNTH", arity=(3, 3))
+def _findnth(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s, sub = tr(args[0]), tr(args[1])
+    n = args[2]
+    if not isinstance(n, Lit) or not isinstance(n.value, int) or n.value < 1:
+        raise UnsupportedError("FINDNTH needs a literal occurrence number of at least 1")
+    # Position of the nth occurrence: length of the first n pieces when splitting on the substring.
+    pieces = [
+        exp.SplitPart(this=s.e.copy(), delimiter=sub.e.copy(), part_index=_num(i + 1)) for i in range(n.value)
+    ]
+    lengths: exp.Expr = _num(0)
+    for piece in pieces:
+        lengths = exp.Add(this=lengths, expression=exp.Length(this=piece))
+    position = exp.Add(
+        this=exp.Add(
+            this=lengths, expression=exp.Mul(this=exp.Length(this=sub.e.copy()), expression=_num(n.value - 1))
+        ),
+        expression=_num(1),
+    )
+    found = exp.GTE(
+        this=exp.Sub(
+            this=exp.Length(this=s.e.copy()),
+            expression=exp.Length(
+                this=exp.Anonymous(this="REPLACE", expressions=[s.e.copy(), sub.e.copy(), _str("")])
+            ),
+        ),
+        expression=exp.Mul(this=exp.Length(this=sub.e.copy()), expression=_num(n.value)),
+    )
+    empty = exp.EQ(this=exp.Length(this=sub.e.copy()), expression=_num(0))
+    return T(_case([(empty, _num(1)), (found, position)], _num(0)), "integer")
+
+
+@_fn("PROPER", arity=(1, 1))
+def _proper(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    s = tr(args[0]).e
+    if p.dialect == "duckdb":
+        # DuckDB has no INITCAP: upper-case each word's first letter with a regex.
+        words = exp.Anonymous(this="REGEXP_SPLIT_TO_ARRAY", expressions=[exp.Lower(this=s), _str(" ")])
+        lam = exp.Lambda(
+            this=exp.DPipe(
+                this=exp.Upper(this=exp.Substring(this=exp.column("w"), start=_num(1), length=_num(1))),
+                expression=exp.Substring(this=exp.column("w"), start=_num(2)),
+                safe=False,
+            ),
+            expressions=[exp.to_identifier("w")],
+        )
+        return T(
+            exp.Anonymous(
+                this="ARRAY_TO_STRING",
+                expressions=[exp.Anonymous(this="LIST_TRANSFORM", expressions=[words, lam]), _str(" ")],
+            ),
+            "string",
+        )
+    return T(exp.Initcap(this=s), "string")
+
+
+@_fn("MAKEDATETIME", arity=(2, 2))
+def _makedatetime(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    day, clock = tr(args[0]), tr(args[1])
+    midnight = _cast(_cast(day.e, "date"), "datetime")
+    clock_ts = clock.e if clock.type == "datetime" else _cast(clock.e, "datetime")
+    seconds = exp.DateDiff(
+        this=clock_ts,
+        expression=exp.TimestampTrunc(this=clock_ts.copy(), unit=exp.var("DAY")),
+        unit=exp.var("SECOND"),
+    )
+    return T(exp.DateAdd(this=midnight, expression=seconds, unit=exp.var("SECOND")), "datetime")
+
+
+@_fn("MAKETIME", arity=(3, 3))
+def _maketime(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    # Tableau returns a time on its day zero (1899-12-30).
+    h, m, sec = (tr(a) for a in args)
+    total = exp.Add(
+        this=exp.Add(
+            this=exp.Mul(this=_paren(h.e), expression=_num(3600)),
+            expression=exp.Mul(this=_paren(m.e), expression=_num(60)),
+        ),
+        expression=_paren(sec.e),
+    )
+    base = _cast(_str("1899-12-30 00:00:00"), "datetime")
+    return T(exp.DateAdd(this=base, expression=_cast(total, "integer"), unit=exp.var("SECOND")), "datetime")
+
+
+@_fn("USERATTRIBUTEINCLUDES", arity=(2, 2))
+def _userattributeincludes(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
+    name = _literal_string(args[0], "USERATTRIBUTEINCLUDES")
+    raw = p.session.attributes.get(name)
+    values = [] if raw is None else [v.strip() for v in str(raw).split(",")]
+    expected = tr(args[1])
+    if not values:
+        return T(exp.Boolean(this=False), "boolean")
+    return T(exp.In(this=expected.e, expressions=[p._bind(v, "string").e for v in values]), "boolean")
+
+
+#: Tableau functions TabFree deliberately does not translate, with the reason shown to authors.
+UNSUPPORTED_FUNCTIONS: dict[str, str] = {
+    **{
+        f"RAWSQL_{t}": "pass-through SQL needs a dialect review; rewrite it as a calculation"
+        for t in ("BOOL", "DATE", "DATETIME", "INT", "REAL", "SPATIAL", "STR")
+    },
+    **{
+        f"RAWSQLAGG_{t}": "pass-through SQL needs a dialect review; rewrite it as a calculation"
+        for t in ("BOOL", "DATE", "DATETIME", "INT", "REAL", "STR")
+    },
+    **{
+        f"SCRIPT_{t}": "analytics extensions (R/Python) are not supported"
+        for t in ("BOOL", "INT", "REAL", "STR")
+    },
+    **{
+        f"MODEL_{t}": "predictive modelling functions are not supported yet"
+        for t in (
+            "PERCENTILE",
+            "QUANTILE",
+            "EXTENSION_BOOL",
+            "EXTENSION_INT",
+            "EXTENSION_REAL",
+            "EXTENSION_STR",
+        )
+    },
+    **dict.fromkeys(
+        (
+            "MAKEPOINT",
+            "MAKELINE",
+            "DISTANCE",
+            "BUFFER",
+            "AREA",
+            "INTERSECTS",
+            "SHAPETYPE",
+            "OUTLINE",
+            "DIFFERENCE",
+            "INTERSECTION",
+            "SYMDIFFERENCE",
+            "VALIDATE",
+            "LENGTH",
+            "COLLECT",
+            "HEXBINX",
+            "HEXBINY",
+        ),
+        "spatial functions arrive with maps (Phase 4)",
+    ),
+}
+
+
 @_fn("DATETRUNC", arity=(2, 3))
 def _datetrunc(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
     return p._trunc(p._date_part_name(args[0]), tr(args[1]), p._week_start_index(args, 2))
@@ -1763,6 +2253,19 @@ def _datename(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T
             ),
             "string",
         )
+    if part == "iso_week":
+        # ISO weeks are written with two digits ("2015-W01").
+        text = p._to_string(number).e
+        padded = _case(
+            [
+                (
+                    exp.LT(this=number.e.copy(), expression=_num(10)),
+                    exp.DPipe(this=_str("0"), expression=text, safe=False),
+                )
+            ],
+            text.copy(),
+        )
+        return T(padded, "string")
     return p._to_string(number)
 
 
@@ -1773,8 +2276,18 @@ def _shortcut(part: str) -> Handler:
     return handler
 
 
-for _part in ("year", "quarter", "month", "day", "week"):
-    _fn(_part.upper(), arity=(1, 1))(_shortcut(_part))
+for _part in (
+    "year",
+    "quarter",
+    "month",
+    "day",
+    "week",
+    "iso_year",
+    "iso_quarter",
+    "iso_week",
+    "iso_weekday",
+):
+    _fn(_part.upper().replace("_", ""), arity=(1, 1))(_shortcut(_part))
 
 
 @_fn("TODAY", arity=(0, 0))

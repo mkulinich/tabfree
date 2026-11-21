@@ -15,7 +15,7 @@ from tabfree_compiler.sql import compile_expression
 duckdb = pytest.importorskip("duckdb")
 
 TDVT = Path(__file__).resolve().parents[3] / "corpus" / "tdvt"
-SUITES = ("standard", "lodcalcs", "median", "pretest")
+SUITES = ("standard", "lodcalcs", "median", "pretest", "regexcalcs", "dateparse", "percentile", "iso8601week")
 pytestmark = pytest.mark.skipif(not TDVT.exists(), reason="TDVT corpus not present")
 
 
