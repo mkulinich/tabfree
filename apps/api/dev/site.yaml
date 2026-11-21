@@ -1,8 +1,36 @@
 # Development site: who can see what. Phase 3 moves this into Postgres (P3.1).
 # Paths are relative to this file.
+id: dev
 dashboards: ../../../packages/schemas/examples/dashboards
-models: ../../../packages/schemas/examples/models
 defaultSiteRole: viewer
+
+# Query service (P2.7): this site's Athena workgroup (one per site, ADR-007) and cost guardrails.
+# Unset values fall back to the TABFREE_* settings.
+query:
+  athenaWorkgroup: tabfree-dev
+  dailyScanBudgetBytes: 107374182400 # 100 GiB scanned per UTC day
+  maxConcurrentQueries: 20
+
+# Semantic models. Connect (ad-hoc semantic queries, POST /api/models/{id}/query) is denied unless a
+# rule here allows it; site roles below Explorer never get it. RLS applies to explore queries too.
+# dataVersion goes into every result-cache key; the extract refresh pipeline bumps it (P6.2).
+models:
+  path: ../../../packages/schemas/examples/models
+  entries:
+    - id: superstore_sales
+      dataVersion: "2024-12-31"
+      permissions:
+        - group: Executives
+          capabilities: { connect: allow }
+        - group: Managers
+          capabilities: { connect: allow }
+        - group: Contractors
+          capabilities: { connect: deny }
+    - id: superstore
+      dataVersion: "2019-12-30"
+      permissions:
+        - group: Executives
+          capabilities: { connect: allow }
 
 projects:
   - id: sales
@@ -35,7 +63,7 @@ users:
   - { username: admin, fullname: Site Admin, siteRole: site_administrator }
   - { username: erin, fullname: Erin (executive), siteRole: explorer, groups: [Executives] }
   - { username: alice, fullname: Alice (East manager), siteRole: viewer, groups: [Managers] }
-  - { username: bob, fullname: Bob (West manager), siteRole: viewer, groups: [Managers] }
+  - { username: bob, fullname: Bob (West manager), siteRole: explorer, groups: [Managers] }
   - { username: carol, fullname: Carol (Central manager), siteRole: viewer, groups: [Managers] }
   - { username: dave, fullname: Dave (South manager), siteRole: viewer, groups: [Managers] }
   - { username: mallory, fullname: Mallory (contractor), siteRole: viewer, groups: [Managers, Contractors] }

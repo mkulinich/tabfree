@@ -5,8 +5,10 @@ which name functions local to :func:`create_router`.
 
 Every API call needs a session. Dashboards are listed and served only when the viewer has the View
 capability; queries run through :class:`QueryService` with the viewer's identity, so row-level
-security comes from the semantic model. State-changing requests must carry the
-``X-TabFree-Request`` header, which a cross-site form or image cannot send (CSRF defence).
+security comes from the semantic model. Ad-hoc semantic queries (``/api/models/{model}/query``, P2.7)
+need the Connect capability on the model, which the site file grants (default deny).
+State-changing requests must carry the ``X-TabFree-Request`` header, which a cross-site form or
+image cannot send (CSRF defence).
 """
 
 import datetime as dt
@@ -30,7 +32,7 @@ from tabfree_api.auth import (
 )
 from tabfree_api.authz import Capability, SiteRole
 from tabfree_api.content import ContentError, Site
-from tabfree_api.engines import EngineError
+from tabfree_api.engines import EngineError, EngineTimeoutError
 from tabfree_api.service import QueryService
 from tabfree_api.settings import Settings
 from tabfree_compiler import CompileError, Session
@@ -67,6 +69,11 @@ class QueryBody(BaseModel):
 class DomainBody(BaseModel):
     filter: str = Field(max_length=64)
     state: dict[str, Any]
+
+
+class ExploreBody(BaseModel):
+    #: A manifest-style query: dimensions, measures, where, sort, limit (schema ``$defs.query``).
+    query: dict[str, Any]
 
 
 def create_router(ctx: Context) -> APIRouter:
@@ -244,6 +251,8 @@ def create_router(ctx: Context) -> APIRouter:
             )
         except (CompileError, ContentError) as exc:
             raise HTTPException(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise HTTPException(504, str(exc)) from None
         except EngineError as exc:
             raise HTTPException(502, str(exc)) from None
 
@@ -261,6 +270,28 @@ def create_router(ctx: Context) -> APIRouter:
             )
         except (CompileError, ContentError) as exc:
             raise HTTPException(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise HTTPException(504, str(exc)) from None
+        except EngineError as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @router.post("/api/models/{model}/query")
+    def explore(
+        model: str,
+        body: ExploreBody,
+        info: Annotated[SessionInfo, Depends(current)],
+        _: Annotated[None, Depends(csrf)],
+    ) -> dict[str, Any]:
+        """Ad-hoc semantic query against a model the viewer may Connect to; RLS still applies."""
+        # 404, not 403, so viewers cannot probe which models exist.
+        if not ctx.site.can_model(info.principal(), Capability.CONNECT, model):
+            raise HTTPException(404, f"no model {model!r}")
+        try:
+            return ctx.service.explore(model, body.query, viewer_session(info))
+        except (CompileError, ContentError) as exc:
+            raise HTTPException(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise HTTPException(504, str(exc)) from None
         except EngineError as exc:
             raise HTTPException(502, str(exc)) from None
 

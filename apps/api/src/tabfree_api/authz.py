@@ -32,6 +32,8 @@ class Capability(StrEnum):
     OVERWRITE = "overwrite"
     DELETE = "delete"
     SET_PERMISSIONS = "set_permissions"
+    #: Semantic models (Tableau's Connect on data sources): run ad-hoc semantic queries (explore).
+    CONNECT = "connect"
 
 
 class SiteRole(StrEnum):
@@ -53,6 +55,7 @@ CEILINGS: dict[SiteRole, frozenset[Capability]] = {
             Capability.DOWNLOAD_SUMMARY,
             Capability.DOWNLOAD_FULL,
             Capability.WEB_EDIT,
+            Capability.CONNECT,
         }
     ),
     SiteRole.CREATOR: frozenset(Capability),
@@ -95,6 +98,16 @@ class DashboardEntry:
     rules: tuple[Rule, ...]
 
 
+@dataclass(frozen=True)
+class ModelEntry:
+    """A semantic model's site entry: its permissions (Connect) and data version."""
+
+    id: str
+    owner: str | None
+    rules: tuple[Rule, ...]
+    data_version: str = ""
+
+
 def parse_rules(raw: Iterable[Mapping[str, Any]]) -> tuple[Rule, ...]:
     rules = []
     for item in raw:
@@ -114,13 +127,25 @@ def decide(
     dashboard: DashboardEntry,
     project: Project,
 ) -> bool:
+    rules = project.rules if project.locked or not dashboard.rules else dashboard.rules
+    owners = {dashboard.owner} | set(project.leaders)
+    return _evaluate(principal, capability, owners, rules)
+
+
+def decide_model(principal: Principal, capability: Capability, model: ModelEntry) -> bool:
+    """The same order for a semantic model, which has its own rules and no project (default deny)."""
+    return _evaluate(principal, capability, {model.owner}, model.rules)
+
+
+def _evaluate(
+    principal: Principal, capability: Capability, owners: set[str | None], rules: tuple[Rule, ...]
+) -> bool:
     if principal.site_role is SiteRole.SITE_ADMINISTRATOR:
         return True
     if capability not in CEILINGS[principal.site_role]:
         return False
-    if dashboard.owner == principal.username or principal.username in project.leaders:
+    if principal.username in owners:
         return True
-    rules = project.rules if project.locked or not dashboard.rules else dashboard.rules
     for rule in rules:
         if rule.user == principal.username and capability in rule.capabilities:
             return rule.capabilities[capability] == "allow"
