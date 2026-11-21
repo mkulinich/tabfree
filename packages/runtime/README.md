@@ -10,7 +10,7 @@ The dashboard runtime: everything that runs in the browser around a TabFree dash
 | [`components.ts`](src/components.ts) | frame | `<tf-dashboard>`, `<tf-chart>`, `<tf-crosstab>`, `<tf-kpi>` (with an optional `change` measure shown as ▲/▼), `<tf-map>`, `<tf-filter>`, `<tf-parameter>`. |
 | [`map.ts`](src/map.ts) | frame | A US state tile map for `<tf-map query geo color>`; it needs no boundary files. Geographic maps arrive in Phase 4. |
 | [`chart.ts`](src/chart.ts) | frame | A dependency-free SVG renderer for bar, line, area and point marks (see below). |
-| [`tablecalc.ts`](src/tablecalc.ts) | portal | Table calculations, which the JS engine owns ([ADR-004](../../docs/adr/0004-table-calcs-sql-and-js-engine.md)): running, difference, percent of total, moving and window aggregates, ranks, index, first, last, size and total. |
+| [`tablecalc.ts`](src/tablecalc.ts) | portal | Re-exports [`@tabfree/tablecalc`](../tablecalc/src/index.ts), the table-calculation engine ([ADR-004](../../docs/adr/0004-table-calcs-sql-and-js-engine.md)): every quick table calc, custom table-calc formulas, Compute Using (table, pane, cell, specific, at the level, restarting every), secondary calcs, densification and table-calc filters. |
 | [`format.ts`](src/format.ts) | both | Tableau/Excel number formats from the model (`$#,##0`, `0.0%`). |
 
 `npm run build` writes `dist/` (ES modules and types) and two bundles:
