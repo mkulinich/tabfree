@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stand-in for Tableau's "user" namespace (http://www.tableausoftware.com/xml/user).
+
+  The vendored TWB XSDs (third_party/tableau-document-schemas) import this namespace without a
+  schemaLocation and reference user:UserAttributes-AG on <group>, <groupfilter> and <column>.
+  Tableau publishes no schema for it: these are UI hints such as user:ui-builder and
+  user:ui-marker, so any attribute in the namespace is accepted. Written for TabFree (Apache-2.0).
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://www.tableausoftware.com/xml/user"
+           elementFormDefault="qualified">
+  <xs:attributeGroup name="UserAttributes-AG">
+    <xs:anyAttribute namespace="##targetNamespace" processContents="skip"/>
+  </xs:attributeGroup>
+</xs:schema>

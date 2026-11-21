@@ -8,6 +8,14 @@ Phase 0 ships:
 
 Phase 1 adds the crawler (`crawl`), TWB parser (`parse`), construct census (`census`), extract converter (`convert-hyper`), and the discovery commands described below (`docs/BUILD_PLAN.md`, P1.1–P1.9).
 
+## TWB parser and the Tableau IR (P2.1)
+
+`tabfree_migrate.twb.parse_file(path)` turns a `.twb/.twbx/.tds/.tdsx` into a `tabfree/tableau-ir@1` document, so the model generator and query planner never re-read the XML. It covers connections, relations with join clauses, object-graph relationships, extract settings, columns (calcs, parameters, groups, bins, sets, hierarchies, folders, aliases, formats, geographic roles), worksheets (parsed shelves and encodings, typed filters, sorts, table calcs, totals), dashboards (zones, floating zones, device layouts), all action types and stories.
+
+- `tabfree_migrate.fieldref.parse_field_ref("[ds].[sum:Sales:qk]")` and `parse_shelf("([a] / [b])")` are the public helpers for Tableau's reference grammar.
+- Feature-flag names (`_.fcp.Flag.true...relation`) are resolved first; the `true` variant wins.
+- `tabfree_migrate.xsd.validate_file(path, schema_dir)` checks a file against the vendored XSD (needs the `xmlschema` dev dependency). Pre-2026 files deviate; `tests/xsd_known_deviations.json` lists each file's known deviation codes, and the test fails on any change.
+
 ## Smoke test against your Tableau Server
 
 ```bash

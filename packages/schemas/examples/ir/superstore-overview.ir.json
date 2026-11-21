@@ -1,5 +1,5 @@
 {
-  "schema": "tabfree/tableau-ir@0",
+  "schema": "tabfree/tableau-ir@1",
   "kind": "workbook",
   "source": {
     "file": "Superstore.twbx",
@@ -7,6 +7,7 @@
     "packaged": true,
     "sourceBuild": "2025.2.0 (20252.25.0612.0937)",
     "version": "18.1",
+    "tableauVersion": "2025.2.0",
     "parser": "tabfree-migrate 0.0.1",
     "parsedAt": "2026-11-20T12:00:00Z"
   },
@@ -19,10 +20,27 @@
       "namedConnections": [
         { "name": "excel-direct.1", "class": "excel-direct", "filename": "Data/Superstore/Sample - Superstore.xls" }
       ],
-      "relation": { "type": "table", "name": "Orders", "connection": "excel-direct.1", "table": "[Orders$]" },
+      "relation": {
+        "type": "join",
+        "join": "left",
+        "on": { "op": "=", "args": [{ "op": "[Orders].[Region]" }, { "op": "[People].[Region]" }] },
+        "clauses": [{ "left": "[Orders].[Region]", "op": "=", "right": "[People].[Region]" }],
+        "children": [
+          { "type": "table", "name": "Orders", "connection": "excel-direct.1", "table": "[Orders$]" },
+          { "type": "table", "name": "People", "connection": "excel-direct.1", "table": "[People$]" }
+        ]
+      },
       "columns": [
-        { "name": "[Region]", "datatype": "string", "role": "dimension", "type": "nominal" },
-        { "name": "[Sales]", "datatype": "real", "role": "measure", "type": "quantitative", "aggregation": "Sum" },
+        { "name": "[Region]", "datatype": "string", "role": "dimension", "type": "nominal", "folder": "Geography" },
+        {
+          "name": "[State]",
+          "datatype": "string",
+          "role": "dimension",
+          "type": "nominal",
+          "semanticRole": "[State].[Name]",
+          "folder": "Geography"
+        },
+        { "name": "[Sales]", "datatype": "real", "role": "measure", "type": "quantitative", "aggregation": "Sum", "defaultFormat": "C1033%" },
         { "name": "[Profit]", "datatype": "real", "role": "measure", "type": "quantitative", "aggregation": "Sum" },
         {
           "name": "[Calculation_1]",
@@ -31,12 +49,52 @@
           "role": "measure",
           "type": "quantitative",
           "calculation": { "class": "tableau", "formula": "SUM([Profit])/SUM([Sales])" }
+        },
+        {
+          "name": "[Region (group)]",
+          "caption": "Area",
+          "datatype": "string",
+          "role": "dimension",
+          "type": "nominal",
+          "calculation": { "class": "categorical-bin" },
+          "group": {
+            "source": "[Region]",
+            "groups": [{ "name": "\"Coasts\"", "members": ["\"East\"", "\"West\""] }],
+            "other": "\"Other\""
+          }
         }
       ],
-      "extract": { "enabled": true, "file": "Data/Extracts/federated_0a1b2c3.hyper" }
+      "drillPaths": [{ "name": "Geography", "fields": ["[Region]", "[State]"] }],
+      "folders": [{ "name": "Geography", "role": "dimensions", "fields": ["[Region]", "[State]"] }],
+      "sets": [
+        {
+          "name": "[Top Customers]",
+          "kind": "set",
+          "caption": "Top Customers",
+          "builder": "filter-group",
+          "topN": {
+            "end": "top",
+            "countExpression": "[Parameters].[Top N]",
+            "countParameter": "[Parameters].[Top N]",
+            "by": "SUM([Sales])",
+            "direction": "DESC",
+            "level": "[Customer Name]"
+          }
+        }
+      ],
+      "extract": { "enabled": true, "file": "Data/Extracts/federated_0a1b2c3.hyper", "engine": "hyper" }
     }
   ],
-  "parameters": [],
+  "parameters": [
+    {
+      "name": "[Top N]",
+      "caption": "Top N",
+      "datatype": "integer",
+      "role": "measure",
+      "type": "quantitative",
+      "param": { "domain": "range", "range": { "min": "5", "max": "20", "granularity": "5" }, "value": "10" }
+    }
+  ],
   "worksheets": [
     {
       "name": "Sales by Region",
@@ -46,39 +104,133 @@
           "ref": "[federated.0a1b2c3].[none:Region:nk]",
           "datasource": "federated.0a1b2c3",
           "field": "[Region]",
-          "derivation": "none",
+          "derivation": "None",
+          "code": "none",
           "kind": "nk"
         },
         {
           "ref": "[federated.0a1b2c3].[sum:Sales:qk]",
           "datasource": "federated.0a1b2c3",
           "field": "[Sales]",
-          "derivation": "sum",
+          "derivation": "Sum",
+          "code": "sum",
           "kind": "qk"
+        },
+        {
+          "ref": "[federated.0a1b2c3].[pcto:sum:Sales:qk]",
+          "datasource": "federated.0a1b2c3",
+          "field": "[Sales]",
+          "derivation": "Sum",
+          "code": "sum",
+          "quickTableCalc": "pcto",
+          "kind": "qk",
+          "tableCalc": { "type": "PctTotal", "orderingType": "Rows" }
         },
         {
           "ref": "[federated.0a1b2c3].[usr:Calculation_1:qk]",
           "datasource": "federated.0a1b2c3",
           "field": "[Calculation_1]",
-          "derivation": "usr",
+          "derivation": "User",
+          "code": "usr",
           "kind": "qk"
         }
       ],
       "rows": {
-        "expr": "[federated.0a1b2c3].[none:Region:nk]",
-        "instances": ["[federated.0a1b2c3].[none:Region:nk]"]
+        "expr": "([federated.0a1b2c3].[none:Region:nk] / [federated.0a1b2c3].[none:State:nk])",
+        "instances": ["[federated.0a1b2c3].[none:Region:nk]", "[federated.0a1b2c3].[none:State:nk]"],
+        "tree": {
+          "op": "nest",
+          "args": [
+            {
+              "op": "field",
+              "ref": {
+                "ref": "[federated.0a1b2c3].[none:Region:nk]",
+                "datasource": "federated.0a1b2c3",
+                "kind": "nk",
+                "derivation": "none",
+                "derivationName": "None",
+                "name": "Region",
+                "field": "[Region]"
+              }
+            },
+            {
+              "op": "field",
+              "ref": {
+                "ref": "[federated.0a1b2c3].[none:State:nk]",
+                "datasource": "federated.0a1b2c3",
+                "kind": "nk",
+                "derivation": "none",
+                "derivationName": "None",
+                "name": "State",
+                "field": "[State]"
+              }
+            }
+          ]
+        }
       },
       "cols": {
         "expr": "[federated.0a1b2c3].[sum:Sales:qk]",
-        "instances": ["[federated.0a1b2c3].[sum:Sales:qk]"]
+        "instances": ["[federated.0a1b2c3].[sum:Sales:qk]"],
+        "tree": {
+          "op": "field",
+          "ref": {
+            "ref": "[federated.0a1b2c3].[sum:Sales:qk]",
+            "datasource": "federated.0a1b2c3",
+            "kind": "qk",
+            "derivation": "sum",
+            "derivationName": "Sum",
+            "aggregated": true,
+            "name": "Sales",
+            "field": "[Sales]"
+          }
+        }
       },
       "panes": [
         {
           "markClass": "Bar",
-          "encodings": { "color": ["[federated.0a1b2c3].[usr:Calculation_1:qk]"] }
+          "encodings": {
+            "color": [
+              {
+                "ref": "[federated.0a1b2c3].[usr:Calculation_1:qk]",
+                "datasource": "federated.0a1b2c3",
+                "kind": "qk",
+                "derivation": "usr",
+                "derivationName": "User",
+                "name": "Calculation_1",
+                "field": "[Calculation_1]"
+              }
+            ]
+          }
         }
       ],
-      "filters": []
+      "filters": [
+        {
+          "field": "[federated.0a1b2c3].[none:Region:nk]",
+          "class": "categorical",
+          "kind": "categorical",
+          "context": true,
+          "tree": {
+            "function": "except",
+            "args": [
+              { "function": "level-members", "level": "[none:Region:nk]" },
+              { "function": "member", "level": "[none:Region:nk]", "member": "\"Central\"" }
+            ]
+          },
+          "members": ["\"Central\""],
+          "exclude": true
+        }
+      ],
+      "sorts": [
+        {
+          "kind": "computed",
+          "field": "[federated.0a1b2c3].[none:Region:nk]",
+          "direction": "DESC",
+          "using": "[federated.0a1b2c3].[sum:Sales:qk]",
+          "aggregation": "Sum"
+        }
+      ],
+      "totals": { "rows": true, "subtotals": ["[federated.0a1b2c3].[none:Region:nk]"] },
+      "aggregated": true
     }
   ],
   "dashboards": [
@@ -110,6 +262,7 @@
                   "worksheet": "Sales by Region",
                   "field": "[federated.0a1b2c3].[none:Region:nk]",
                   "mode": "checkdropdown",
+                  "values": "relevant",
                   "x": 0,
                   "y": 90000,
                   "w": 100000,
@@ -118,6 +271,17 @@
               ]
             }
           ]
+        },
+        {
+          "id": "7",
+          "type": "color",
+          "worksheet": "Sales by Region",
+          "field": "[federated.0a1b2c3].[usr:Calculation_1:qk]",
+          "floating": true,
+          "x": 80000,
+          "y": 2000,
+          "w": 18000,
+          "h": 12000
         }
       ]
     }
@@ -127,11 +291,13 @@
       "name": "Filter 1",
       "type": "filter",
       "trigger": "select",
-      "source": { "dashboard": "Overview", "worksheets": ["Sales by Region"] },
+      "source": { "type": "sheet", "dashboard": "Overview", "worksheets": ["Sales by Region"] },
       "target": { "dashboard": "Overview" },
+      "fields": [{ "source": "[Region]", "target": "[federated.0a1b2c3].[Region]" }],
+      "clear": { "autoClear": true },
       "command": "tsc:tsl-filter"
     }
   ],
   "stories": [],
-  "notes": [{ "level": "info", "message": "Hand-written example of the IR shape; not produced by the parser yet." }]
+  "notes": [{ "level": "info", "message": "Hand-written example of the IR shape; not produced by the parser." }]
 }
