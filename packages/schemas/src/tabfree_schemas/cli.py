@@ -16,7 +16,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="tabfree-validate",
         description="Validate TabFree documents (tabfree.json manifests, semantic models, IR).",
     )
-    parser.add_argument("paths", nargs="+", type=Path, help="JSON or YAML files to check")
+    parser.add_argument(
+        "paths", nargs="+", type=Path, help="JSON or YAML files, or dashboard bundle directories, to check"
+    )
     parser.add_argument(
         "--kind",
         choices=[k.value for k in SchemaKind],
@@ -27,6 +29,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     failed = 0
     for path in args.paths:
+        if path.is_dir() and (path / "tabfree.json").is_file():
+            from tabfree_schemas.bundle import check_bundle_dir
+
+            report = check_bundle_dir(path)
+            print(f"{'ok  ' if report.ok else 'FAIL'} {path} (bundle: {report.components} components)")
+            for error in report.errors:
+                print(f"     error: {error}")
+            for warning in report.warnings:
+                print(f"     warning: {warning}")
+            failed += 0 if report.ok else 1
+            continue
         try:
             resolved = validate(load_document(path), kind)
         except SchemaValidationError as exc:
