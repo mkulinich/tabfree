@@ -1,29 +1,99 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:tabfree:schema:tableau-ir:0",
+  "$id": "urn:tabfree:schema:tableau-ir:1",
   "title": "TabFree Tableau intermediate representation (IR)",
-  "description": "A faithful, JSON-friendly representation of a Tableau workbook (.twb/.twbx) or data source (.tds/.tdsx), produced by the TWB parser (BUILD_PLAN P2.1). It keeps Tableau's own names and encodings (for example field references such as [federated.x].[sum:Sales:qk]) so that downstream steps can generate semantic models, query manifests and dashboards deterministically. Credentials are never captured.",
+  "description": "A faithful, JSON-friendly representation of a Tableau workbook (.twb/.twbx) or data source (.tds/.tdsx), produced by the TWB parser (BUILD_PLAN P2.1). Field references and shelves are also parsed into structured form, and filters, sets, sorts and table calculations are typed, so that later stages can work from the IR alone without re-reading the XML. It keeps Tableau's own names and encodings (for example field references such as [federated.x].[sum:Sales:qk]) so that downstream steps can generate semantic models, query manifests and dashboards deterministically. Credentials are never captured.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "kind", "source", "datasources"],
+  "required": [
+    "schema",
+    "kind",
+    "source",
+    "datasources"
+  ],
   "properties": {
-    "schema": { "const": "tabfree/tableau-ir@0" },
-    "kind": { "enum": ["workbook", "datasource"] },
-    "source": { "$ref": "#/$defs/source" },
-    "datasources": { "type": "array", "items": { "$ref": "#/$defs/datasource" } },
+    "schema": {
+      "const": "tabfree/tableau-ir@1"
+    },
+    "kind": {
+      "enum": [
+        "workbook",
+        "datasource"
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "datasources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/datasource"
+      }
+    },
     "parameters": {
       "description": "Columns of Tableau's special \"Parameters\" data source.",
       "type": "array",
-      "items": { "$ref": "#/$defs/column" }
+      "items": {
+        "$ref": "#/$defs/column"
+      }
     },
-    "worksheets": { "type": "array", "items": { "$ref": "#/$defs/worksheet" } },
-    "dashboards": { "type": "array", "items": { "$ref": "#/$defs/dashboard" } },
-    "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
-    "stories": { "type": "array", "items": { "$ref": "#/$defs/story" } },
+    "worksheets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/worksheet"
+      }
+    },
+    "dashboards": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dashboard"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "stories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/story"
+      }
+    },
     "notes": {
       "description": "Parser diagnostics: unsupported or partially understood constructs.",
       "type": "array",
-      "items": { "$ref": "#/$defs/note" }
+      "items": {
+        "$ref": "#/$defs/note"
+      }
+    },
+    "blendRelationships": {
+      "description": "Custom data blending links (datasource-relationships): primary data source fields mapped to secondary ones.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "target",
+          "fields"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fieldPair"
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -34,28 +104,75 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file", "sha256", "parser", "parsedAt"],
+      "required": [
+        "file",
+        "sha256",
+        "parser",
+        "parsedAt"
+      ],
       "properties": {
-        "file": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "packaged": { "description": "True for .twbx/.tdsx packages.", "type": "boolean" },
-        "sourceBuild": { "description": "The root element's source-build attribute (the reliable version signal).", "type": "string" },
-        "sourcePlatform": { "type": "string" },
-        "version": { "description": "The root element's version attribute (often stale, e.g. 18.1).", "type": "string" },
-        "parser": { "type": "string" },
-        "parsedAt": { "type": "string", "format": "date-time" },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "packaged": {
+          "description": "True for .twbx/.tdsx packages.",
+          "type": "boolean"
+        },
+        "sourceBuild": {
+          "description": "The root element's source-build attribute (the reliable version signal).",
+          "type": "string"
+        },
+        "sourcePlatform": {
+          "type": "string"
+        },
+        "version": {
+          "description": "The root element's version attribute (often stale, e.g. 18.1).",
+          "type": "string"
+        },
+        "parser": {
+          "type": "string"
+        },
+        "parsedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
         "tableau": {
           "description": "Where the file came from on Tableau Server, when known.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "server": { "type": "string" },
-            "site": { "type": "string" },
-            "luid": { "type": "string" },
-            "contentUrl": { "type": "string" },
-            "project": { "type": "string" },
-            "updatedAt": { "type": "string", "format": "date-time" }
+            "server": {
+              "type": "string"
+            },
+            "site": {
+              "type": "string"
+            },
+            "luid": {
+              "type": "string"
+            },
+            "contentUrl": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time"
+            }
           }
+        },
+        "originalVersion": {
+          "type": "string"
+        },
+        "tableauVersion": {
+          "description": "Tableau release that wrote the file, from source-build (else version when it is meaningful), e.g. 2024.2.0.",
+          "type": "string"
         }
       }
     },
@@ -63,26 +180,85 @@
       "description": "A connection element. Passwords and tokens are never captured.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["class"],
+      "required": [
+        "class"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "class": { "description": "Tableau connection class, e.g. redshift, athena, sqlserver, excel-direct, textscan, hyper, sqlproxy, federated.", "type": "string" },
-        "caption": { "type": "string" },
-        "server": { "type": "string" },
-        "port": { "type": ["string", "integer"] },
-        "dbname": { "type": "string" },
-        "schema": { "type": "string" },
-        "warehouse": { "type": "string" },
-        "username": { "type": "string" },
-        "authentication": { "type": "string" },
-        "filename": { "type": "string" },
-        "initialSql": { "type": "string" },
-        "attributes": { "type": "object", "additionalProperties": { "type": "string" } }
+        "name": {
+          "type": "string"
+        },
+        "class": {
+          "description": "Tableau connection class, e.g. redshift, athena, sqlserver, excel-direct, textscan, hyper, sqlproxy, federated.",
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "port": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "dbname": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "warehouse": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "authentication": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "initialSql": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       },
       "not": {
         "anyOf": [
-          { "required": ["password"] },
-          { "properties": { "attributes": { "anyOf": [{ "required": ["password"] }, { "required": ["token"] }] } }, "required": ["attributes"] }
+          {
+            "required": [
+              "password"
+            ]
+          },
+          {
+            "properties": {
+              "attributes": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "password"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "token"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "attributes"
+            ]
+          }
         ]
       }
     },
@@ -90,35 +266,102 @@
       "description": "Physical layer relation tree (table, join, union, custom SQL, pivot...).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "properties": {
-        "type": { "enum": ["table", "join", "union", "text", "pivot", "collection", "stored-proc", "other"] },
-        "name": { "type": "string" },
-        "connection": { "type": "string" },
-        "table": { "type": "string" },
-        "sql": { "description": "Custom SQL text for type = text.", "type": "string" },
-        "join": { "enum": ["inner", "left", "right", "full"] },
-        "on": { "description": "Join clause, kept as Tableau's expression tree.", "type": ["object", "string"] },
-        "children": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
-        "raw": { "$ref": "#/$defs/raw" }
+        "type": {
+          "enum": [
+            "table",
+            "join",
+            "union",
+            "text",
+            "pivot",
+            "collection",
+            "stored-proc",
+            "other"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "connection": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "sql": {
+          "description": "Custom SQL text for type = text.",
+          "type": "string"
+        },
+        "join": {
+          "enum": [
+            "inner",
+            "left",
+            "right",
+            "full"
+          ]
+        },
+        "on": {
+          "description": "Join clause, kept as Tableau's expression tree.",
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relation"
+          }
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "clauses": {
+          "description": "Join clause flattened to field comparisons, when it has that shape.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clause"
+          }
+        },
+        "all": {
+          "description": "UNION ALL for union relations.",
+          "type": "boolean"
+        }
       }
     },
     "objectGraph": {
       "description": "Tableau 2020.2+ logical layer (relationships between logical tables).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["objects"],
+      "required": [
+        "objects"
+      ],
       "properties": {
         "objects": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "relation"],
+            "required": [
+              "id",
+              "relation"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "caption": { "type": "string" },
-              "relation": { "$ref": "#/$defs/relation" }
+              "id": {
+                "type": "string"
+              },
+              "caption": {
+                "type": "string"
+              },
+              "relation": {
+                "$ref": "#/$defs/relation"
+              },
+              "extractRelation": {
+                "$ref": "#/$defs/relation"
+              }
             }
           }
         },
@@ -127,13 +370,67 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["first", "second"],
+            "required": [
+              "first",
+              "second"
+            ],
             "properties": {
-              "first": { "type": "string" },
-              "second": { "type": "string" },
-              "expression": { "type": ["object", "string"] },
-              "cardinality": { "type": "object" },
-              "integrity": { "type": "object" }
+              "first": {
+                "type": "string"
+              },
+              "second": {
+                "type": "string"
+              },
+              "expression": {
+                "type": [
+                  "object",
+                  "string"
+                ]
+              },
+              "cardinality": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "From the end points' unique-key settings.",
+                "properties": {
+                  "first": {
+                    "enum": [
+                      "one",
+                      "many"
+                    ]
+                  },
+                  "second": {
+                    "enum": [
+                      "one",
+                      "many"
+                    ]
+                  }
+                }
+              },
+              "integrity": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Referential integrity from guaranteed-value: all records match, or some.",
+                "properties": {
+                  "first": {
+                    "enum": [
+                      "all",
+                      "some"
+                    ]
+                  },
+                  "second": {
+                    "enum": [
+                      "all",
+                      "some"
+                    ]
+                  }
+                }
+              },
+              "clauses": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/clause"
+                }
+              }
             }
           }
         }
@@ -142,104 +439,488 @@
     "calculation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["class"],
+      "required": [
+        "class"
+      ],
       "properties": {
-        "class": { "description": "tableau, categorical-bin, quantitative-bin, ...", "type": "string" },
-        "formula": { "type": "string" },
-        "ast": { "description": "Parsed formula, filled in by the compiler front end.", "type": "object" },
-        "usesUserFunctions": { "description": "USERNAME(), ISMEMBEROF() etc.: a row-level security signal.", "type": "boolean" },
-        "lod": { "type": "boolean" },
-        "tableCalc": { "type": "boolean" },
-        "raw": { "$ref": "#/$defs/raw" }
+        "class": {
+          "description": "tableau, categorical-bin, quantitative-bin, ...",
+          "type": "string"
+        },
+        "formula": {
+          "type": "string"
+        },
+        "ast": {
+          "description": "Parsed formula, filled in by the compiler front end.",
+          "type": "object"
+        },
+        "usesUserFunctions": {
+          "description": "USERNAME(), ISMEMBEROF() etc.: a row-level security signal.",
+          "type": "boolean"
+        },
+        "lod": {
+          "type": "boolean"
+        },
+        "tableCalc": {
+          "type": "boolean"
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "tableCalcSettings": {
+          "$ref": "#/$defs/tableCalc"
+        }
       }
     },
     "column": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "description": "Bracketed internal name, e.g. [Sales] or [Calculation_123].", "type": "string" },
-        "caption": { "type": "string" },
-        "datatype": { "enum": ["string", "integer", "real", "boolean", "date", "datetime", "spatial", "table", "unknown"] },
-        "role": { "enum": ["dimension", "measure"] },
-        "type": { "enum": ["nominal", "ordinal", "quantitative"] },
-        "aggregation": { "type": "string" },
-        "defaultFormat": { "type": "string" },
-        "semanticRole": { "type": "string" },
-        "hidden": { "type": "boolean" },
-        "folder": { "type": "string" },
-        "description": { "type": "string" },
-        "aliases": { "type": "object", "additionalProperties": { "type": "string" } },
-        "calculation": { "$ref": "#/$defs/calculation" },
+        "name": {
+          "description": "Bracketed internal name, e.g. [Sales] or [Calculation_123].",
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "datatype": {
+          "enum": [
+            "string",
+            "integer",
+            "real",
+            "boolean",
+            "date",
+            "datetime",
+            "spatial",
+            "table",
+            "unknown"
+          ]
+        },
+        "role": {
+          "enum": [
+            "dimension",
+            "measure"
+          ]
+        },
+        "type": {
+          "enum": [
+            "nominal",
+            "ordinal",
+            "quantitative"
+          ]
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "defaultFormat": {
+          "type": "string",
+          "description": "Default number or date format string (default-format)."
+        },
+        "semanticRole": {
+          "type": "string",
+          "description": "Geographic (semantic) role, e.g. [Country].[ISO3166_2]."
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "folder": {
+          "type": "string",
+          "description": "Display folder holding the field."
+        },
+        "description": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "calculation": {
+          "$ref": "#/$defs/calculation"
+        },
         "param": {
           "description": "Parameter domain, for columns of the Parameters data source.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "domain": { "enum": ["list", "range", "any"] },
-            "members": { "type": "array" },
-            "range": { "type": "object" },
-            "value": {}
+            "domain": {
+              "enum": [
+                "list",
+                "range",
+                "any"
+              ]
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "range": {
+              "description": "min, max and granularity (step).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "value": {},
+            "memberAliases": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "valueAlias": {
+              "type": "string"
+            },
+            "sourceField": {
+              "description": "Field the list is populated from when the workbook opens.",
+              "type": "string"
+            },
+            "defaultValueField": {
+              "description": "Field whose value becomes the current value when the workbook opens.",
+              "type": "string"
+            }
           }
         },
-        "raw": { "$ref": "#/$defs/raw" }
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "visualTotals": {
+          "type": "string"
+        },
+        "group": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A Tableau group (categorical-bin calculation): members mapped to group names.",
+          "required": [
+            "source",
+            "groups"
+          ],
+          "properties": {
+            "source": {
+              "description": "The grouped field.",
+              "type": "string"
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "members"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "members": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "other": {
+              "description": "Name of the Other group for unlisted members, when enabled.",
+              "type": "string"
+            }
+          }
+        },
+        "bin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source"
+          ],
+          "properties": {
+            "source": {
+              "description": "The binned field or formula.",
+              "type": "string"
+            },
+            "size": {
+              "type": "number"
+            },
+            "sizeParameter": {
+              "type": "string"
+            },
+            "peg": {
+              "type": "number"
+            },
+            "decimals": {
+              "type": "integer"
+            }
+          }
+        }
       }
     },
     "datasource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "kind"],
+      "required": [
+        "name",
+        "kind"
+      ],
       "properties": {
-        "name": { "description": "Internal name, e.g. federated.0a1b2c3.", "type": "string" },
-        "caption": { "type": "string" },
-        "kind": { "enum": ["embedded", "published", "parameters"] },
+        "name": {
+          "description": "Internal name, e.g. federated.0a1b2c3.",
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "embedded",
+            "published",
+            "parameters"
+          ]
+        },
         "published": {
           "description": "For workbooks that use a published data source (sqlproxy).",
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "contentUrl": { "type": "string" },
-            "siteContentUrl": { "type": "string" },
-            "luid": { "type": "string" }
+            "contentUrl": {
+              "type": "string"
+            },
+            "siteContentUrl": {
+              "type": "string"
+            },
+            "luid": {
+              "type": "string"
+            }
           }
         },
-        "connection": { "$ref": "#/$defs/connection" },
-        "namedConnections": { "type": "array", "items": { "$ref": "#/$defs/connection" } },
-        "relation": { "$ref": "#/$defs/relation" },
-        "objectGraph": { "$ref": "#/$defs/objectGraph" },
-        "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+        "connection": {
+          "$ref": "#/$defs/connection"
+        },
+        "namedConnections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/connection"
+          }
+        },
+        "relation": {
+          "$ref": "#/$defs/relation"
+        },
+        "objectGraph": {
+          "$ref": "#/$defs/objectGraph"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/column"
+          }
+        },
         "drillPaths": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "fields"],
-            "properties": { "name": { "type": "string" }, "fields": { "type": "array", "items": { "type": "string" } } }
+            "required": [
+              "name",
+              "fields"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "Hierarchies: drill paths from the top level down."
+        },
+        "filters": {
+          "description": "Data source filters.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/filter"
           }
         },
-        "groups": { "description": "Groups and sets (Tableau <group> elements).", "type": "array", "items": { "type": "object" } },
-        "filters": { "description": "Data source filters.", "type": "array", "items": { "type": "object" } },
         "extract": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" },
-            "file": { "description": "Path of the .hyper/.tde inside the package.", "type": "string" },
-            "refresh": { "type": "object" },
-            "incrementalKey": { "type": "string" },
-            "filters": { "type": "array", "items": { "type": "object" } },
-            "aggregated": { "type": "boolean" },
-            "raw": { "$ref": "#/$defs/raw" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "file": {
+              "description": "Path of the .hyper/.tde inside the package.",
+              "type": "string"
+            },
+            "engine": {
+              "description": "hyper or dataengine (.tde).",
+              "type": "string"
+            },
+            "updated": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Top N rows or a sample, when the extract is limited.",
+              "required": [
+                "count"
+              ],
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "units": {
+                  "type": "string"
+                }
+              }
+            },
+            "multipleTables": {
+              "description": "Extract stores multiple tables (type=normalized).",
+              "type": "boolean"
+            },
+            "objectId": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "incremental": {
+              "type": "boolean"
+            },
+            "incrementalKey": {
+              "description": "Column that identifies new rows for incremental refresh.",
+              "type": "string"
+            },
+            "refreshEvents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "rows": {
+                    "type": "integer"
+                  },
+                  "started": {
+                    "type": "string"
+                  },
+                  "incrementValue": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "filters": {
+              "description": "Extract filters.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/filter"
+              }
+            },
+            "aggregations": {
+              "description": "Aggregate-for-visible-dimensions roll-ups.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "column",
+                  "derivation"
+                ],
+                "properties": {
+                  "column": {
+                    "type": "string"
+                  },
+                  "derivation": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "aggregated": {
+              "type": "boolean"
+            },
+            "raw": {
+              "$ref": "#/$defs/raw"
+            }
           }
         },
         "settings": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "weekStart": { "type": "string" },
-            "fiscalYearStart": { "type": "string" },
-            "dateFormat": { "type": "string" }
+            "weekStart": {
+              "type": "string"
+            },
+            "fiscalYearStart": {
+              "type": "string"
+            },
+            "dateFormat": {
+              "type": "string"
+            }
           }
+        },
+        "sets": {
+          "description": "Data source <group> elements: sets (members, condition, top N), combined fields and Tableau's internal action groups.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/set"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "fields"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "aliasesEnabled": {
+          "type": "boolean"
+        },
+        "defaultSorts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sort"
+          }
+        },
+        "hasConnection": {
+          "type": "boolean"
         }
       }
     },
@@ -247,252 +928,1414 @@
       "description": "A field as used on a sheet, e.g. [federated.x].[sum:Sales:qk].",
       "type": "object",
       "additionalProperties": false,
-      "required": ["ref", "datasource", "field", "derivation"],
+      "required": [
+        "ref",
+        "datasource",
+        "field",
+        "derivation"
+      ],
       "properties": {
-        "ref": { "type": "string" },
-        "datasource": { "type": "string" },
-        "field": { "type": "string" },
-        "derivation": { "description": "none, sum, avg, cnt, ctd, attr, usr, yr, qr, mn, dy, tmn, tdy, ...", "type": "string" },
-        "pivot": { "type": "string" },
-        "kind": { "description": "qk = quantitative, nk = nominal, ok = ordinal.", "enum": ["qk", "nk", "ok"] },
-        "tableCalc": { "description": "Raw <table-calc> attributes for quick table calculations.", "type": "object" }
+        "ref": {
+          "type": "string"
+        },
+        "datasource": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "derivation": {
+          "description": "none, sum, avg, cnt, ctd, attr, usr, yr, qr, mn, dy, tmn, tdy, ...",
+          "type": "string"
+        },
+        "pivot": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "qk = quantitative, nk = nominal, ok = ordinal.",
+          "enum": [
+            "qk",
+            "nk",
+            "ok"
+          ]
+        },
+        "tableCalc": {
+          "$ref": "#/$defs/tableCalc"
+        },
+        "code": {
+          "description": "Derivation code from the instance name, e.g. sum.",
+          "type": "string"
+        },
+        "quickTableCalc": {
+          "type": "string"
+        },
+        "forecast": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
+        }
       }
     },
     "shelf": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["expr"],
+      "required": [
+        "expr"
+      ],
       "properties": {
-        "expr": { "description": "Shelf expression as written in the XML (with / for nest, + for concatenation, * for cross).", "type": "string" },
-        "instances": { "type": "array", "items": { "type": "string" } },
-        "tree": { "description": "Parsed nest/cross/concatenate tree.", "type": "object" }
+        "expr": {
+          "description": "Shelf expression as written in the XML (with / for nest, + for concatenation, * for cross).",
+          "type": "string"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tree": {
+          "$ref": "#/$defs/shelfNode"
+        }
       }
     },
     "encodings": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "color": { "type": "array", "items": { "type": "string" } },
-        "size": { "type": "array", "items": { "type": "string" } },
-        "text": { "type": "array", "items": { "type": "string" } },
-        "lod": { "type": "array", "items": { "type": "string" } },
-        "tooltip": { "type": "array", "items": { "type": "string" } },
-        "shape": { "type": "array", "items": { "type": "string" } },
-        "path": { "type": "array", "items": { "type": "string" } },
-        "angle": { "type": "array", "items": { "type": "string" } },
-        "wedgeSize": { "type": "array", "items": { "type": "string" } },
-        "geometry": { "type": "array", "items": { "type": "string" } }
+        "color": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "text": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "lod": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "tooltip": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "angle": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "wedgeSize": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        },
+        "geometry": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRef"
+          }
+        }
       }
     },
     "pane": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["markClass"],
+      "required": [
+        "markClass"
+      ],
       "properties": {
-        "id": { "type": "string" },
+        "id": {
+          "type": "string"
+        },
         "markClass": {
           "enum": [
-            "Automatic", "Text", "Icon", "Shape", "Rectangle", "Bar", "GanttBar", "Square", "Circle",
-            "Heatmap", "PolyLine", "Line", "Polygon", "Area", "Pie", "Multipolygon", "VizExtension"
+            "Automatic",
+            "Text",
+            "Icon",
+            "Shape",
+            "Rectangle",
+            "Bar",
+            "GanttBar",
+            "Square",
+            "Circle",
+            "Heatmap",
+            "PolyLine",
+            "Line",
+            "Polygon",
+            "Area",
+            "Pie",
+            "Multipolygon",
+            "VizExtension"
           ]
         },
-        "encodings": { "$ref": "#/$defs/encodings" },
-        "axis": { "type": "object" },
-        "raw": { "$ref": "#/$defs/raw" }
-      }
-    },
-    "worksheetFilter": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["field", "class"],
-      "properties": {
-        "field": { "description": "Field instance reference.", "type": "string" },
-        "class": { "enum": ["categorical", "quantitative", "relative-date"] },
-        "context": { "type": "boolean" },
-        "members": { "type": "array" },
-        "exclude": { "type": "boolean" },
-        "min": {},
-        "max": {},
-        "includeNulls": { "type": "boolean" },
-        "period": { "type": "string" },
-        "firstPeriod": { "type": "integer" },
-        "lastPeriod": { "type": "integer" },
-        "anchor": { "type": "string" },
-        "topN": { "type": "object" },
-        "condition": { "type": "string" },
-        "wildcard": { "type": "object" },
-        "raw": { "$ref": "#/$defs/raw" }
+        "encodings": {
+          "$ref": "#/$defs/encodings"
+        },
+        "axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "string"
+            },
+            "y": {
+              "type": "string"
+            },
+            "yIndex": {
+              "type": "integer"
+            }
+          }
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "stackMarks": {
+          "type": "boolean"
+        }
       }
     },
     "worksheet": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "datasources", "panes"],
+      "required": [
+        "name",
+        "datasources",
+        "panes"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "title": { "type": "string" },
-        "hidden": { "description": "Hidden sheets have no view on Tableau Server.", "type": "boolean" },
-        "datasources": { "type": "array", "items": { "type": "string" } },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "hidden": {
+          "description": "Hidden sheets have no view on Tableau Server.",
+          "type": "boolean"
+        },
+        "datasources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "dependencies": {
           "description": "Columns used per data source (datasource-dependencies).",
           "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
-        "fieldInstances": { "type": "array", "items": { "$ref": "#/$defs/fieldInstance" } },
-        "rows": { "$ref": "#/$defs/shelf" },
-        "cols": { "$ref": "#/$defs/shelf" },
-        "pages": { "$ref": "#/$defs/shelf" },
-        "panes": { "type": "array", "items": { "$ref": "#/$defs/pane" } },
-        "filters": { "type": "array", "items": { "$ref": "#/$defs/worksheetFilter" } },
-        "sorts": { "type": "array", "items": { "type": "object" } },
-        "totals": { "type": "object" },
-        "style": { "$ref": "#/$defs/raw" }
+        "fieldInstances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldInstance"
+          }
+        },
+        "rows": {
+          "$ref": "#/$defs/shelf"
+        },
+        "cols": {
+          "$ref": "#/$defs/shelf"
+        },
+        "pages": {
+          "$ref": "#/$defs/shelf"
+        },
+        "panes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pane"
+          }
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/filter"
+          }
+        },
+        "sorts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sort"
+          }
+        },
+        "totals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rows": {
+              "description": "Grand totals for rows.",
+              "type": "boolean"
+            },
+            "cols": {
+              "type": "boolean"
+            },
+            "subtotals": {
+              "description": "Fields with subtotals.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "aggregated": {
+          "description": "Aggregate measures (Analysis > Aggregate Measures).",
+          "type": "boolean"
+        },
+        "slices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "showEmptyRows": {
+          "type": "boolean"
+        }
       }
     },
     "zone": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "x", "y", "w", "h"],
+      "required": [
+        "type",
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
       "properties": {
-        "id": { "type": "string" },
+        "id": {
+          "type": "string"
+        },
         "type": {
           "description": "layout-flow, layout-basic, viz, text, bitmap, web, filter, paramctrl, color, size, shape, map, title, empty, extension, button, ...",
           "type": "string"
         },
-        "name": { "type": "string" },
-        "worksheet": { "type": "string" },
-        "x": { "description": "Tableau zone units: 0..100000 across the dashboard.", "type": "integer" },
-        "y": { "type": "integer" },
-        "w": { "type": "integer" },
-        "h": { "type": "integer" },
-        "floating": { "type": "boolean" },
-        "hidden": { "type": "boolean" },
+        "name": {
+          "type": "string"
+        },
+        "worksheet": {
+          "type": "string"
+        },
+        "x": {
+          "description": "Tableau zone units: 0..100000 across the dashboard.",
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "w": {
+          "type": "integer"
+        },
+        "h": {
+          "type": "integer"
+        },
+        "floating": {
+          "type": "boolean",
+          "description": "Floats above the tiled layout (a later child of a root layout-basic zone whose first child is the tiled container)."
+        },
+        "hidden": {
+          "type": "boolean"
+        },
         "layout": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "direction": { "enum": ["horz", "vert"] },
-            "distribute": { "type": "boolean" }
+            "direction": {
+              "enum": [
+                "horz",
+                "vert"
+              ]
+            },
+            "distribute": {
+              "type": "boolean"
+            }
           }
         },
-        "field": { "description": "For filter, parameter and legend zones.", "type": "string" },
-        "param": { "type": "string" },
-        "mode": { "description": "Filter control style, e.g. dropdown, checkdropdown, slider.", "type": "string" },
-        "text": { "type": "string" },
-        "image": { "type": "string" },
-        "url": { "type": "string" },
-        "style": { "$ref": "#/$defs/raw" },
-        "children": { "type": "array", "items": { "$ref": "#/$defs/zone" } }
+        "field": {
+          "description": "For filter, parameter and legend zones.",
+          "type": "string"
+        },
+        "param": {
+          "type": "string"
+        },
+        "mode": {
+          "description": "Filter control style, e.g. dropdown, checkdropdown, slider.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "style": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/zone"
+          }
+        },
+        "fixed": {
+          "type": "boolean"
+        },
+        "fixedSize": {
+          "type": "integer"
+        },
+        "showTitle": {
+          "type": "boolean"
+        },
+        "values": {
+          "description": "Filter control domain: relevant, database, all, context.",
+          "type": "string"
+        },
+        "extension": {
+          "type": "object"
+        },
+        "altText": {
+          "type": "string"
+        },
+        "friendlyName": {
+          "type": "string"
+        }
       }
     },
     "dashboardSize": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mode": { "enum": ["fixed", "range", "automatic"] },
-        "width": { "type": "integer" },
-        "height": { "type": "integer" },
-        "minWidth": { "type": "integer" },
-        "minHeight": { "type": "integer" },
-        "maxWidth": { "type": "integer" },
-        "maxHeight": { "type": "integer" }
+        "mode": {
+          "enum": [
+            "fixed",
+            "range",
+            "automatic",
+            "vscroll"
+          ]
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "minWidth": {
+          "type": "integer"
+        },
+        "minHeight": {
+          "type": "integer"
+        },
+        "maxWidth": {
+          "type": "integer"
+        },
+        "maxHeight": {
+          "type": "integer"
+        }
       }
     },
     "dashboard": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "zones"],
+      "required": [
+        "name",
+        "zones"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "title": { "type": "string" },
-        "size": { "$ref": "#/$defs/dashboardSize" },
-        "zones": { "type": "array", "items": { "$ref": "#/$defs/zone" } },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/$defs/dashboardSize"
+        },
+        "zones": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/zone"
+          }
+        },
         "deviceLayouts": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["device", "zones"],
+            "required": [
+              "device",
+              "zones"
+            ],
             "properties": {
-              "device": { "enum": ["desktop", "tablet", "phone"] },
-              "size": { "$ref": "#/$defs/dashboardSize" },
-              "zones": { "type": "array", "items": { "$ref": "#/$defs/zone" } }
+              "device": {
+                "enum": [
+                  "desktop",
+                  "tablet",
+                  "phone"
+                ]
+              },
+              "size": {
+                "$ref": "#/$defs/dashboardSize"
+              },
+              "zones": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/zone"
+                }
+              },
+              "name": {
+                "type": "string"
+              },
+              "autoGenerated": {
+                "type": "boolean"
+              }
             }
           }
-        },
-        "style": { "$ref": "#/$defs/raw" }
+        }
       }
     },
     "action": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type"],
+      "required": [
+        "name",
+        "type"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "caption": { "type": "string" },
-        "type": { "enum": ["filter", "highlight", "url", "sheet-navigate", "edit-parameter", "edit-group", "unknown"] },
-        "trigger": { "enum": ["select", "hover", "menu"] },
+        "name": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "filter",
+            "highlight",
+            "url",
+            "sheet-navigate",
+            "edit-parameter",
+            "edit-group",
+            "unknown"
+          ]
+        },
+        "trigger": {
+          "enum": [
+            "select",
+            "hover",
+            "menu"
+          ]
+        },
         "source": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "dashboard": { "type": "string" },
-            "worksheets": { "type": "array", "items": { "type": "string" } }
+            "dashboard": {
+              "type": "string"
+            },
+            "worksheets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string"
+            },
+            "datasource": {
+              "type": "string"
+            },
+            "excludeSheets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "dashboard": { "type": "string" },
-            "worksheets": { "type": "array", "items": { "type": "string" } },
-            "url": { "type": "string" },
-            "parameter": { "type": "string" },
-            "set": { "type": "string" }
+            "dashboard": {
+              "type": "string"
+            },
+            "worksheets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "url": {
+              "type": "string"
+            },
+            "parameter": {
+              "type": "string"
+            },
+            "set": {
+              "type": "string"
+            },
+            "excludeSheets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sheet": {
+              "description": "Target name that matched no sheet or dashboard.",
+              "type": "string"
+            }
           }
         },
         "fields": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["source", "target"],
-            "properties": { "source": { "type": "string" }, "target": { "type": "string" } }
+            "$ref": "#/$defs/fieldPair"
+          },
+          "description": "Source to target field mappings (filter link fields, parameter source field)."
+        },
+        "clear": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What clearing the selection does.",
+          "properties": {
+            "autoClear": {
+              "type": "boolean"
+            },
+            "onEmpty": {
+              "type": "string"
+            },
+            "setOption": {
+              "type": "string"
+            },
+            "option": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
           }
         },
-        "clear": { "type": "string" },
-        "command": { "description": "Raw command, e.g. tsc:tsl-filter.", "type": "string" },
-        "params": { "$ref": "#/$defs/raw" }
+        "command": {
+          "description": "Raw command, e.g. tsc:tsl-filter.",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/raw"
+        },
+        "allFields": {
+          "type": "boolean"
+        },
+        "fieldCaptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "link": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "expression": {
+              "type": "string"
+            },
+            "caption": {
+              "type": "string"
+            },
+            "multiSelect": {
+              "type": "boolean"
+            },
+            "includeNull": {
+              "type": "boolean"
+            },
+            "urlEscape": {
+              "type": "boolean"
+            },
+            "delimiter": {
+              "type": "string"
+            },
+            "escape": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          }
+        },
+        "setMode": {
+          "description": "Set actions: assign, add or remove.",
+          "enum": [
+            "assign",
+            "add",
+            "remove"
+          ]
+        },
+        "aggregation": {
+          "description": "Parameter actions: aggregation of the source field.",
+          "type": "string"
+        },
+        "singleSelect": {
+          "type": "boolean"
+        }
       }
     },
     "story": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "points"],
+      "required": [
+        "name",
+        "points"
+      ],
       "properties": {
-        "name": { "type": "string" },
+        "name": {
+          "type": "string"
+        },
         "points": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "caption": { "type": "string" },
-              "target": { "description": "Dashboard or worksheet name.", "type": "string" },
-              "state": { "type": "object" }
+              "caption": {
+                "type": "string"
+              },
+              "target": {
+                "description": "Dashboard or worksheet name.",
+                "type": "string"
+              },
+              "state": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Sheets whose state the story point captured (capturedDeltas).",
+                "properties": {
+                  "worksheets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dashboards": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "datasources": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "id": {
+                "type": "string"
+              }
             }
           }
+        },
+        "title": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/$defs/dashboardSize"
+        },
+        "navigation": {
+          "type": "string"
         }
       }
     },
     "note": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["level", "message"],
+      "required": [
+        "level",
+        "message"
+      ],
       "properties": {
-        "level": { "enum": ["info", "warning", "unsupported"] },
-        "path": { "description": "Location in the source XML.", "type": "string" },
-        "message": { "type": "string" }
+        "level": {
+          "enum": [
+            "info",
+            "warning",
+            "unsupported"
+          ]
+        },
+        "path": {
+          "description": "Location in the source XML.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "fieldPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "fieldRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A parsed field reference ([datasource].[derivation:field:kind]).",
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "description": "The reference as written, e.g. [federated.x].[sum:Sales:qk].",
+          "type": "string"
+        },
+        "datasource": {
+          "type": "string"
+        },
+        "table": {
+          "description": "Logical table qualifier, e.g. __tableau_internal_object_id__ for object-model row counts.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Unescaped field name.",
+          "type": "string"
+        },
+        "field": {
+          "description": "Bracketed column name as data source columns write it, e.g. [Sales].",
+          "type": "string"
+        },
+        "derivation": {
+          "description": "Derivation code: none, sum, avg, cnt, ctd, attr, usr, yr, qr, mn, tmn, tdy, io, prc95...",
+          "type": "string"
+        },
+        "derivationName": {
+          "description": "Tableau's derivation attribute value, e.g. Sum, Month-Trunc.",
+          "type": "string"
+        },
+        "aggregated": {
+          "description": "True for aggregating derivations (a measure).",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "qk = quantitative, nk = nominal, ok = ordinal.",
+          "enum": [
+            "qk",
+            "nk",
+            "ok"
+          ]
+        },
+        "index": {
+          "description": "The :N suffix that numbers duplicate pills (dual axes).",
+          "type": "integer"
+        },
+        "tableCalc": {
+          "description": "Quick table calculation prefix, e.g. pcto, diff, rank, cum.",
+          "type": "string"
+        },
+        "tableCalcType": {
+          "description": "The table-calc type the prefix stands for, e.g. PctTotal.",
+          "type": "string"
+        },
+        "forecast": {
+          "description": "Forecast prefix, e.g. fVal.",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "Any other prefix before the derivation.",
+          "type": "string"
+        },
+        "percentile": {
+          "type": "integer"
+        },
+        "parameter": {
+          "description": "True for references into the Parameters data source.",
+          "type": "boolean"
+        },
+        "special": {
+          "description": "measure-names, measure-values, multiple-values or geometry.",
+          "type": "string"
+        }
+      }
+    },
+    "shelfNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Shelf expression tree: / is nest, * is cross, + is concat; leaves are fields.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "enum": [
+            "field",
+            "nest",
+            "cross",
+            "concat"
+          ]
+        },
+        "ref": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shelfNode"
+          }
+        }
+      }
+    },
+    "setFunction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A <groupfilter> set function tree, kept faithfully. Member values use Tableau literal syntax (\"East\", 1, #2024-01-01#, %null%).",
+      "required": [
+        "function"
+      ],
+      "properties": {
+        "function": {
+          "description": "member, union, except, level-members, empty-level, end (top/bottom N), order, filter (condition), range, crossjoin, intersection...",
+          "type": "string"
+        },
+        "level": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "count": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "units": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "periodType": {
+          "type": "string"
+        },
+        "firstPeriod": {
+          "type": "string"
+        },
+        "lastPeriod": {
+          "type": "string"
+        },
+        "includeFuture": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "ui": {
+          "description": "Tableau user: namespace UI hints (ui-marker, ui-enumeration, ui-pattern-*...).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/setFunction"
+          }
+        }
+      }
+    },
+    "topN": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "end"
+      ],
+      "properties": {
+        "end": {
+          "enum": [
+            "top",
+            "bottom"
+          ]
+        },
+        "count": {
+          "type": "integer"
+        },
+        "countExpression": {
+          "description": "Count when not a literal, e.g. [Parameters].[Top N].",
+          "type": "string"
+        },
+        "countParameter": {
+          "description": "The parameter reference when the count is a parameter.",
+          "type": "string"
+        },
+        "units": {
+          "type": "string"
+        },
+        "by": {
+          "description": "Ranking formula, e.g. SUM([Sales]).",
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "level": {
+          "description": "The field being ranked.",
+          "type": "string"
+        }
+      }
+    },
+    "tableCalc": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "<table-calc> settings: ordering (compute using), addressing and partitioning, level, restart, rank options and a secondary calc.",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "orderingType": {
+          "type": "string"
+        },
+        "orderingField": {
+          "type": "string"
+        },
+        "field": {
+          "description": "The nested calculated field these settings apply to.",
+          "type": "string"
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "windowOptions": {
+          "type": "string"
+        },
+        "diffOptions": {
+          "type": "string"
+        },
+        "pctTotalOptions": {
+          "type": "string"
+        },
+        "options": {
+          "type": "string"
+        },
+        "restart": {
+          "description": "level-break: the field at which the calculation restarts.",
+          "type": "string"
+        },
+        "level": {
+          "description": "level-address: the level the calculation is computed at.",
+          "type": "string"
+        },
+        "rank": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "direction"
+          ],
+          "properties": {
+            "method": {
+              "type": "string"
+            },
+            "direction": {
+              "type": "string"
+            }
+          }
+        },
+        "addressing": {
+          "description": "Addressing fields (order elements) when ordering-type is Field; the view's other dimensions partition.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sort": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "using",
+            "direction"
+          ],
+          "properties": {
+            "using": {
+              "type": "string"
+            },
+            "direction": {
+              "type": "string"
+            }
+          }
+        },
+        "address": {
+          "description": "Relative-to address values, e.g. -1 for the previous member.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "secondary": {
+          "description": "Secondary calculation (a second <table-calc> without a field attribute).",
+          "$ref": "#/$defs/tableCalc"
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        },
+        "nested": {
+          "description": "Settings for table calcs nested in a calculated field, each naming its calc in field.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tableCalc"
+          }
+        }
+      }
+    },
+    "clause": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "left",
+        "op",
+        "right"
+      ],
+      "properties": {
+        "left": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string"
+        },
+        "right": {
+          "type": "string"
+        }
+      }
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "set, combined (combined field / crossjoin) or internal (Tableau's sheet_link/include/exclude helper groups).",
+          "enum": [
+            "set",
+            "combined",
+            "internal"
+          ]
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "builder": {
+          "description": "user:ui-builder, e.g. filter-group, lasso-group, nest-group.",
+          "type": "string"
+        },
+        "autoColumn": {
+          "type": "string"
+        },
+        "members": {
+          "description": "Selected (or, with exclude, removed) members in Tableau literal syntax.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "boolean"
+        },
+        "all": {
+          "description": "All members (no selection).",
+          "type": "boolean"
+        },
+        "none": {
+          "description": "No members.",
+          "type": "boolean"
+        },
+        "topN": {
+          "$ref": "#/$defs/topN"
+        },
+        "condition": {
+          "description": "Condition formula (by formula).",
+          "type": "string"
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "levels": {
+          "description": "Fields combined or filtered when the set is not a simple member list.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wildcard": {
+          "description": "Wildcard match settings (ui-pattern-* hints).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tree": {
+          "$ref": "#/$defs/setFunction"
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "class",
+        "kind"
+      ],
+      "properties": {
+        "field": {
+          "description": "Filtered field reference.",
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/fieldRef"
+        },
+        "class": {
+          "enum": [
+            "categorical",
+            "quantitative",
+            "relative-date"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "categorical",
+            "top-n",
+            "condition",
+            "wildcard",
+            "quantitative",
+            "relative-date"
+          ]
+        },
+        "context": {
+          "type": "boolean"
+        },
+        "filterGroup": {
+          "type": "integer"
+        },
+        "hide": {
+          "description": "kind=hide: hides marks without filtering the data.",
+          "type": "boolean"
+        },
+        "tree": {
+          "$ref": "#/$defs/setFunction"
+        },
+        "members": {
+          "description": "Selected (or, with exclude, removed) members in Tableau literal syntax.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "boolean"
+        },
+        "all": {
+          "description": "All members (no selection).",
+          "type": "boolean"
+        },
+        "none": {
+          "description": "No members.",
+          "type": "boolean"
+        },
+        "topN": {
+          "$ref": "#/$defs/topN"
+        },
+        "condition": {
+          "description": "Condition formula (by formula).",
+          "type": "string"
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "levels": {
+          "description": "Fields combined or filtered when the set is not a simple member list.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wildcard": {
+          "description": "Wildcard match settings (ui-pattern-* hints).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "min": {},
+        "max": {},
+        "includedValues": {
+          "enum": [
+            "all",
+            "non-null",
+            "null",
+            "in-range",
+            "in-range-or-null"
+          ]
+        },
+        "includeNulls": {
+          "type": "boolean"
+        },
+        "period": {
+          "type": "string"
+        },
+        "firstPeriod": {
+          "type": "integer"
+        },
+        "lastPeriod": {
+          "type": "integer"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "includeFuture": {
+          "type": "boolean"
+        },
+        "includeNull": {
+          "type": "boolean"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "raw": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "sort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "field"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "computed",
+            "manual",
+            "alphabetic",
+            "natural",
+            "shelf"
+          ]
+        },
+        "field": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "using": {
+          "description": "Sort-by field reference for computed and shelf sorts.",
+          "type": "string"
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "order": {
+          "description": "Manual sort order.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shelf": {
+          "type": "string"
+        },
+        "innermost": {
+          "type": "boolean"
+        }
       }
     }
   }

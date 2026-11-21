@@ -26,7 +26,7 @@ class SchemaKind(StrEnum):
 
 #: Value of each document's top-level ``schema`` property.
 SCHEMA_IDS: dict[SchemaKind, str] = {
-    SchemaKind.TABLEAU_IR: "tabfree/tableau-ir@0",
+    SchemaKind.TABLEAU_IR: "tabfree/tableau-ir@1",
     SchemaKind.SEMANTIC_MODEL: "tabfree/model@0",
     SchemaKind.DASHBOARD_MANIFEST: "tabfree/dashboard@0",
 }

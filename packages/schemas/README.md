@@ -6,7 +6,7 @@ JSON Schemas (Draft 2020-12) for the three documents that connect TabFree's comp
 |---|---|---|---|
 | [Dashboard manifest](src/tabfree_schemas/json/dashboard-manifest.schema.json) (`tabfree.json`) | `tabfree/dashboard@0` | Migration manifest generator, Claude, people | Governed query service, runtime, MCP server |
 | [Semantic model](src/tabfree_schemas/json/semantic-model.schema.json) (YAML) | `tabfree/model@0` | Model generator, people | Compiler, query service, MCP `describe_model` |
-| [Tableau IR](src/tabfree_schemas/json/tableau-ir.schema.json) | `tabfree/tableau-ir@0` | TWB parser | Model and manifest generators, recreation agent |
+| [Tableau IR](src/tabfree_schemas/json/tableau-ir.schema.json) | `tabfree/tableau-ir@1` | TWB parser | Model and manifest generators, recreation agent |
 
 Key rules the schemas encode (see the ADRs in `docs/adr/`):
 
@@ -39,6 +39,8 @@ YAML is read with YAML 1.2 booleans, so `on:` stays a key rather than becoming `
 ## Versioning
 
 The `@0` suffix is the schema's major version. While TabFree is pre-1.0, breaking changes are allowed. Each one updates the examples and is called out in the PR. From v1.0, breaking changes bump the version (`@1`), and the server accepts both versions during a migration window.
+
+The Tableau IR is already at `@1`: P2.1 made encodings structured field references (`fieldRef`), typed filters, sorts, sets and table calculations, and replaced the untyped `groups` list with `sets`. IR documents are regenerated from the Tableau files, so no `@0` documents are kept.
 
 ## Examples
 
