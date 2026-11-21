@@ -259,3 +259,106 @@ __all__ = [
     "UnsupportedError",
     "measure_node",
 ]
+
+
+# ---------------------------------------------------------------------------------------------
+# Calculation dependency graph (P2.2)
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CalcInfo:
+    """One calculated field: what it reads, where it is evaluated, and whether it is valid."""
+
+    id: str
+    name: str
+    kind: str  # row | aggregate | lod | table_calc | invalid
+    depends_on: tuple[str, ...]  # field ids (columns and calcs) referenced directly
+    parameters: tuple[str, ...]
+    error: str | None = None
+
+
+def analyze_calcs(model: SemanticModel) -> list[CalcInfo]:
+    """Direct dependencies and the evaluation kind of every calculated field, in dependency order.
+
+    The kind is transitive: a row-level formula that references an aggregate calc is an aggregate.
+    Parse errors, unknown references and cycles are reported per field instead of raised.
+    """
+    from tabfree_compiler.calc import CalcSyntaxError, classify, fields_in
+
+    direct: dict[str, tuple[str, ...]] = {}
+    params: dict[str, tuple[str, ...]] = {}
+    errors: dict[str, str] = {}
+    trees: dict[str, Node] = {}
+    for f in model.fields.values():
+        if f.formula is None:
+            continue
+        try:
+            tree = parse(f.formula)
+        except CalcSyntaxError as exc:
+            errors[f.id] = f"syntax: {exc}"
+            direct[f.id], params[f.id] = (), ()
+            continue
+        trees[f.id] = tree
+        deps: list[str] = []
+        ps: list[str] = []
+        for ref in fields_in(tree):
+            param = model.parameter_for(ref)
+            if param is not None:
+                ps.append(param.id)
+                continue
+            try:
+                deps.append(model.field(ref.name).id)
+            except CompileError:
+                errors.setdefault(f.id, f"unknown field {ref.name!r}")
+        direct[f.id] = tuple(dict.fromkeys(deps))
+        params[f.id] = tuple(dict.fromkeys(ps))
+
+    order: list[str] = []
+    state: dict[str, int] = {}  # 1 = visiting, 2 = done
+
+    def visit(fid: str, path: tuple[str, ...]) -> None:
+        if state.get(fid) == 2 or fid not in direct:
+            return
+        if state.get(fid) == 1:
+            for member in path[path.index(fid) :]:
+                errors.setdefault(
+                    member, "circular reference: " + " → ".join((*path[path.index(fid) :], fid))
+                )
+            return
+        state[fid] = 1
+        for dep in direct[fid]:
+            visit(dep, (*path, fid))
+        state[fid] = 2
+        order.append(fid)
+
+    for fid in direct:
+        visit(fid, ())
+
+    kinds: dict[str, str] = {}
+    rank = {"row": 0, "lod": 1, "aggregate": 2, "table_calc": 3}
+    for fid in order:
+        if fid in errors:
+            kinds[fid] = "invalid"
+            continue
+        own = classify(trees[fid])
+        inherited = [kinds[d] for d in direct[fid] if d in kinds and kinds[d] != "invalid"]
+        if any(kinds.get(d) == "invalid" for d in direct[fid]):
+            errors[fid] = "depends on an invalid calculation"
+            kinds[fid] = "invalid"
+            continue
+        # Aggregates inside an LOD body stay inside it; anything else propagates upward.
+        kind: str = own
+        for k in inherited:
+            if k == "aggregate" and own == "lod":
+                continue
+            if rank[k] > rank[kind]:
+                kind = k
+        kinds[fid] = kind
+    for fid in direct:  # members of cycles never reach ``order``
+        kinds.setdefault(fid, "invalid")
+    ordered = order + [fid for fid in direct if fid not in order]
+    return [
+        CalcInfo(fid, model.fields[fid].name, kinds[fid], direct[fid], params[fid], errors.get(fid))
+        for fid in ordered
+    ]

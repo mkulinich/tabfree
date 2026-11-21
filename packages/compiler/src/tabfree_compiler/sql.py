@@ -18,6 +18,7 @@ never SQL text. Identifiers come from the model, are validated, and are always q
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import re
 import secrets
@@ -107,6 +108,8 @@ class CompiledQuery:
     #: Named values for ``:name`` placeholders (redshift Data API).
     named_parameters: Mapping[str, Any]
     columns: tuple[OutputColumn, ...]
+    #: Table calculations left for the runtime (with ``table_calcs="sql"``, the ones SQL cannot do).
+    deferred_table_calcs: tuple[str, ...] = ()
 
 
 def compile_query(
@@ -117,6 +120,7 @@ def compile_query(
     session: Session | None = None,
     parameters: Mapping[str, Any] | None = None,
     filters: Sequence[Mapping[str, Any]] = (),
+    table_calcs: Literal["runtime", "sql"] = "runtime",
 ) -> CompiledQuery:
     """Compile one named query of a dashboard manifest (``tabfree.json``) against a semantic model.
 
@@ -129,6 +133,7 @@ def compile_query(
         model = SemanticModel.from_dict(model)
     # Table calculations (query["tableCalcs"]) run in the runtime's JS engine over this result (ADR-004).
     planner = _Planner(model, dialect, session or Session(), parameters or {})
+    planner.table_calc_mode = table_calcs
     return planner.compile(query, list(query.get("where", [])) + list(filters))
 
 
@@ -281,6 +286,7 @@ class _Planner:
         self.agg_cache: dict[tuple[str, tuple[Node, ...], tuple[Node, ...]], str] = {}
         self.week_start = _WEEKDAYS.index(model.week_start) if model.week_start in _WEEKDAYS else 6
         self.counter = 0
+        self.table_calc_mode: Literal["runtime", "sql"] = "runtime"
 
     # -- entry point ---------------------------------------------------------------------------
     def compile(self, query: Mapping[str, Any], where: list[Mapping[str, Any]]) -> CompiledQuery:
@@ -356,9 +362,36 @@ class _Planner:
         if query.get("limit"):
             out = out.limit(int(query["limit"]))
 
+        calcs = list(query.get("tableCalcs", []))
+        deferred = [str(c["name"]) for c in calcs]
+        pushed: list[tuple[str, exp.Expr]] = []
+        if calcs and self.table_calc_mode == "sql":
+            from tabfree_compiler.windows import push_down
+
+            plan = push_down(calcs, [n for n, _, _ in dims], [n for n, _ in measures])
+            pushed, deferred = plan.columns, plan.deferred
+            if pushed:
+                wrapper = exp.select(
+                    exp.Column(this=exp.Star(), table=_ident("q")),
+                    *[exp.alias_(e, n, quoted=True) for n, e in pushed],
+                ).from_(out.subquery("q"))
+                if sort:
+                    wrapper = wrapper.order_by(
+                        *[
+                            exp.Ordered(
+                                this=_col(None, s["by"]), desc=s.get("dir") == "desc", nulls_first=False
+                            )
+                            for s in sort
+                        ]
+                    )
+                out = wrapper
         for cte in self.ctes:
             out = out.with_(cte.name, as_=cte.select)
-        return _render(self, out, dims, measures)
+        compiled = _render(self, out, dims, measures)
+        extra = tuple(OutputColumn(n, "measure", "float") for n, _ in pushed)
+        return dataclasses.replace(
+            compiled, columns=compiled.columns + extra, deferred_table_calcs=tuple(deferred)
+        )
 
     # -- requests ------------------------------------------------------------------------------
     def _dimension(self, spec: Any) -> tuple[str, Node, str]:
