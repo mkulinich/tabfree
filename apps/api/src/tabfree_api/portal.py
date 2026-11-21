@@ -31,7 +31,7 @@ from tabfree_api.auth import (
     safe_return_to,
 )
 from tabfree_api.authz import Capability, SiteRole
-from tabfree_api.content import ContentError, Site
+from tabfree_api.content import ContentError, SiteContent
 from tabfree_api.engines import EngineError, EngineTimeoutError
 from tabfree_api.service import QueryService
 from tabfree_api.settings import Settings
@@ -44,11 +44,14 @@ class Context:
     def __init__(
         self,
         settings: Settings,
-        site: Site,
-        sessions: SessionStore,
+        site: SiteContent,
+        sessions: SessionStore | Any,
         service: QueryService,
         oidc: OidcClient | None,
         today: dt.date | None = None,
+        *,
+        accounts: Any = None,
+        audit: Any = None,
     ) -> None:
         self.settings, self.site, self.sessions, self.service, self.oidc = (
             settings,
@@ -58,6 +61,20 @@ class Context:
             oidc,
         )
         self.today = today
+        #: Local accounts (``db.store.LocalAccounts``) and the audit log; None without a database.
+        self.accounts = accounts
+        self.audit_log = audit
+
+    def audit(self, action: str, actor: str | None, outcome: str = "ok", **detail: Any) -> None:
+        """An audit event: in the database when there is one, always in the service log."""
+        log.info("audit %s actor=%s outcome=%s %s", action, actor, outcome, detail)
+        if self.audit_log is not None:
+            self.audit_log.record(action, actor=actor, outcome=outcome, **detail)
+
+
+class TokenBody(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    days: int = Field(default=365, ge=1, le=365)
 
 
 class QueryBody(BaseModel):
@@ -91,14 +108,28 @@ def create_router(ctx: Context) -> APIRouter:
             path="/",
         )
 
-    def current(tabfree_session: Annotated[str | None, Cookie()] = None) -> SessionInfo:
-        info = ctx.sessions.get(tabfree_session)
+    def bearer(authorization: str | None) -> str | None:
+        if authorization and authorization.lower().startswith("bearer "):
+            return authorization[7:].strip()
+        return None
+
+    def current(
+        tabfree_session: Annotated[str | None, Cookie()] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> SessionInfo:
+        # Scripts and the MCP server send a personal access token; browsers send the session cookie.
+        token = bearer(authorization) or tabfree_session
+        info = ctx.sessions.get(token)
         if info is None:
             raise HTTPException(401, "sign in first")
         return info
 
-    def csrf(x_tabfree_request: Annotated[str | None, Header()] = None) -> None:
-        if x_tabfree_request != "1":
+    def csrf(
+        x_tabfree_request: Annotated[str | None, Header()] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        # A bearer token is never attached by the browser on its own, so it needs no CSRF header.
+        if x_tabfree_request != "1" and bearer(authorization) is None:
             raise HTTPException(403, "missing the X-TabFree-Request header")
 
     def viewer_session(info: SessionInfo) -> Session:
@@ -107,6 +138,7 @@ def create_router(ctx: Context) -> APIRouter:
     def require_view(info: SessionInfo, dashboard: str) -> None:
         # 404, not 403, so viewers cannot probe which dashboards exist.
         if not ctx.site.can(info.principal(), Capability.VIEW, dashboard):
+            ctx.audit("view", info.username, "deny", resource_kind="dashboard", resource_id=dashboard[:100])
             raise HTTPException(404, f"no dashboard {dashboard!r}")
 
     # ---- sign-in -------------------------------------------------------------------------------
@@ -157,12 +189,12 @@ def create_router(ctx: Context) -> APIRouter:
             identity = ctx.oidc.exchange(code, nonce, verifier)
         except AuthError as exc:
             raise HTTPException(401, str(exc)) from None
-        site_user = ctx.site.users.get(identity.username)
-        role = site_user.site_role if site_user else ctx.site.default_role
-        token = ctx.sessions.create(
-            identity.username, identity.fullname, identity.groups, role, settings.session_hours * 3600
-        )
-        log.info("sign-in user=%s via oidc", identity.username)
+        fullname, groups, role = ctx.site.resolve(identity.username, identity.fullname, identity.groups)
+        if role is SiteRole.UNLICENSED:
+            ctx.audit("sign_in", identity.username, "deny", method="oidc", reason="unlicensed")
+            raise HTTPException(403, "your account has no license on this site")
+        token = ctx.sessions.create(identity.username, fullname, groups, role, settings.session_hours * 3600)
+        ctx.audit("sign_in", identity.username, method="oidc")
         response = RedirectResponse(return_to, status_code=303)
         set_session_cookie(response, token)
         response.delete_cookie(FLOW_COOKIE, path="/auth")
@@ -192,13 +224,46 @@ def create_router(ctx: Context) -> APIRouter:
         site_user = ctx.site.users.get(user)
         if site_user is None:
             raise HTTPException(400, "unknown user")
-        token = ctx.sessions.create(
-            site_user.username,
-            site_user.fullname,
-            site_user.groups,
-            site_user.site_role,
-            settings.session_hours * 3600,
+        fullname, groups, role = ctx.site.resolve(site_user.username, site_user.fullname, frozenset())
+        token = ctx.sessions.create(site_user.username, fullname, groups, role, settings.session_hours * 3600)
+        ctx.audit("sign_in", site_user.username, method="dev")
+        response = RedirectResponse("/", status_code=303)
+        set_session_cookie(response, token)
+        return response
+
+    @router.get("/auth/local", response_class=HTMLResponse, include_in_schema=False)
+    def local_page(error: str | None = None) -> HTMLResponse:
+        if ctx.accounts is None:
+            raise HTTPException(404)
+        note = '<p role="alert">Wrong username or password.</p>' if error else ""
+        form = (
+            f'{note}<form method="post" action="/auth/local">'
+            '<p><label>Username <input name="username" autocomplete="username" required></label></p>'
+            '<p><label>Password <input name="password" type="password" autocomplete="current-password" '
+            "required></label></p><p><button>Sign in</button></p></form>"
         )
+        return HTMLResponse(_shell("Sign in", form))
+
+    @router.post("/auth/local", include_in_schema=False)
+    async def local_login(request: Request) -> Response:
+        """Password sign-in for local accounts (break-glass administrators, service users)."""
+        if ctx.accounts is None:
+            raise HTTPException(404)
+        from urllib.parse import parse_qs
+
+        form = parse_qs((await request.body()).decode(), max_num_fields=5)
+        username = (form.get("username") or [""])[0][:255]
+        password = (form.get("password") or [""])[0][:1024]
+        site_user = ctx.site.users.get(username)
+        if site_user is None or not ctx.accounts.verify(username, password):
+            ctx.audit("sign_in", username or None, "deny", method="local")
+            return RedirectResponse("/auth/local?error=1", status_code=303)
+        fullname, groups, role = ctx.site.resolve(username, site_user.fullname, frozenset())
+        if role is SiteRole.UNLICENSED:
+            ctx.audit("sign_in", username, "deny", method="local", reason="unlicensed")
+            raise HTTPException(403, "your account has no license on this site")
+        token = ctx.sessions.create(username, fullname, groups, role, settings.session_hours * 3600)
+        ctx.audit("sign_in", username, method="local")
         response = RedirectResponse("/", status_code=303)
         set_session_cookie(response, token)
         return response
@@ -207,7 +272,10 @@ def create_router(ctx: Context) -> APIRouter:
     def logout(
         _: Annotated[None, Depends(csrf)], tabfree_session: Annotated[str | None, Cookie()] = None
     ) -> Response:
+        info = ctx.sessions.get(tabfree_session)
         ctx.sessions.delete(tabfree_session)
+        if info is not None:
+            ctx.audit("sign_out", info.username)
         response = Response(status_code=204)
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
@@ -223,6 +291,42 @@ def create_router(ctx: Context) -> APIRouter:
             "siteRole": info.site_role.value,
         }
 
+    # ---- personal access tokens (P3.2) -------------------------------------------------------------
+
+    def pat_store() -> Any:
+        if not hasattr(ctx.sessions, "create_pat"):
+            raise HTTPException(404, "personal access tokens need the database (TABFREE_DATABASE_URL)")
+        return ctx.sessions
+
+    @router.get("/api/tokens")
+    def list_tokens(info: Annotated[SessionInfo, Depends(current)]) -> list[dict[str, Any]]:
+        return list(pat_store().list_pats(info.username))
+
+    @router.post("/api/tokens", status_code=201)
+    def create_token(
+        body: TokenBody,
+        info: Annotated[SessionInfo, Depends(current)],
+        _: Annotated[None, Depends(csrf)],
+    ) -> dict[str, str]:
+        """A personal access token for scripts and the MCP server; the secret is shown only here."""
+        try:
+            token = pat_store().create_pat(info.username, body.name, days=body.days)
+        except ContentError as exc:
+            raise HTTPException(409, str(exc)) from None
+        ctx.audit("token_create", info.username, name=body.name)
+        return {"name": body.name, "token": token}
+
+    @router.delete("/api/tokens/{token_id}", status_code=204)
+    def revoke_token(
+        token_id: str,
+        info: Annotated[SessionInfo, Depends(current)],
+        _: Annotated[None, Depends(csrf)],
+    ) -> Response:
+        if not pat_store().revoke_pat(info.username, token_id[:36]):
+            raise HTTPException(404, "no such token")
+        ctx.audit("token_revoke", info.username, token=token_id[:36])
+        return Response(status_code=204)
+
     @router.get("/api/dashboards")
     def dashboards(info: Annotated[SessionInfo, Depends(current)]) -> list[dict[str, str]]:
         return ctx.site.visible(info.principal())
@@ -231,6 +335,7 @@ def create_router(ctx: Context) -> APIRouter:
     def bundle(dashboard: str, info: Annotated[SessionInfo, Depends(current)]) -> dict[str, Any]:
         require_view(info, dashboard)
         b = ctx.site.bundle(dashboard)
+        ctx.audit("view", info.username, resource_kind="dashboard", resource_id=dashboard)
         return {"manifest": b.manifest, "html": b.html}
 
     @router.post("/api/dashboards/{dashboard}/query")
@@ -285,6 +390,7 @@ def create_router(ctx: Context) -> APIRouter:
         """Ad-hoc semantic query against a model the viewer may Connect to; RLS still applies."""
         # 404, not 403, so viewers cannot probe which models exist.
         if not ctx.site.can_model(info.principal(), Capability.CONNECT, model):
+            ctx.audit("explore", info.username, "deny", resource_kind="model", resource_id=model[:100])
             raise HTTPException(404, f"no model {model!r}")
         try:
             return ctx.service.explore(model, body.query, viewer_session(info))

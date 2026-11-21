@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
-from tabfree_api.content import ContentError, Site
+from tabfree_api.content import ContentError, SiteContent
 from tabfree_api.engines import EngineError
 from tabfree_api.service import QueryService
 from tabfree_compiler import CompileError, Session
@@ -46,7 +46,9 @@ class DomainBody(BaseModel):
     user: str = Field(max_length=64)
 
 
-def create_router(site: Site, service: QueryService, runtime_dir: Any, today: dt.date | None) -> APIRouter:
+def create_router(
+    site: SiteContent, service: QueryService, runtime_dir: Any, today: dt.date | None
+) -> APIRouter:
     router = APIRouter(prefix="/preview", tags=["preview"])
 
     def manifest_of(dashboard: str) -> Mapping[str, Any]:

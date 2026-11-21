@@ -11,17 +11,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from tabfree_api.authz import (
     Capability,
-    DashboardEntry,
+    ContentEntry,
     ModelEntry,
     Principal,
     Project,
+    Rule,
     SiteRole,
-    decide,
-    decide_model,
+    evaluate,
     parse_rules,
 )
 
@@ -58,6 +58,37 @@ class Bundle:
     html: str
 
 
+class SiteContent(Protocol):
+    """What the portal and the query service read: the site file (Phase 1) or the database (P3.1)."""
+
+    id: str
+    models: Mapping[str, Mapping[str, Any]]
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def default_role(self) -> SiteRole: ...
+    @property
+    def query(self) -> SiteQueryConfig: ...
+    @property
+    def projects(self) -> dict[str, Project]: ...
+    @property
+    def dashboards(self) -> dict[str, ContentEntry]: ...
+    @property
+    def model_entries(self) -> dict[str, ContentEntry]: ...
+    @property
+    def users(self) -> dict[str, SiteUser]: ...
+    def site_role(self, username: str) -> SiteRole: ...
+    def resolve(
+        self, username: str, fullname: str, idp_groups: frozenset[str]
+    ) -> tuple[str, frozenset[str], SiteRole]: ...
+    def can(self, principal: Principal, capability: Capability, dashboard: str) -> bool: ...
+    def can_model(self, principal: Principal, capability: Capability, model: str) -> bool: ...
+    def data_version(self, model: str) -> str: ...
+    def visible(self, principal: Principal) -> list[dict[str, str]]: ...
+    def bundle(self, dashboard: str) -> Bundle: ...
+
+
 class Site:
     def __init__(self, path: Path) -> None:
         from tabfree_schemas import load_document
@@ -83,23 +114,26 @@ class Site:
         )
         self.default_role = SiteRole(doc.get("defaultSiteRole", "viewer"))
         self.projects: dict[str, Project] = {}
-        self.dashboards: dict[str, DashboardEntry] = {}
+        self.dashboards: dict[str, ContentEntry] = {}
         for p in doc.get("projects", []):
-            project = Project(
-                p["id"],
-                p.get("name", p["id"]),
-                bool(p.get("locked", False)),
-                parse_rules(p.get("permissions", [])),
-                frozenset(p.get("leaders", [])),
-            )
+            project = _project(p)
+            if project.id in self.projects:
+                raise ContentError(f"duplicate project id {project.id!r}")
             self.projects[project.id] = project
             for d in p.get("dashboards", []):
                 entry = d if isinstance(d, Mapping) else {"id": d}
                 if not _SLUG.match(entry["id"]):
                     raise ContentError(f"invalid dashboard id {entry['id']!r}")
-                self.dashboards[entry["id"]] = DashboardEntry(
-                    entry["id"], project.id, entry.get("owner"), parse_rules(entry.get("permissions", []))
+                rules = parse_rules(entry.get("permissions", []))
+                if not rules and "permissions" not in entry:
+                    # Tableau copies the project's defaults onto content when it is published.
+                    rules = project.defaults.get("dashboard", ())
+                self.dashboards[entry["id"]] = ContentEntry(
+                    entry["id"], project.id, entry.get("owner"), rules
                 )
+        for project in self.projects.values():
+            if project.parent is not None and project.parent not in self.projects:
+                raise ContentError(f"project {project.id!r} has an unknown parent {project.parent!r}")
         self.users: dict[str, SiteUser] = {
             u["username"]: SiteUser(
                 u["username"],
@@ -115,7 +149,7 @@ class Site:
             self.models[str(model["id"])] = model
         #: Model permissions and data versions. A model without an entry can be explored only by site
         #: administrators (default deny).
-        self.model_entries: dict[str, ModelEntry] = {}
+        self.model_entries: dict[str, ContentEntry] = {}
         for m in models_section.get("entries", []):
             if m["id"] not in self.models:
                 raise ContentError(f"the site file names an unknown model {m['id']!r}")
@@ -124,23 +158,37 @@ class Site:
                 m.get("owner"),
                 parse_rules(m.get("permissions", [])),
                 str(m.get("dataVersion", "")),
+                m.get("project"),
             )
 
     def site_role(self, username: str) -> SiteRole:
         user = self.users.get(username)
         return user.site_role if user else self.default_role
 
+    def resolve(
+        self, username: str, fullname: str, idp_groups: frozenset[str]
+    ) -> tuple[str, frozenset[str], SiteRole]:
+        """Who signs in: identity-provider groups plus the site file's, and the site role."""
+        user = self.users.get(username)
+        if user is None:
+            return fullname or username, idp_groups, self.default_role
+        return fullname or user.fullname, idp_groups | user.groups, user.site_role
+
+    @property
+    def name(self) -> str:
+        return self.id
+
     def can(self, principal: Principal, capability: Capability, dashboard: str) -> bool:
         entry = self.dashboards.get(dashboard)
         if entry is None:
             return False
-        return decide(principal, capability, entry, self.projects[entry.project])
+        return evaluate(principal, capability, entry, self.projects).allowed
 
     def can_model(self, principal: Principal, capability: Capability, model: str) -> bool:
         if model not in self.models:
             return False
         entry = self.model_entries.get(model) or ModelEntry(model, None, ())
-        return decide_model(principal, capability, entry)
+        return evaluate(principal, capability, entry, self.projects).allowed
 
     def data_version(self, model: str) -> str:
         """The model's data version from the site file ("" when unset); extract refresh bumps it."""
@@ -157,7 +205,7 @@ class Site:
                     {
                         "id": entry.id,
                         "title": str(bundle.manifest.get("title", entry.id)),
-                        "project": self.projects[entry.project].name,
+                        "project": self.projects[entry.project].name if entry.project else "",
                     }
                 )
         return sorted(out, key=lambda d: (d["project"], d["title"]))
@@ -168,6 +216,34 @@ class Site:
         folder = self.dashboards_dir / dashboard
         manifest = json.loads((folder / "tabfree.json").read_text(encoding="utf-8"))
         return Bundle(manifest, (folder / "index.html").read_text(encoding="utf-8"))
+
+
+def _project(p: Mapping[str, Any]) -> Project:
+    """A site-file project. ``permissions`` are the default rules for its dashboards (Phase 1);
+    ``defaults`` gives them per content type ({project, dashboard, model, connection})."""
+    if "assetPermissions" in p:
+        mode = str(p["assetPermissions"])
+    else:
+        mode = "locked" if p.get("locked") else "customizable"
+    if mode not in ("customizable", "locked", "locked_not_nested"):
+        raise ContentError(f"project {p['id']!r}: unknown asset permissions {mode!r}")
+    defaults: dict[str, tuple[Rule, ...]] = {
+        kind: parse_rules(rules) for kind, rules in (p.get("defaults") or {}).items()
+    }
+    if "permissions" in p:
+        defaults.setdefault("dashboard", parse_rules(p["permissions"]))
+    leaders = [Rule(u, None, {Capability.PROJECT_LEADER: "allow"}) for u in p.get("leaders", [])]
+    leaders += [Rule(None, g, {Capability.PROJECT_LEADER: "allow"}) for g in p.get("leaderGroups", [])]
+    if leaders:
+        defaults["project"] = (*defaults.get("project", ()), *leaders)
+    return Project(
+        str(p["id"]),
+        str(p.get("name", p["id"])),
+        mode,  # type: ignore[arg-type]
+        defaults,
+        p.get("owner"),
+        p.get("parent"),
+    )
 
 
 def _optional_int(value: Any) -> int | None:

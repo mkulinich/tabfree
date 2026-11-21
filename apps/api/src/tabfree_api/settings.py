@@ -19,8 +19,18 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8000"
     #: Projects, dashboards, permissions and users (Postgres from Phase 3).
     site_file: Path = REPO_ROOT / "apps" / "api" / "dev" / "site.yaml"
-    #: SQLite file for sessions (Postgres from Phase 3).
+    #: SQLite file for sessions when there is no database (Phase 1 mode).
     session_db: Path = Path("tabfree-sessions.db")
+    #: The metadata database (P3.1), e.g. postgresql+psycopg://user:pass@host/tabfree. When set, content,
+    #: permissions and sessions come from it and ``site_file`` is not read. It carries a password:
+    #: inject it (``secret run -e TABFREE_DATABASE_URL=...``), never write it to a file.
+    database_url: SecretStr | None = None
+    #: The site this process serves (multi-site routing arrives with /site/<id> URLs).
+    site_id: str = "default"
+    #: Apply migrations at start-up (dev and test only; deployments run ``python -m tabfree_api.db upgrade``).
+    database_auto_migrate: bool = False
+    #: Seconds a process may serve a cached view of permissions after a change made elsewhere.
+    permission_cache_s: float = Field(default=2.0, ge=0)
     session_hours: float = 8.0
     #: Where queries run: "sample" is DuckDB with generated data; "aws" uses each model's connection.
     engine: Literal["sample", "aws"] = "sample"

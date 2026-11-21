@@ -1,6 +1,6 @@
 # tabfree-api
 
-The TabFree API service (FastAPI): sign-in, permissions, the portal page and the governed query API. Phase 1 (P1.13) is the minimal version. Content and permissions are read from a site file and sessions live in SQLite. Phase 3 moves both to Postgres and adds SAML, PATs and SCIM.
+The TabFree API service (FastAPI): sign-in, permissions, the portal page and the governed query API. Content, permissions and sessions live in the metadata database (Postgres; P3.1) when `TABFREE_DATABASE_URL` is set. Without it, the Phase 1 mode reads a site file and keeps sessions in SQLite, which is still the quickest way to run the dev site.
 
 ```bash
 npm run build -w @tabfree/runtime                      # the portal loads the runtime bundles
@@ -14,14 +14,33 @@ uv run pytest apps/api
 | Module | Purpose |
 |---|---|
 | `auth.py` | OIDC sign-in (authorization code + PKCE, state bound to the browser, nonce, ID token checked against the provider's JWKS for issuer, audience and expiry) and server-side sessions (only SHA-256 hashes stored; cookies are HttpOnly, SameSite=Lax, and Secure on https). |
-| `authz.py` | Permission checks in ADR-006 order: site administrator, then the site-role ceiling, then owner or project leader, then a user rule, then a group deny, then a group allow; anything unspecified is denied. Locked projects apply their own rules to their dashboards. |
-| `content.py` | The site: projects, dashboards (bundles on disk), semantic models, users' site roles. Dev site: [`dev/site.yaml`](dev/site.yaml). |
+| `authz.py` | Tableau's effective permissions (ADR-006, P3.3): site-role ceiling per content type, then administrator, project owner or leader (inherited downward), content owner (no Set Permissions when locked), user rule, group deny, group allow; unspecified is denied. Nested projects; customizable, locked and locked-not-nested asset permissions. `evaluate` returns the reason. |
+| `content.py` | The site-file site (Phase 1 mode) and the `SiteContent` interface both sites implement. Dev site: [`dev/site.yaml`](dev/site.yaml). |
+| `db/` | The metadata database (P3.1): `schema.py` (SQLAlchemy Core), Alembic migrations in `migrations/`, `store.py` (`DbSite`: content with immutable revisions, rules, users and groups; `DbSessionStore`: sessions, OIDC flows and personal access tokens; `LocalAccounts`; `AuditLog`), `seed.py` (import a site file). |
 | `service.py` | The governed query service: binds dashboard state to the manifest (or validates an explore query against the schema), compiles with the viewer's identity (RLS), checks the result cache and the site's guardrails, runs with a timeout, caps rows and bytes, and writes an audit line (never values). |
 | `cache.py` | Result cache keyed on `sha256(compiled SQL, typed bind values incl. RLS, model, connection, data version, today, caps)`; pluggable backend, in-memory LRU + TTL by default. |
 | `guardrails.py` | Per-site cost guardrails: bytes scanned per UTC day against a budget, and a semaphore on concurrent engine queries. Refusals are HTTP 429 with a `code`. |
 | `engines.py` | DuckDB (local sample data), Athena (`ExecutionParameters`, workgroup per site, result reuse, bytes scanned) and the Redshift Data API (named parameters). Timeouts cancel the engine query. The AWS engines are unit-tested with fake clients only. |
 | `portal.py` | `/auth/*`, `/api/me`, `/api/dashboards[/{id}[/query|/domain]]`, `/api/models/{model}/query`, `/runtime/*.js`, and the portal page. |
 | `preview.py` | `/preview`: the same dashboards with a user picker and no sign-in (dev only). |
+
+## Metadata database (P3.1, P3.2)
+
+```bash
+export TABFREE_DATABASE_URL=sqlite:///tabfree.db          # or postgresql+psycopg://... (inject it with `secret run`)
+uv run python -m tabfree_api.db upgrade                    # migrations
+uv run python -m tabfree_api.db import-site apps/api/dev/site.yaml
+uv run python -m tabfree_api.db create-admin dev breakglass   # local administrator; password on stdin
+TABFREE_SITE_ID=dev TABFREE_DEV_LOGIN=1 uv run uvicorn tabfree_api.main:app_factory --factory --port 8765
+```
+
+- **Schema:** sites; users (identity-provider or local) and their site roles; groups (with an optional minimum site role, Tableau's grant role on sign-in) and memberships; nested projects with asset permissions; content (dashboards, models, connections); append-only revisions; permission rules (content rules and project defaults per content type); sessions; OIDC flows; personal access tokens; the audit log. On Postgres a trigger makes revisions and the audit log append-only.
+- **Revisions:** publishing adds a revision and makes it current. Identical content adds none. A restore adds a new revision with the old content. New content copies its project's default rules.
+- **Sign-in:** the session holds the identity provider's groups plus local memberships. The site role is the user's role, raised to any group's minimum. Unknown users join with the site's default role; unlicensed users cannot sign in.
+- **Personal access tokens:** `POST /api/tokens {"name": ...}` returns `tfp_<id>.<secret>` once. Send it as `Authorization: Bearer ...`, which needs no CSRF header. A token is valid for up to a year, stops working after 15 days without use (as in Tableau), and can be revoked with `DELETE /api/tokens/{id}`. Group membership and site role are read on each use.
+- **Local accounts:** `/auth/local`, with argon2id hashes and a lockout after five failures in fifteen minutes. These are for break-glass administrators and service users; everyone else signs in through the identity provider.
+- **SAML** goes through the broker (Cognito, or Okta/Entra/Keycloak federation): TabFree speaks only OIDC.
+- **Caching:** permissions are read from a per-process snapshot refreshed after local writes and at most `TABFREE_PERMISSION_CACHE_S` (2 s) old.
 
 State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). Dashboards a viewer may not see return 404, not 403.
 
@@ -43,7 +62,11 @@ State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). D
 |---|---|---|
 | `TABFREE_ENVIRONMENT` | `dev` | The dev logins, the preview and the sample engine refuse to start outside `dev`/`test`. |
 | `TABFREE_BASE_URL` | `http://localhost:8000` | Public URL; the OIDC redirect is `{base}/auth/callback`, and cookies are Secure when https. |
-| `TABFREE_SITE_FILE` | `apps/api/dev/site.yaml` | Projects, dashboards, permissions, site roles. |
+| `TABFREE_SITE_FILE` | `apps/api/dev/site.yaml` | Projects, dashboards, permissions, site roles (when there is no database). |
+| `TABFREE_DATABASE_URL` | none | The metadata database; inject it, since it carries a password. |
+| `TABFREE_SITE_ID` | `default` | The database site this process serves. |
+| `TABFREE_DATABASE_AUTO_MIGRATE` | off | Run migrations at start-up (dev and test only). |
+| `TABFREE_PERMISSION_CACHE_S` | `2` | Most seconds a permission change made in another process takes to apply. |
 | `TABFREE_ENGINE` | `sample` | `sample` (DuckDB with generated data) or `aws` (each model's Athena/Redshift connection; needs `tabfree-api[aws]`). |
 | `TABFREE_OIDC_ISSUER`, `TABFREE_OIDC_CLIENT_ID`, `TABFREE_OIDC_CLIENT_SECRET` | — | Identity provider (Cognito, Okta, Entra ID, Keycloak…). |
 | `TABFREE_OIDC_USERNAME_CLAIM`, `TABFREE_OIDC_GROUPS_CLAIM` | `preferred_username`, `groups` | Claims for the username (RLS `USERNAME()`) and groups (permissions, `ISMEMBEROF()`). |

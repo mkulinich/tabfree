@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from tabfree_api import __version__
 from tabfree_api.auth import OidcClient, SessionStore
 from tabfree_api.cache import MemoryResultCache, NoCache, ResultCache
-from tabfree_api.content import Site
+from tabfree_api.content import Site, SiteContent
 from tabfree_api.engines import DuckDBEngine, Engine, engine_from_connection
 from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
 from tabfree_api.service import QueryLimits, QueryService
@@ -34,7 +34,7 @@ def _sample_engine() -> DuckDBEngine:
     return engine
 
 
-def _engines(settings: Settings, site: Site) -> tuple[Any, dt.date | None]:
+def _engines(settings: Settings, site: SiteContent) -> tuple[Any, dt.date | None]:
     if settings.engine == "sample":
         engine = _sample_engine()
         return (lambda _model: engine), SAMPLE_TODAY
@@ -51,7 +51,7 @@ def _engines(settings: Settings, site: Site) -> tuple[Any, dt.date | None]:
     return for_model, None
 
 
-def query_service(settings: Settings, site: Site, engine_for: Any) -> QueryService:
+def query_service(settings: Settings, site: SiteContent, engine_for: Any) -> QueryService:
     """The query service with the settings' caps, cache and the site's guardrails."""
     limits = QueryLimits(
         row_limit=settings.query_row_limit,
@@ -118,7 +118,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         content = {"detail": exc.message, "code": exc.code}
         return JSONResponse(status_code=429, content=content, headers=headers)
 
-    site = Site(config.site_file)
+    site: Any
+    sessions: Any
+    if config.database_url is not None:
+        from tabfree_api.db import connect, upgrade
+        from tabfree_api.db.store import AuditLog, DbSessionStore, DbSite, LocalAccounts
+
+        if config.database_auto_migrate and not dev:
+            raise RuntimeError(
+                "database_auto_migrate is for dev and test; run the migrations as a deploy step"
+            )
+        db = connect(config.database_url.get_secret_value())
+        if config.database_auto_migrate:
+            upgrade(db)
+        site = DbSite(db, config.site_id, snapshot_ttl_s=config.permission_cache_s)
+        sessions = DbSessionStore(db, config.site_id)
+        accounts: Any = LocalAccounts(db)
+        audit: Any = AuditLog(db, config.site_id)
+    else:
+        site = Site(config.site_file)
+        sessions = SessionStore(config.session_db)
+        accounts = None
+        audit = None
     engine_for, today = _engines(config, site)
     service = query_service(config, site, engine_for)
 
@@ -135,7 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             username_claim=config.oidc_username_claim,
             groups_claim=config.oidc_groups_claim,
         )
-    app.state.context = Context(config, site, SessionStore(config.session_db), service, oidc, today)
+    app.state.context = Context(config, site, sessions, service, oidc, today, accounts=accounts, audit=audit)
     app.include_router(create_router(app.state.context))
 
     if config.preview:

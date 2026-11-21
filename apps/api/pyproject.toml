@@ -14,6 +14,12 @@ dependencies = [
   "pyjwt[crypto]>=2.9",
   # Explore queries are checked against the manifest schema's query definition.
   "jsonschema>=4.23",
+  # P3.1: metadata in Postgres (Aurora PostgreSQL in AWS), migrations with Alembic.
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.14",
+  "psycopg[binary]>=3.2",
+  # P3.2: local account passwords.
+  "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]

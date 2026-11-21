@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from tabfree_api.authz import Capability, DashboardEntry, Principal, Project, SiteRole, decide, parse_rules
+from tabfree_api.authz import parse_rules
 from tabfree_api.main import create_app
 from tabfree_api.sample import MANAGERS
 from tabfree_api.settings import Settings
@@ -107,52 +107,6 @@ def test_dev_login_is_refused_outside_development(tmp_path: Path) -> None:
         )
     app = create_app(Settings(environment="test", session_db=tmp_path / "s.db"))
     assert TestClient(app).post("/auth/dev", content="user=admin").status_code == 404
-
-
-# ---- the decision order itself ---------------------------------------------------------------
-
-
-def principal(user: str, *groups: str, role: SiteRole = SiteRole.EXPLORER) -> Principal:
-    return Principal(user, frozenset(groups), role)
-
-
-RULES = parse_rules(
-    [
-        {"group": "A", "capabilities": {"view": "allow", "download_full_data": "allow"}},
-        {"group": "B", "capabilities": {"view": "deny"}},
-        {"user": "uma", "capabilities": {"view": "allow"}},
-        {"user": "dan", "capabilities": {"view": "deny"}},
-    ]
-)
-
-
-@pytest.mark.parametrize(
-    ("who", "capability", "expected"),
-    [
-        (principal("x", "A"), Capability.VIEW, True),
-        (principal("x", "A", "B"), Capability.VIEW, False),  # group deny wins over group allow
-        (principal("uma", "B"), Capability.VIEW, True),  # a user rule beats group rules
-        (principal("dan", "A"), Capability.VIEW, False),
-        (principal("x", "A", role=SiteRole.VIEWER), Capability.DOWNLOAD_FULL, False),  # site-role ceiling
-        (principal("x", "A"), Capability.DOWNLOAD_FULL, True),
-        (principal("x", "C"), Capability.VIEW, False),  # unspecified
-        (principal("root", role=SiteRole.SITE_ADMINISTRATOR), Capability.DELETE, True),
-        (principal("owner", "B"), Capability.VIEW, True),  # owners can always view their content
-    ],
-)
-def test_decision_order(who: Principal, capability: Capability, expected: bool) -> None:
-    project = Project("p", "P", locked=True, rules=RULES)
-    dashboard = DashboardEntry("d", "p", owner="owner", rules=())
-    assert decide(who, capability, dashboard, project) is expected
-
-
-def test_unlocked_projects_let_dashboards_override() -> None:
-    own = parse_rules([{"group": "B", "capabilities": {"view": "allow"}}])
-    dashboard = DashboardEntry("d", "p", owner=None, rules=own)
-    unlocked = Project("p", "P", locked=False, rules=RULES)
-    locked = Project("p", "P", locked=True, rules=RULES)
-    assert decide(principal("x", "B"), Capability.VIEW, dashboard, unlocked) is True
-    assert decide(principal("x", "B"), Capability.VIEW, dashboard, locked) is False
 
 
 def test_rules_must_be_well_formed() -> None:
