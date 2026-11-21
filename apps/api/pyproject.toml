@@ -12,6 +12,8 @@ dependencies = [
   "tabfree-compiler",
   "tabfree-schemas",
   "pyjwt[crypto]>=2.9",
+  # Explore queries are checked against the manifest schema's query definition.
+  "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]

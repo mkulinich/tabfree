@@ -1649,6 +1649,7 @@ version = "0.0.1"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "jsonschema" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "tabfree-compiler" },
@@ -1669,6 +1670,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35" },
     { name = "duckdb", marker = "extra == 'preview'", specifier = ">=1.1" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "jsonschema", specifier = ">=4.23" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
     { name = "tabfree-compiler", editable = "packages/compiler" },

@@ -1,34 +1,111 @@
-"""The governed query service: dashboard state in, rows out, with the viewer's RLS applied.
+"""The governed query service: dashboard state or a semantic query in, rows out, with the viewer's RLS.
 
-The browser names a query and sends filter values; this service binds them to the manifest
-(`tabfree_compiler.dashboard`), compiles with the viewer's session (row-level security, user
-functions as bind parameters), runs the SQL on the model's engine and caps the result.
+Two entry points share one pipeline:
+
+* **Dashboards** name a query and send filter values; the service binds them to the manifest
+  (`tabfree_compiler.dashboard`), so a viewer narrows data only in the ways the author declared.
+* **Explore** (P2.7) sends a manifest-style query (dimensions, measures, where, sort, limit) against
+  a semantic model the viewer may Connect to; it is checked against the manifest schema's ``query``.
+
+Either way the compiler applies row-level security from the viewer's session (user functions become
+bind parameters), then the pipeline looks up the result cache, checks the site's cost guardrails,
+runs the SQL on the model's engine with a timeout, and caps rows and bytes. Every query writes one
+audit line: who, what, rows, truncation, cache hit or miss, bytes scanned and duration; never values.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import functools
+import hashlib
+import json
 import logging
+import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
-from tabfree_api.engines import Engine
-from tabfree_compiler import CompileError, SemanticModel, Session, compile_query
+from jsonschema import Draft202012Validator
+
+from tabfree_api.cache import CachedResult, CacheStats, Clock, NoCache, ResultCache, cache_key
+from tabfree_api.engines import Engine, EngineError, ExecuteOptions
+from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
+from tabfree_compiler import CompiledQuery, CompileError, SemanticModel, Session, compile_query
 from tabfree_compiler.dashboard import BoundQuery, bind_domain, bind_query
+from tabfree_schemas import SchemaKind, load_schema
 
 ROW_LIMIT = 10_000
+MAX_BYTES = 16 * 1024 * 1024
 _COLUMN_TYPES = {"string", "integer", "float", "decimal", "boolean", "date", "datetime", "geography"}
 
 audit = logging.getLogger("tabfree.audit")
 
 EngineFor = Callable[[Mapping[str, Any]], Engine]
+DataVersion = Callable[[str], str]
+
+
+@dataclass(frozen=True)
+class QueryLimits:
+    row_limit: int = ROW_LIMIT
+    #: Approximate serialized (JSON) size of the rows a result may carry.
+    max_bytes: int = MAX_BYTES
+    #: Engine timeout per query; None leaves the engine's own default.
+    timeout_s: float | None = 60.0
+    #: Athena result reuse maximum age in minutes; 0 turns reuse off.
+    athena_reuse_minutes: int = 0
+    #: Reuse also for queries with bind parameters (RLS values, filters). Off until verified (P2.10).
+    athena_reuse_with_parameters: bool = False
+    #: Bytes charged to the site budget for an engine that does not report bytes scanned (Redshift).
+    redshift_scan_estimate_bytes: int = 100 * 1024 * 1024
+
+
+@dataclass
+class QueryStats:
+    cache: CacheStats = field(default_factory=CacheStats)
+    engine_queries: int = 0
+    refused: int = 0
+
+
+@dataclass(frozen=True)
+class _Outcome:
+    columns: list[dict[str, Any]]
+    result: CachedResult
+    cached: bool
+
+    def payload(self) -> dict[str, Any]:
+        # Exactly these keys: the runtime's protocol checks the shape of results it forwards.
+        return {"columns": self.columns, "rows": self.result.rows, "truncated": self.result.truncated}
+
+
+def _default_guardrails() -> Guardrails:
+    return Guardrails(lambda _site: SiteLimits(None, 20, 10.0))
 
 
 class QueryService:
-    def __init__(self, models: Mapping[str, Mapping[str, Any]], engine_for: EngineFor) -> None:
+    def __init__(
+        self,
+        models: Mapping[str, Mapping[str, Any]],
+        engine_for: EngineFor,
+        *,
+        site: str = "default",
+        limits: QueryLimits | None = None,
+        cache: ResultCache | None = None,
+        guardrails: Guardrails | None = None,
+        data_version: DataVersion | None = None,
+        clock: Clock = time.time,
+    ) -> None:
         self._models = models
         self._engine_for = engine_for
         self._compiled: dict[str, SemanticModel] = {}
+        self.site = site
+        self.limits = limits or QueryLimits()
+        self.cache: ResultCache = cache if cache is not None else NoCache()
+        self.guardrails = guardrails or _default_guardrails()
+        self._data_version = data_version or (lambda _model: "")
+        self._clock = clock
+        self.stats = QueryStats()
+
+    # ---- entry points ---------------------------------------------------------------------------
 
     def query(
         self,
@@ -38,14 +115,35 @@ class QueryService:
         selections: Mapping[str, Any],
         session: Session,
     ) -> dict[str, Any]:
-        return self._run(manifest, bind_query(manifest, name, state, selections), session, f"query:{name}")
+        bound = bind_query(manifest, name, state, selections)
+        return self._run(bound, session, f"dashboard={manifest.get('id')} query:{name}").payload()
 
     def domain(
         self, manifest: Mapping[str, Any], filter_name: str, state: Mapping[str, Any], session: Session
     ) -> dict[str, Any]:
-        return self._run(
-            manifest, bind_domain(manifest, filter_name, state), session, f"domain:{filter_name}"
-        )
+        bound = bind_domain(manifest, filter_name, state)
+        return self._run(bound, session, f"dashboard={manifest.get('id')} domain:{filter_name}").payload()
+
+    def explore(self, model_id: str, query: Mapping[str, Any], session: Session) -> dict[str, Any]:
+        """An ad-hoc semantic query. The caller has already checked Connect on the model."""
+        errors = query_errors(query)
+        if errors:
+            shown = "; ".join(errors[:5])
+            raise CompileError(f"invalid query: {shown}")
+        if "model" in query:
+            raise CompileError("invalid query: the model comes from the URL, not the query")
+        bound = BoundQuery(model_id, query, (), {})
+        outcome = self._run(bound, session, f"model={model_id} explore")
+        return {
+            **outcome.payload(),
+            "meta": {
+                "cache": "hit" if outcome.cached else "miss",
+                "truncatedBy": outcome.result.truncated_by,
+                "scannedBytes": outcome.result.scanned_bytes,
+            },
+        }
+
+    # ---- pipeline -------------------------------------------------------------------------------
 
     def _model(self, model_id: str) -> tuple[SemanticModel, Mapping[str, Any]]:
         doc = self._models.get(model_id)
@@ -55,13 +153,13 @@ class QueryService:
             self._compiled[model_id] = SemanticModel.from_dict(doc)
         return self._compiled[model_id], doc
 
-    def _run(
-        self, manifest: Mapping[str, Any], bound: BoundQuery, session: Session, what: str
-    ) -> dict[str, Any]:
+    def _run(self, bound: BoundQuery, session: Session, what: str) -> _Outcome:
+        started = time.perf_counter()
         model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
+        limits = self.limits
         query = dict(bound.query)
-        cap = min(int(query.get("limit", ROW_LIMIT)), ROW_LIMIT)
+        cap = min(int(query.get("limit", limits.row_limit)), limits.row_limit)
         query["limit"] = cap + 1  # one extra row tells us the result was truncated
         compiled = compile_query(
             model,
@@ -71,34 +169,132 @@ class QueryService:
             parameters=bound.parameters,
             filters=bound.filters,
         )
-        result = engine.execute(compiled, cap)
-        # A query's own limit is part of its design (e.g. "top 200"), not a truncation.
-        truncated = len(result.rows) > cap and cap == ROW_LIMIT
-        rows = result.rows[:cap]
-        formats = {f["name"]: f["format"] for f in doc.get("fields", []) if f.get("format")}
-        for spec in bound.query.get("measures", []):  # a format on the query's measure wins
-            if isinstance(spec, Mapping) and spec.get("format"):
-                formats[spec.get("as") or spec["field"]] = spec["format"]
-        columns: list[dict[str, Any]] = []
-        for c in compiled.columns:
-            column: dict[str, Any] = {
-                "name": c.name,
-                "type": c.type if c.type in _COLUMN_TYPES else "string",
-                "role": c.role,
-            }
-            if c.name in formats:
-                column["format"] = formats[c.name]
-            columns.append(column)
-        # Audit who ran what; never the values (they may be sensitive).
-        audit.info(
-            "query user=%s dashboard=%s %s rows=%d truncated=%s",
-            session.username,
-            manifest.get("id"),
-            what,
-            len(rows),
-            truncated,
+        columns = _columns(compiled, doc, bound.query)
+        version = self._data_version(bound.model)
+        today = session.today or dt.datetime.fromtimestamp(self._clock(), dt.UTC).date()
+        key = cache_key(
+            compiled,
+            model=bound.model,
+            connection=doc.get("connection"),
+            data_version=version,
+            today=today,
+            caps=(limits.row_limit, limits.max_bytes),
         )
-        return {"columns": columns, "rows": [[_json(v) for v in r] for r in rows], "truncated": truncated}
+        cached = self.cache.get(key)
+        if cached is not None:
+            self.stats.cache.hits += 1
+            self._audit(session, what, cached, "hit", 0, started)
+            return _Outcome(columns, cached, cached=True)
+        self.stats.cache.misses += 1
+
+        try:
+            self.guardrails.check_budget(self.site)
+            with self.guardrails.slot(self.site):
+                self.stats.engine_queries += 1
+                try:
+                    result = engine.execute(compiled, cap, self._options(compiled, bound.model, version))
+                except EngineError as exc:
+                    self.guardrails.charge(self.site, self._scanned(engine, exc.scanned_bytes))
+                    raise
+        except GuardrailError as exc:
+            self.stats.refused += 1
+            audit.info("query user=%s %s refused=%s", session.username, what, exc.code)
+            raise
+        scanned = self._scanned(engine, result.scanned_bytes)
+        self.guardrails.charge(self.site, scanned)
+
+        # A query's own limit is part of its design (e.g. "top 200"), not a truncation.
+        truncated = len(result.rows) > cap and cap == limits.row_limit
+        rows, over = _byte_cap([[_json(v) for v in r] for r in result.rows[:cap]], limits.max_bytes)
+        value = CachedResult(
+            rows=rows,
+            truncated=truncated or over,
+            truncated_by="bytes" if over else ("rows" if truncated else None),
+            scanned_bytes=scanned,
+        )
+        self.cache.put(key, value)
+        self._audit(session, what, value, "reuse" if result.reused else "miss", scanned, started)
+        return _Outcome(columns, value, cached=False)
+
+    def _options(self, compiled: CompiledQuery, model: str, version: str) -> ExecuteOptions:
+        limits = self.limits
+        reuse = limits.athena_reuse_minutes
+        has_binds = bool(compiled.parameters or compiled.named_parameters)
+        if has_binds and not limits.athena_reuse_with_parameters:
+            reuse = 0
+        # The tag puts the data version into the query text, so Athena never reuses a pre-refresh result.
+        tag = hashlib.sha256(f"{model}\0{version}".encode()).hexdigest()[:16] if reuse else ""
+        return ExecuteOptions(timeout_s=limits.timeout_s, reuse_minutes=reuse, reuse_tag=tag)
+
+    def _scanned(self, engine: Engine, reported: int | None) -> int:
+        if reported is not None:
+            return reported
+        return self.limits.redshift_scan_estimate_bytes if engine.dialect == "redshift" else 0
+
+    def _audit(
+        self, session: Session, what: str, result: CachedResult, cache: str, scanned: int, started: float
+    ) -> None:
+        # Who ran what; never the values (they may be sensitive).
+        audit.info(
+            "query user=%s %s rows=%d truncated=%s cache=%s scanned_bytes=%d duration_ms=%d",
+            session.username,
+            what,
+            len(result.rows),
+            result.truncated,
+            cache,
+            scanned,
+            round((time.perf_counter() - started) * 1000),
+        )
+
+
+# ---- helpers --------------------------------------------------------------------------------------
+
+
+@functools.cache
+def _query_validator() -> Draft202012Validator:
+    schema = load_schema(SchemaKind.DASHBOARD_MANIFEST)
+    return Draft202012Validator(
+        {"$schema": schema["$schema"], "$defs": schema["$defs"], "$ref": "#/$defs/query"}
+    )
+
+
+def query_errors(query: Any) -> list[str]:
+    """Violations of the manifest schema's ``query`` definition; empty when valid."""
+    found = sorted(_query_validator().iter_errors(query), key=lambda e: [str(p) for p in e.absolute_path])
+    return [
+        "$" + "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in e.absolute_path) + f": {e.message}"
+        for e in found
+    ]
+
+
+def _columns(
+    compiled: CompiledQuery, doc: Mapping[str, Any], query: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    formats = {f["name"]: f["format"] for f in doc.get("fields", []) if f.get("format")}
+    for spec in query.get("measures", []):  # a format on the query's measure wins
+        if isinstance(spec, Mapping) and spec.get("format"):
+            formats[spec.get("as") or spec["field"]] = spec["format"]
+    columns: list[dict[str, Any]] = []
+    for c in compiled.columns:
+        column: dict[str, Any] = {
+            "name": c.name,
+            "type": c.type if c.type in _COLUMN_TYPES else "string",
+            "role": c.role,
+        }
+        if c.name in formats:
+            column["format"] = formats[c.name]
+        columns.append(column)
+    return columns
+
+
+def _byte_cap(rows: list[list[Any]], max_bytes: int) -> tuple[list[list[Any]], bool]:
+    """Keep the leading rows whose approximate JSON size fits; True when rows were cut."""
+    size = 2  # the enclosing brackets
+    for i, row in enumerate(rows):
+        size += len(json.dumps(row, default=str, separators=(",", ":"))) + 1
+        if size > max_bytes:
+            return rows[:i], True
+    return rows, False
 
 
 def _json(value: Any) -> Any:

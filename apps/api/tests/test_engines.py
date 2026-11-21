@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
+import types
 from typing import Any
 
 import pytest
 
 from tabfree_api.engines import (
     AthenaEngine,
+    DuckDBEngine,
     EngineError,
+    EngineTimeoutError,
+    ExecuteOptions,
     RedshiftDataEngine,
     athena_literal,
     engine_from_connection,
@@ -153,3 +158,104 @@ def test_literals_and_connection_dispatch() -> None:
     assert athena_literal("a'b") == "'a''b'"
     with pytest.raises(EngineError, match="no engine"):
         engine_from_connection({"engine": "trino", "catalog": "x"})
+
+
+# ---- P2.7: result reuse, bytes scanned, timeouts, workgroup per site ---------------------------
+
+
+class StatsAthena(FakeAthena):
+    def __init__(self, states: list[str], pages: list[dict[str, Any]], stats: dict[str, Any]) -> None:
+        super().__init__(states, pages)
+        self.stats = stats
+
+    def get_query_execution(self, **kwargs: Any) -> dict[str, Any]:
+        state = self.states.pop(0)
+        return {"QueryExecution": {"Status": {"State": state}, "Statistics": self.stats}}
+
+
+def test_athena_result_reuse_and_scanned_bytes() -> None:
+    fake = StatsAthena(
+        ["SUCCEEDED"],
+        [athena_page([["East", "3", "1.5", "2024-01-31", "true"]], header=True)],
+        {"DataScannedInBytes": 12_345, "ResultReuseInformation": {"ReusedPreviousResult": True}},
+    )
+    engine = AthenaEngine(database="lake", workgroup="wg", client=fake, poll_s=0)
+    options = ExecuteOptions(timeout_s=5, reuse_minutes=45, reuse_tag="abc123")
+    result = engine.execute(compiled("athena"), 10, options)
+    start = fake.calls[0][1]
+    assert start["ResultReuseConfiguration"] == {
+        "ResultReuseByAgeConfiguration": {"Enabled": True, "MaxAgeInMinutes": 45}
+    }
+    assert start["QueryString"] == "/* tabfree:abc123 */ SELECT 1"
+    assert "ResultConfiguration" not in start  # the workgroup owns the output location
+    assert result.scanned_bytes == 12_345
+    assert result.reused is True
+    with pytest.raises(ValueError, match="alphanumeric"):
+        engine.execute(compiled("athena"), 10, ExecuteOptions(reuse_minutes=1, reuse_tag="*/ DROP"))
+
+
+def test_athena_without_reuse_sends_the_plain_query() -> None:
+    fake = StatsAthena(["SUCCEEDED"], [athena_page([], header=True)], {"DataScannedInBytes": 0})
+    result = AthenaEngine(database="d", workgroup="w", client=fake, poll_s=0).execute(
+        compiled("athena"), 10, ExecuteOptions(reuse_minutes=0, reuse_tag="abc")
+    )
+    start = fake.calls[0][1]
+    assert start["QueryString"] == "SELECT 1"
+    assert "ResultReuseConfiguration" not in start
+    assert result.reused is False
+    assert result.scanned_bytes == 0
+
+
+def test_athena_timeout_from_options_cancels_and_reports_scanned_bytes() -> None:
+    slow = StatsAthena(["RUNNING"] * 100, [], {"DataScannedInBytes": 777})
+    engine = AthenaEngine(database="d", workgroup="w", client=slow, poll_s=0, timeout_s=999)
+    with pytest.raises(EngineTimeoutError, match="timed out") as raised:
+        engine.execute(compiled("athena"), 10, ExecuteOptions(timeout_s=0))
+    assert raised.value.scanned_bytes == 777
+    assert ("stop", {"QueryExecutionId": "q1"}) in slow.calls
+
+
+class SlowRedshift(FakeRedshift):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled: list[str] = []
+
+    def describe_statement(self, **kwargs: Any) -> dict[str, Any]:
+        return {"Status": "STARTED"}
+
+    def cancel_statement(self, **kwargs: Any) -> None:
+        self.cancelled.append(kwargs["Id"])
+
+
+def test_redshift_timeout_from_options_cancels_the_statement() -> None:
+    fake = SlowRedshift()
+    engine = RedshiftDataEngine(database="dev", workgroup="wg", client=fake, poll_s=0, timeout_s=999)
+    with pytest.raises(EngineTimeoutError):
+        engine.execute(compiled("redshift"), 10, ExecuteOptions(timeout_s=0))
+    assert fake.cancelled == ["s1"]
+
+
+def test_site_workgroup_wins_over_the_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    boto3 = types.SimpleNamespace(client=lambda service, region_name=None: object())
+    monkeypatch.setitem(sys.modules, "boto3", boto3)
+    connection = {"engine": "athena", "database": "lake", "workgroup": "model-wg"}
+    site = engine_from_connection(connection, athena_workgroup="site-wg")
+    plain = engine_from_connection(connection)
+    assert isinstance(site, AthenaEngine)
+    assert isinstance(plain, AthenaEngine)
+    assert (site.workgroup, plain.workgroup) == ("site-wg", "model-wg")
+
+
+def test_duckdb_timeout_interrupts_the_query() -> None:
+    duckdb = pytest.importorskip("duckdb")
+    engine = DuckDBEngine(duckdb.connect())
+    slow = CompiledQuery(
+        sql="SELECT count(*) FROM range(1000000000) a(i), range(1000000000) b(j) WHERE i + j = -1",
+        dialect="duckdb",
+        parameters=(),
+        named_parameters={},
+        columns=(OutputColumn("n", "measure", "integer"),),
+    )
+    with pytest.raises(EngineTimeoutError):
+        engine.execute(slow, 10, ExecuteOptions(timeout_s=0.2))
+    assert engine.execute(compiled("duckdb"), 10, ExecuteOptions(timeout_s=5)).rows == [[1]]

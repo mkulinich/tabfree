@@ -16,10 +16,12 @@ from typing import Any
 from tabfree_api.authz import (
     Capability,
     DashboardEntry,
+    ModelEntry,
     Principal,
     Project,
     SiteRole,
     decide,
+    decide_model,
     parse_rules,
 )
 
@@ -39,6 +41,18 @@ class SiteUser:
 
 
 @dataclass(frozen=True)
+class SiteQueryConfig:
+    """The site file's ``query`` section: per-site engine settings and cost guardrails.
+
+    ``None`` means "use the service-wide default from the settings".
+    """
+
+    athena_workgroup: str | None = None
+    daily_scan_budget_bytes: int | None = None
+    max_concurrent_queries: int | None = None
+
+
+@dataclass(frozen=True)
 class Bundle:
     manifest: Mapping[str, Any]
     html: str
@@ -52,8 +66,21 @@ class Site:
         if not isinstance(doc, Mapping):
             raise ContentError(f"{path}: not a site file")
         base = path.parent
+        self.id = str(doc.get("id", "default"))
+        if not _SLUG.match(self.id):
+            raise ContentError(f"invalid site id {self.id!r}")
         self.dashboards_dir = (base / doc["dashboards"]).resolve()
-        self.models_dir = (base / doc["models"]).resolve()
+        # ``models`` is the folder of *.model.yaml files, or {path, entries} with per-model settings.
+        models_section = doc["models"]
+        if isinstance(models_section, str):
+            models_section = {"path": models_section}
+        self.models_dir = (base / models_section["path"]).resolve()
+        query = doc.get("query") or {}
+        self.query = SiteQueryConfig(
+            athena_workgroup=query.get("athenaWorkgroup"),
+            daily_scan_budget_bytes=_optional_int(query.get("dailyScanBudgetBytes")),
+            max_concurrent_queries=_optional_int(query.get("maxConcurrentQueries")),
+        )
         self.default_role = SiteRole(doc.get("defaultSiteRole", "viewer"))
         self.projects: dict[str, Project] = {}
         self.dashboards: dict[str, DashboardEntry] = {}
@@ -86,6 +113,18 @@ class Site:
         for model_path in sorted(self.models_dir.glob("*.model.yaml")):
             model = load_document(model_path)
             self.models[str(model["id"])] = model
+        #: Model permissions and data versions. A model without an entry can be explored only by site
+        #: administrators (default deny).
+        self.model_entries: dict[str, ModelEntry] = {}
+        for m in models_section.get("entries", []):
+            if m["id"] not in self.models:
+                raise ContentError(f"the site file names an unknown model {m['id']!r}")
+            self.model_entries[m["id"]] = ModelEntry(
+                m["id"],
+                m.get("owner"),
+                parse_rules(m.get("permissions", [])),
+                str(m.get("dataVersion", "")),
+            )
 
     def site_role(self, username: str) -> SiteRole:
         user = self.users.get(username)
@@ -96,6 +135,17 @@ class Site:
         if entry is None:
             return False
         return decide(principal, capability, entry, self.projects[entry.project])
+
+    def can_model(self, principal: Principal, capability: Capability, model: str) -> bool:
+        if model not in self.models:
+            return False
+        entry = self.model_entries.get(model) or ModelEntry(model, None, ())
+        return decide_model(principal, capability, entry)
+
+    def data_version(self, model: str) -> str:
+        """The model's data version from the site file ("" when unset); extract refresh bumps it."""
+        entry = self.model_entries.get(model)
+        return entry.data_version if entry else ""
 
     def visible(self, principal: Principal) -> list[dict[str, str]]:
         """Dashboards the principal may view, for browse (permission-filtered listing)."""
@@ -118,3 +168,12 @@ class Site:
         folder = self.dashboards_dir / dashboard
         manifest = json.loads((folder / "tabfree.json").read_text(encoding="utf-8"))
         return Bundle(manifest, (folder / "index.html").read_text(encoding="utf-8"))
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    number = int(value)
+    if number < 0:
+        raise ContentError(f"expected a non-negative number, got {value!r}")
+    return number

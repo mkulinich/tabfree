@@ -16,12 +16,26 @@ uv run pytest apps/api
 | `auth.py` | OIDC sign-in (authorization code + PKCE, state bound to the browser, nonce, ID token checked against the provider's JWKS for issuer, audience and expiry) and server-side sessions (only SHA-256 hashes stored; cookies are HttpOnly, SameSite=Lax, and Secure on https). |
 | `authz.py` | Permission checks in ADR-006 order: site administrator, then the site-role ceiling, then owner or project leader, then a user rule, then a group deny, then a group allow; anything unspecified is denied. Locked projects apply their own rules to their dashboards. |
 | `content.py` | The site: projects, dashboards (bundles on disk), semantic models, users' site roles. Dev site: [`dev/site.yaml`](dev/site.yaml). |
-| `service.py` | The governed query service: binds dashboard state to the manifest, compiles with the viewer's identity (RLS), runs, caps rows, writes an audit line (never values). |
-| `engines.py` | DuckDB (local sample data), Athena (`ExecutionParameters`) and the Redshift Data API (named parameters). The AWS engines are unit-tested with fake clients only. |
-| `portal.py` | `/auth/*`, `/api/me`, `/api/dashboards[/{id}[/query|/domain]]`, `/runtime/*.js`, and the portal page. |
+| `service.py` | The governed query service: binds dashboard state to the manifest (or validates an explore query against the schema), compiles with the viewer's identity (RLS), checks the result cache and the site's guardrails, runs with a timeout, caps rows and bytes, and writes an audit line (never values). |
+| `cache.py` | Result cache keyed on `sha256(compiled SQL, typed bind values incl. RLS, model, connection, data version, today, caps)`; pluggable backend, in-memory LRU + TTL by default. |
+| `guardrails.py` | Per-site cost guardrails: bytes scanned per UTC day against a budget, and a semaphore on concurrent engine queries. Refusals are HTTP 429 with a `code`. |
+| `engines.py` | DuckDB (local sample data), Athena (`ExecutionParameters`, workgroup per site, result reuse, bytes scanned) and the Redshift Data API (named parameters). Timeouts cancel the engine query. The AWS engines are unit-tested with fake clients only. |
+| `portal.py` | `/auth/*`, `/api/me`, `/api/dashboards[/{id}[/query|/domain]]`, `/api/models/{model}/query`, `/runtime/*.js`, and the portal page. |
 | `preview.py` | `/preview`: the same dashboards with a user picker and no sign-in (dev only). |
 
 State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). Dashboards a viewer may not see return 404, not 403.
+
+## Query service (P2.7)
+
+**Explore API.** `POST /api/models/{model}/query` with `{"query": {"dimensions": [...], "measures": [...], "where": [...], "sort": [...], "limit": n}}` (the manifest schema's `query` definition; `model` comes from the URL). It needs the **Connect** capability on the model, granted in the site file's `models.entries[].permissions` (default deny; site roles below Explorer never get it; models return 404 to viewers without it). RLS applies from the viewer's session exactly as for dashboards. The response is `{columns, rows, truncated, meta: {cache, truncatedBy, scannedBytes}}`; dashboard query responses keep exactly `{columns, rows, truncated}` because the runtime checks that shape.
+
+**Result cache.** Two viewers share an entry only when the engine would receive the same SQL and the same bind values; RLS and user functions are bind values, so different RLS bindings never share. A model's `dataVersion` (site file; the refresh pipeline bumps it in P6.2) is in every key. Hits and misses are counted (`QueryService.stats`) and audited.
+
+**Athena.** One workgroup per site (site file `query.athenaWorkgroup`, else `TABFREE_ATHENA_WORKGROUPS`, else the model's). No output location is sent: the workgroup sets it. Result reuse is requested only for queries with no bind parameters (no RLS or filter values) unless `TABFREE_ATHENA_REUSE_WITH_PARAMETERS` is set, and the query text carries a hash of the data version so a refresh never reuses an old result.
+
+**Guardrails.** Each engine query is charged its bytes scanned (Athena's `DataScannedInBytes`, a configured estimate for Redshift, 0 for DuckDB) against the site's daily budget. Over budget, new engine queries get `429 {"code": "scan_budget_exceeded"}` with `Retry-After` until 00:00 UTC; cached results are still served. A per-site semaphore limits concurrent engine queries; a query that waits longer than the queue timeout gets `429 {"code": "too_many_queries"}`. A query past its timeout is cancelled on the engine and returns 504. The ledger is per process until Phase 3 moves it to shared storage.
+
+**Audit.** `query user=… dashboard=… query:… rows=… truncated=… cache=hit|miss|reuse scanned_bytes=… duration_ms=…` (explore: `model=… explore`); refusals log `refused=<code>`. Never values.
 
 ## Configuration (`TABFREE_*` environment variables)
 
@@ -34,6 +48,15 @@ State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). D
 | `TABFREE_OIDC_ISSUER`, `TABFREE_OIDC_CLIENT_ID`, `TABFREE_OIDC_CLIENT_SECRET` | — | Identity provider (Cognito, Okta, Entra ID, Keycloak…). |
 | `TABFREE_OIDC_USERNAME_CLAIM`, `TABFREE_OIDC_GROUPS_CLAIM` | `preferred_username`, `groups` | Claims for the username (RLS `USERNAME()`) and groups (permissions, `ISMEMBEROF()`). |
 | `TABFREE_DEV_LOGIN`, `TABFREE_PREVIEW` | off | Development helpers with no authentication. |
+| `TABFREE_QUERY_ROW_LIMIT`, `TABFREE_QUERY_MAX_BYTES` | `10000`, 16 MiB | Row cap and approximate JSON byte cap per result; more is cut off and flagged `truncated`. |
+| `TABFREE_QUERY_TIMEOUT_S` | `60` | Per-query timeout; the engine query is cancelled (504). |
+| `TABFREE_RESULT_CACHE_ENTRIES`, `TABFREE_RESULT_CACHE_TTL_S` | `2000`, `300` | In-memory result cache size (0 turns it off) and freshness. |
+| `TABFREE_ATHENA_RESULT_REUSE_MINUTES` | `60` | Athena result reuse maximum age (0 turns it off). |
+| `TABFREE_ATHENA_REUSE_WITH_PARAMETERS` | off | Also reuse for parameterized (RLS) queries; leave off until verified on real Athena (P2.10). |
+| `TABFREE_ATHENA_WORKGROUPS` | `{}` | JSON map of site id to Athena workgroup; the site file's `query.athenaWorkgroup` wins. |
+| `TABFREE_DAILY_SCAN_BUDGET_BYTES` | none | Default daily bytes-scanned budget per site; the site file's `query.dailyScanBudgetBytes` wins. |
+| `TABFREE_REDSHIFT_SCAN_ESTIMATE_BYTES` | 100 MiB | Bytes charged per Redshift query (the Data API does not report them). |
+| `TABFREE_MAX_CONCURRENT_QUERIES`, `TABFREE_QUEUE_TIMEOUT_S` | `20`, `10` | Concurrent engine queries per site (site file `query.maxConcurrentQueries` wins) and how long a query waits for a slot. |
 
 Never put the client secret in a file. Inject it from the secret store at start-up, for example:
 

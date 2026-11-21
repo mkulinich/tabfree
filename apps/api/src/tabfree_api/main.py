@@ -7,13 +7,16 @@ import functools
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from tabfree_api import __version__
 from tabfree_api.auth import OidcClient, SessionStore
+from tabfree_api.cache import MemoryResultCache, NoCache, ResultCache
 from tabfree_api.content import Site
 from tabfree_api.engines import DuckDBEngine, Engine, engine_from_connection
-from tabfree_api.service import QueryService
+from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
+from tabfree_api.service import QueryLimits, QueryService
 from tabfree_api.settings import Settings
 
 #: The sample data covers 2023 and 2024, so relative dates anchor at its end.
@@ -31,19 +34,56 @@ def _sample_engine() -> DuckDBEngine:
     return engine
 
 
-def _engines(settings: Settings) -> tuple[Any, dt.date | None]:
+def _engines(settings: Settings, site: Site) -> tuple[Any, dt.date | None]:
     if settings.engine == "sample":
         engine = _sample_engine()
         return (lambda _model: engine), SAMPLE_TODAY
+    # One Athena workgroup per site (ADR-007): the site file's, else the settings' mapping.
+    workgroup = site.query.athena_workgroup or settings.athena_workgroups.get(site.id)
     cache: dict[str, Engine] = {}
 
     def for_model(model: Mapping[str, Any]) -> Engine:
         key = repr(sorted(model["connection"].items()))
         if key not in cache:
-            cache[key] = engine_from_connection(model["connection"])
+            cache[key] = engine_from_connection(model["connection"], athena_workgroup=workgroup)
         return cache[key]
 
     return for_model, None
+
+
+def query_service(settings: Settings, site: Site, engine_for: Any) -> QueryService:
+    """The query service with the settings' caps, cache and the site's guardrails."""
+    limits = QueryLimits(
+        row_limit=settings.query_row_limit,
+        max_bytes=settings.query_max_bytes,
+        timeout_s=settings.query_timeout_s,
+        athena_reuse_minutes=settings.athena_result_reuse_minutes,
+        athena_reuse_with_parameters=settings.athena_reuse_with_parameters,
+        redshift_scan_estimate_bytes=settings.redshift_scan_estimate_bytes,
+    )
+    site_limits = SiteLimits(
+        daily_scan_budget_bytes=(
+            site.query.daily_scan_budget_bytes
+            if site.query.daily_scan_budget_bytes is not None
+            else settings.daily_scan_budget_bytes
+        ),
+        max_concurrent_queries=site.query.max_concurrent_queries or settings.max_concurrent_queries,
+        queue_timeout_s=settings.queue_timeout_s,
+    )
+    cache: ResultCache = (
+        MemoryResultCache(settings.result_cache_entries, settings.result_cache_ttl_s)
+        if settings.result_cache_entries
+        else NoCache()
+    )
+    return QueryService(
+        site.models,
+        engine_for,
+        site=site.id,
+        limits=limits,
+        cache=cache,
+        guardrails=Guardrails(lambda _site: site_limits),
+        data_version=site.data_version,
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -72,9 +112,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def version() -> dict[str, str]:
         return {"name": "tabfree-api", "version": __version__, "environment": config.environment}
 
+    @app.exception_handler(GuardrailError)
+    def guardrail_refused(_request: Request, exc: GuardrailError) -> JSONResponse:
+        headers = {"Retry-After": str(exc.retry_after_s)} if exc.retry_after_s else None
+        content = {"detail": exc.message, "code": exc.code}
+        return JSONResponse(status_code=429, content=content, headers=headers)
+
     site = Site(config.site_file)
-    engine_for, today = _engines(config)
-    service = QueryService(site.models, engine_for)
+    engine_for, today = _engines(config, site)
+    service = query_service(config, site, engine_for)
 
     from tabfree_api.portal import Context, create_router
 
