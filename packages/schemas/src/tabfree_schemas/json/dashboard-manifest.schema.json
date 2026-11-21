@@ -524,7 +524,7 @@
             "type": { "const": "filter" },
             "targets": { "$ref": "#/$defs/targets" },
             "fields": { "type": "array", "items": { "$ref": "#/$defs/fieldMapping" } },
-            "clear": { "enum": ["keep_filter", "show_all", "exclude_all"], "default": "keep_filter" }
+            "clear": { "enum": ["keep_filter", "show_all", "exclude_all"], "default": "show_all" }
           }
         },
         {

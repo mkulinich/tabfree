@@ -115,3 +115,12 @@ def test_sales_analysis_map_action_and_view_by(ctx: Any) -> None:
     by_segment = run(ctx, "sales-analysis", "by_view", {**EMPTY, "parameters": {"view_by": "Segment"}})
     assert set(column(by_segment, "Group")) == {"Consumer", "Corporate", "Home Office"}
     assert len(run(ctx, "sales-analysis", "top_products")["rows"]) == 10
+
+
+def test_top_products_rank_within_the_selected_state(ctx: Any) -> None:
+    """P1.15 pilot finding: a Top N filter ranked before the map's filter action left 0-3 rows."""
+    result = run(ctx, "sales-analysis", "top_products", by_state=[{"State": "Virginia"}])
+    sales = column(result, "Sales (Current)")
+    assert 0 < len(sales) <= 10
+    assert all(s is not None and s > 0 for s in sales)
+    assert sales == sorted(sales, reverse=True)

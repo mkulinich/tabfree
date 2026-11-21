@@ -173,6 +173,30 @@ describe("host and SDK", () => {
     expect(runQuery).toHaveBeenLastCalledWith(expect.objectContaining({ selections: {} }));
   });
 
+  it("keeps the last filter when an action says keep_filter", async () => {
+    const keep: Manifest = {
+      ...manifest,
+      actions: [{ type: "filter", source: ["by_region"], targets: ["trend"], fields: ["Region"], clear: "keep_filter" }],
+    };
+    let listener: ((e: MessageEvent) => void) | null = null;
+    const add = window.addEventListener.bind(window);
+    vi.spyOn(window, "addEventListener").mockImplementation(((type: string, fn: EventListener) => {
+      if (type === "message") listener = fn as (e: MessageEvent) => void;
+      add(type, fn);
+    }) as typeof window.addEventListener);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const runQuery = vi.fn<RunQuery>(async () => ({ columns: [], rows: [], truncated: false }));
+    host = mountDashboard({ container, manifest: keep, html: "", runtime: "", runQuery, runDomain: runQuery as never });
+    const client = await connectFrame(host, listener as unknown as (e: MessageEvent) => void);
+    client.select("by_region", [{ Region: "East" }]);
+    await flush();
+    client.select("by_region", []);
+    await flush();
+    await client.query("by_region");
+    expect(runQuery).toHaveBeenLastCalledWith(expect.objectContaining({ selections: { by_region: [{ Region: "East" }] } }));
+  });
+
   it("ignores hellos from other windows", async () => {
     const { host, listener } = setup();
     const post = vi.spyOn(host.iframe.contentWindow as Window, "postMessage");

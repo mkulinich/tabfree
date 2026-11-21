@@ -315,6 +315,8 @@ export function mountDashboard(options: MountOptions): DashboardHost {
         let changed = false;
         for (const action of actions) {
           if (action.type === "filter") {
+            // "Keep filtered values" (Tableau): clearing the selection leaves the last filter in place.
+            if (!message.tuples.length && action.clear === "keep_filter") continue;
             const current = selections[message.source] ?? [];
             const same =
               current.length === message.tuples.length && current.every((t, i) => sameTuple(t, message.tuples[i] ?? {}));

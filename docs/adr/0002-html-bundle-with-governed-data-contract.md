@@ -40,6 +40,7 @@ A dashboard is a bundle: the `tabfree.json` manifest (semantic model, parameters
 
 - **P1.15:** Claude rebuilds 20 corpus dashboards both ways, scored on validity, render success, data correctness, visual similarity, 10 scripted change requests and tokens used.
 - **Security tests (P4.5, P7.3):** messages from any other window are ignored; after the frame navigates, nothing reaches the new document; the scan flags navigation, `eval` and network calls in custom-JS fixtures; custom JS cannot publish without an audited human approval.
+- **2026-11-20, P1.15 pilot (HTML arm only, preliminary):** Claude agents completed 11 of 11 scripted edits on 3 dashboards. None used custom JS, every change went through the manifest, and each used roughly 30–40k tokens. The validator caught reference errors, but the pilot showed that semantic checks are needed before publishing, because Top N interacting with selections and defaults that return nothing both passed. The JSON-spec arm and the renderer comparison are still to do. See [p1-15-authoring-pilot.md](../research/notes/p1-15-authoring-pilot.md).
 - **Revisit if:** more than about 5% of in-use dashboards need custom JS (the research assumed 95% coverage), or edit tokens dominate AI cost (R6).
 
 ## References

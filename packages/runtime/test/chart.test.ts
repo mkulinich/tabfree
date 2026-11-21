@@ -93,3 +93,13 @@ describe("axis helpers", () => {
     expect(categoryFormatter(["2024-01-05"], col)("2024-01-05")).toBe("2024-01-05");
   });
 });
+
+describe("quarter labels", () => {
+  it("labels a quarterly series as quarters and a monthly one as months", () => {
+    const col = { name: "d", type: "datetime" as const };
+    const quarters = ["2023-01-01 00:00:00", "2023-04-01 00:00:00", "2023-07-01 00:00:00"];
+    expect(categoryFormatter(quarters, col)("2023-04-01 00:00:00")).toBe("2023 Q2");
+    const months = ["2023-01-01", "2023-02-01", "2023-03-01", "2023-04-01"];
+    expect(categoryFormatter(months, col)("2023-04-01")).toBe("Apr 2023");
+  });
+});

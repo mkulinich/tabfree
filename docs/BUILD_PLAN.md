@@ -303,7 +303,7 @@ tabfree/
   - for the top views by usage, filter and parameter permutations through `vf_<field>=` and `vf_Parameters.<name>=`
 
   **Do this early: this evidence is gone once Tableau is switched off.**
-- [ ] **P1.6** Inventory report covering:
+- [x] **P1.6** Inventory report covering:
   - a **construct census**: every calc function, LOD, table-calc type, mark type, filter type and action type counted across all `.twb` files, so the P0 backlog is sized from our own estate rather than vendor rubrics
   - counts and sizes
   - connection types, and which sources sit outside AWS
@@ -311,17 +311,17 @@ tabfree/
   - RLS usage and usage per view
   - a **complexity score** per workbook (LODs, table calcs, parameters and actions, blending, custom SQL, user functions, extensions, maps)
   - **triage**: migrate / rebuild / retire (e.g. retire anything with no views in 180 days, after owner confirmation)
-- [ ] **P1.7** Evaluate reuse, with a written decision for each:
+- [x] **P1.7** Evaluate reuse, with a written decision for each:
   - unshackle (Apache-2.0) as a base for the crawler and RLS/permission extraction
   - Preset's `tableau-to-preset` skill and Sigma's migration skills, for the conversion prompts
 
 *Track B: vertical slice (3 dashboards from the inventory: one with an LOD, one with table calcs, one with a map and actions)*
-- [ ] **P1.8** Minimal TWB parser → IR for those workbooks.
+- [x] **P1.8** Minimal TWB parser → IR for those workbooks.
 - [ ] **P1.9** `.hyper` → Parquet (Hyper `COPY ... TO` S3) → Iceberg through Athena CTAS → Glue. Row-count and aggregate parity checks.
-- [ ] **P1.10** Hand-written semantic models and named queries, and a minimal compiler path (dimensions, measures, categorical and date filters) on Athena.
-- [ ] **P1.11** Minimal runtime: sandboxed iframe, postMessage bridge, `tf-chart`, `tf-filter`, `tf-crosstab`.
+- [x] **P1.10** Hand-written semantic models and named queries, and a minimal compiler path (dimensions, measures, categorical and date filters) on Athena.
+- [x] **P1.11** Minimal runtime: sandboxed iframe, postMessage bridge, `tf-chart`, `tf-filter`, `tf-crosstab`.
 - [ ] **P1.12** Claude Code recreates the three dashboards as HTML from IR + PNG (a manual loop for now).
-- [ ] **P1.13** Minimal API: OIDC login, two users with different permissions, one RLS rule.
+- [x] **P1.13** Minimal API: OIDC login, two users with different permissions, one RLS rule.
 
 *Track C: decision spikes (time-boxed, results recorded as ADR updates)*
 - [ ] **P1.14** Superset spike (3 days), with two falsifiable questions:
@@ -337,6 +337,24 @@ tabfree/
 
   The result confirms or revises ADR-002.
 - [ ] **P1.16** First Athena vs Redshift Serverless latency probe on real converted extracts (cold, warm, concurrent), feeding P2.10.
+
+**Phase 1 status (2026-11-20).** Everything that runs without our Tableau Server or an AWS account is built and tested (`make check`). The rest waits for the server (held back until the platform is mostly built) or for an AWS go-ahead.
+
+| Task | Status |
+|---|---|
+| P1.1 crawler | Built (`tabfree-migrate crawl`); tested against fakes, not yet run on our server. |
+| P1.2–P1.5 harvests, downloads, ground truth | Built (`harvest-metadata`, `harvest-repository`, `download`, `capture`); tested against fakes. Metadata API field names and repository tables need checking on the live server. |
+| P1.6 inventory report | Done (`tabfree-migrate report`). Over the public corpus: 96 workbooks, 85 migrate / 11 rebuild, 56 of 156 connections outside AWS, 26 workbooks with RLS functions; regex functions are the top compiler gap. |
+| P1.7 reuse | Done: borrow ideas, adopt nothing ([notes](research/notes/p1-7-reuse-evaluation.md)). |
+| P1.8 parser | Done: all 123 corpus files parse to schema-valid IR. |
+| P1.9 Hyper → Iceberg | Built; the Hyper test runs only in the Linux CI job. The Athena CTAS step needs AWS. |
+| P1.10 compiler | Done: 771/779 TDVT on DuckDB; SQL parses for Athena, Redshift and Trino ([ADR-012](adr/0012-hand-written-calc-parser.md) proposed). |
+| P1.11 runtime | Done: sandbox, bridge, SDK, `tf-chart/crosstab/kpi/map/filter/parameter`. |
+| P1.12 recreations | Done on corpus workbooks with Superstore data ([notes](migrations/p1-12-recreations.md)); repeat on three dashboards from our server with PNG/CSV ground truth. |
+| P1.13 API | Done: OIDC + PKCE, sessions, ADR-006 permission order, governed query API with RLS. |
+| P1.14 Superset spike | Desk phase done: both questions fail ([notes](research/notes/p1-14-superset-spike.md)). Hands-on (~1.5 days) still to do. |
+| P1.15 authoring eval | Pilot of the HTML arm done: 11/11 edits ([notes](research/notes/p1-15-authoring-pilot.md)). The JSON-spec arm, renderer comparison and semantic checker are still to do. |
+| P1.16 latency probe | Harness built (`python -m tabfree_api.probe`); needs AWS. |
 
 **Milestone M1, "We know the estate, and the idea works":**
 - Decisions from P1.14–P1.16 are recorded in the ADRs.

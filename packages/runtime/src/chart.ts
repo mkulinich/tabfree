@@ -292,10 +292,22 @@ export function categoryFormatter(values: readonly Scalar[], column: Column): (v
   const firstOfMonth = dates.every((v) => v.slice(8, 10) === "01");
   const firstOfYear = firstOfMonth && dates.every((v) => v.slice(5, 7) === "01") && dates.length > 1;
   if (firstOfYear) return (v) => (typeof v === "string" ? v.slice(0, 4) : formatValue(v, column));
+  const quarterStarts = firstOfMonth && dates.every((v) => ["01", "04", "07", "10"].includes(v.slice(5, 7)));
+  const spaced = new Set(dates.map((v) => v.slice(0, 7))).size === dates.length && dates.length > 1;
+  // Quarter starts that are never adjacent months: a quarterly series (a monthly one has Feb, Mar…).
+  if (quarterStarts && spaced && !dates.some((v, i) => i > 0 && monthGap(dates[i - 1] ?? v, v) === 1)) {
+    return (v) =>
+      typeof v === "string" ? `${v.slice(0, 4)} Q${Math.floor((Number(v.slice(5, 7)) - 1) / 3) + 1}` : formatValue(v, column);
+  }
   if (firstOfMonth) {
     return (v) => (typeof v === "string" ? `${MONTHS[Number(v.slice(5, 7)) - 1] ?? "?"} ${v.slice(0, 4)}` : formatValue(v, column));
   }
   return (v) => formatValue(v, column);
+}
+
+function monthGap(a: string, b: string): number {
+  const index = (v: string) => Number(v.slice(0, 4)) * 12 + Number(v.slice(5, 7));
+  return Math.abs(index(b) - index(a));
 }
 
 function renderScatter(

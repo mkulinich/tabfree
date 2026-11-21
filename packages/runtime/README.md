@@ -36,6 +36,24 @@ Attributes name queries, filters and parameters from `tabfree.json`, and output 
 - **Colour:** `color` takes a dimension (one series each, with a legend) or a measure (shaded marks).
 - **Interaction:** clicking a mark or a table row reports a selection, and the host runs the manifest's filter and highlight actions. Clicking it again clears the selection.
 
+### Component reference
+
+| Element | Attributes |
+|---|---|
+| `<tf-dashboard>` | The root element. It applies the theme and resizes the frame to fit. |
+| `<tf-chart>` | `query`; `mark` = `bar` \| `line` \| `area` \| `point`; `x` and `y` (output columns, table-calc outputs included); optional `color` (a dimension gives series, a measure gives shading); `height` (px); `title`. Bars and points follow the query's row order, so sort in the query. |
+| `<tf-crosstab>` | `query`, `max-rows` (default 1000), `title`. Click a header to sort; click a row to select its dimensions. |
+| `<tf-kpi>` | `query`, `measure`, optional `label` and `change`. `change` names a ratio column, shown as ▲ above +2%, ▼ below −2% and ■ in between, always as `0.0%`. |
+| `<tf-map>` | `query`, `geo` (a state column: names or postal codes), `color` (a measure), `title`. Click a state to select it. |
+| `<tf-filter>` | `name` (a filter in `tabfree.json`); `control` = `dropdown` (one member) \| `checklist` (several). Relative-date, range and wildcard filters pick their own control. |
+| `<tf-parameter>` | `name`. A list gives a dropdown, a range gives a slider, and anything else gives an input box. |
+
+**Gotchas from the P1.15 pilot:**
+- **Top N and selections:** a `top_n` filter ranks before dimension filters and filter actions, as in Tableau, so "top 10 within the clicked state" needs `sort` + `limit`, or a context filter.
+- **Filters and FIXED LODs:** filters that FIXED LODs or Top N should respect need `"context": true`.
+- **`appliesTo`:** it is `"all"` or an explicit list of queries; there is no "all except".
+- **Filter actions:** `fields` names output columns of the source query (as `source`) and model fields (as `target`). With `clear: "show_all"` (the default), clearing a selection removes the filter; `keep_filter` keeps it.
+
 Try it locally with the example dashboard and generated data:
 
 ```bash

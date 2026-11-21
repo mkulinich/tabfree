@@ -77,3 +77,14 @@ def test_cli_checks_bundle_directories(tmp_path: Path, capsys: pytest.CaptureFix
     (bad / "index.html").write_text('<tf-kpi query="kpis" measure="Nope"></tf-kpi>', encoding="utf-8")
     assert main([str(bad)]) == 1
     assert 'measure="Nope"' in capsys.readouterr().out
+
+
+def test_controls_and_action_fields_are_checked() -> None:
+    report = check_bundle(MANIFEST, '<tf-filter name="region" control="chekclist"></tf-filter>')
+    assert any("control='chekclist'" in e for e in report.errors)
+    bad_action = {
+        **MANIFEST,
+        "actions": [{**MANIFEST["actions"][0], "fields": [{"source": "Grp", "target": "Region"}]}],
+    }
+    report = check_bundle(bad_action, "")
+    assert any("'Grp' is not an output of the source query" in e for e in report.errors)

@@ -37,7 +37,11 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "tf-filter": ("name",),
     "tf-parameter": ("name",),
 }
-ENUMS = {("tf-chart", "mark"): {"bar", "line", "area", "point"}}
+ENUMS = {
+    ("tf-chart", "mark"): {"bar", "line", "area", "point"},
+    ("tf-filter", "control"): {"dropdown", "checklist", "relative-date", "range", "wildcard"},
+    ("tf-parameter", "control"): {"slider", "dropdown", "input"},
+}
 
 #: Patterns a reviewer must look at in custom JS (navigation and network are how a frame leaks data).
 RISKY_JS = {
@@ -144,6 +148,15 @@ def check_bundle(manifest: Mapping[str, Any], html: str) -> BundleReport:
                     )
             elif value not in declared[kind]:
                 report.errors.append(f'{where}: {attr}="{value}" is not a {kind} declared in tabfree.json')
+    for i, action in enumerate(manifest.get("actions", [])):
+        sources = list(queries) if action.get("source") == "all" else action.get("source", [])
+        for mapping in action.get("fields", []):
+            source_field = mapping if isinstance(mapping, str) else mapping.get("source")
+            if not any(source_field in query_outputs(queries[q]) for q in sources if q in queries):
+                report.errors.append(
+                    f"tabfree.json: actions[{i}].fields: {source_field!r} is not an output of the source "
+                    "query, so a selection never carries it"
+                )
     for item in parser.external:
         report.errors.append(f"index.html: {item} (dashboards cannot load anything from the network)")
     for attrs, code in parser.scripts:
