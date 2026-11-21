@@ -144,6 +144,21 @@ def test_group_minimum_role_and_sign_in_resolution(site: DbSite) -> None:
     assert "newcomer" in site.users
 
 
+def test_sessions_and_pats_carry_email_and_attributes(site: DbSite, engine: Engine) -> None:
+    site.ensure_user("alice", email="alice@example.com", attributes={"region": "East"})
+    store = DbSessionStore(engine, site.id)
+    token = store.create(
+        "alice", "Alice", frozenset(), SiteRole.VIEWER, 60, email="a@x.test", attributes={"region": "West"}
+    )
+    info = store.get(token)
+    assert info is not None
+    assert (info.email, dict(info.attributes)) == ("a@x.test", {"region": "West"})
+    assert info.principal().attributes == {"region": "West"}
+    pat = store.get(store.create_pat("alice", "rls"))
+    assert pat is not None
+    assert (pat.email, dict(pat.attributes)) == ("alice@example.com", {"region": "East"})
+
+
 def test_sessions_and_flows(site: DbSite, engine: Engine) -> None:
     store = DbSessionStore(engine, site.id)
     token = store.create("alice", "Alice", frozenset({"Managers"}), SiteRole.VIEWER, 3600)

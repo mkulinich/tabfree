@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     oidc_scopes: str = "openid email profile"
     oidc_username_claim: str = "preferred_username"
     oidc_groups_claim: str = "groups"
+    #: ID-token claims copied into user attributes for RLS (``USERATTRIBUTE('region')``), e.g. ["region"].
+    oidc_attribute_claims: list[str] = Field(default_factory=list)
 
     #: Sign in as any site-file user without a password. Development only.
     dev_login: bool = False

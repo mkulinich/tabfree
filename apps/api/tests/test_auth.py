@@ -217,3 +217,20 @@ def test_sessions_store_only_hashes_and_expire(tmp_path: Path) -> None:
     store.delete(token)
     assert store.get(token) is None
     assert store.get("x" * 500) is None
+
+
+def test_attribute_claims_become_user_attributes(client: TestClient, idp: FakeIdP) -> None:
+    """P3.4: listed ID-token claims feed USERATTRIBUTE (lists comma-joined for USERATTRIBUTEINCLUDES)."""
+    oidc = client.app.state.context.oidc  # type: ignore[attr-defined]
+    oidc.attribute_claims = ("region", "cost_centres", "missing")
+    idp.claims = {
+        "preferred_username": "alice",
+        "email": "alice@example.com",
+        "region": "East",
+        "cost_centres": ["C1", "C2"],
+    }
+    idp.nonce, verifier = "n-1", "v" * 50
+    idp.challenge = pkce_challenge(verifier)
+    identity = oidc.exchange("good-code", "n-1", verifier)
+    assert identity.attributes == {"region": "East", "cost_centres": "C1,C2"}
+    assert identity.email == "alice@example.com"

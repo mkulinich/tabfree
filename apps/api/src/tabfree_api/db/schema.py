@@ -79,6 +79,8 @@ users = Table(
     Column("disabled", Boolean, nullable=False, server_default=false()),
     Column("created_at", Timestamp, nullable=False),
     Column("last_sign_in_at", Timestamp),
+    #: Admin-set user attributes for RLS (USERATTRIBUTE); identity-provider claims override them.
+    Column("attributes", Document, nullable=False, default=dict),
     CheckConstraint(_in("auth_source", ("idp", "local")), name="auth_source"),
 )
 
@@ -215,6 +217,9 @@ sessions = Table(
     #: Group names at sign-in (identity provider claim plus local memberships).
     Column("groups", Document, nullable=False),
     Column("site_role", String(32), nullable=False),
+    Column("email", String(320), nullable=False, server_default=""),
+    #: User attributes at sign-in (RLS ``USERATTRIBUTE``).
+    Column("attributes", Document, nullable=False, default=dict),
     Column("created_at", Timestamp, nullable=False),
     Column("expires_at", Timestamp, nullable=False, index=True),
 )

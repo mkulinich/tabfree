@@ -62,11 +62,22 @@ class Relationship:
 
 
 @dataclass(frozen=True)
+class Entitlement:
+    """A row is visible when the viewer has a matching row in an entitlement table (P3.4)."""
+
+    table: str  # a model table id (not joined to the others)
+    user_column: str
+    match_on: str  # username | email | group
+    keys: tuple[tuple[str, str], ...]  # (model field name, entitlement table column)
+
+
+@dataclass(frozen=True)
 class RlsPolicy:
     id: str
     filter: str | None
     exempt_groups: frozenset[str]
     exempt_users: frozenset[str]
+    entitlement: Entitlement | None = None
 
 
 @dataclass
@@ -124,18 +135,28 @@ class SemanticModel:
             p["id"]: Parameter(p["id"], p["name"], p["type"], p.get("default"))
             for p in doc.get("parameters", [])
         }
-        rls = [
-            RlsPolicy(
-                p["id"],
-                p.get("filter"),
-                frozenset((p.get("exempt") or {}).get("groups", [])),
-                frozenset((p.get("exempt") or {}).get("users", [])),
-            )
-            for p in doc.get("rls", [])
-        ]
+        rls = []
         for p in doc.get("rls", []):
-            if "entitlement" in p and not p.get("filter"):
-                raise UnsupportedError(f"RLS policy {p['id']!r}: entitlement tables are not supported yet")
+            ent = p.get("entitlement")
+            entitlement = None
+            if ent:
+                if ent["table"] not in tables:
+                    raise CompileError(f"RLS policy {p['id']!r}: unknown entitlement table {ent['table']!r}")
+                entitlement = Entitlement(
+                    ent["table"],
+                    ent["userColumn"],
+                    ent.get("matchOn", "username"),
+                    tuple((k["field"], k["column"]) for k in ent["keys"]),
+                )
+            rls.append(
+                RlsPolicy(
+                    p["id"],
+                    p.get("filter"),
+                    frozenset((p.get("exempt") or {}).get("groups", [])),
+                    frozenset((p.get("exempt") or {}).get("users", [])),
+                    entitlement,
+                )
+            )
         model = cls(
             id=doc["id"],
             connection=doc.get("connection", {}),

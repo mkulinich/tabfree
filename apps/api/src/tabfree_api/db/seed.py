@@ -48,7 +48,13 @@ def import_site(engine: Engine, site: Site, *, by: str | None = None) -> DbSite:
     db = create_site(engine, site.id, site.id, default_site_role=site.default_role.value, settings=settings)
     members: dict[str, list[str]] = {}
     for user in site.users.values():
-        db.ensure_user(user.username, user.fullname, user.site_role)
+        db.ensure_user(
+            user.username,
+            user.fullname,
+            user.site_role,
+            email=user.email or None,
+            attributes=user.attributes or None,
+        )
         for group in user.groups:
             members.setdefault(group, []).append(user.username)
     for group, usernames in sorted(members.items()):

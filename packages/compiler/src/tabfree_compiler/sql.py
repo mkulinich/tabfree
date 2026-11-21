@@ -87,6 +87,7 @@ class Session:
     username: str = ""
     fullname: str = ""
     domain: str = ""
+    email: str = ""
     groups: frozenset[str] = frozenset()
     attributes: Mapping[str, str] = field(default_factory=dict)
     today: dt.date | None = None  # anchor for relative dates; None means the engine's current date
@@ -227,6 +228,10 @@ def _col(table: str | None, name: str) -> exp.Column:
     return exp.Column(this=_ident(name), table=_ident(table) if table else None)
 
 
+def _field_ref(name: str) -> str:
+    return "[" + name.replace("]", "]]") + "]"
+
+
 def _validated(name: str, what: str) -> str:
     if not _IDENTIFIER.match(name):
         raise CompileError(f"invalid {what} identifier {name!r}")
@@ -319,6 +324,9 @@ class _Planner:
             if spec.get("topN"):
                 everything.append(self.model.expand_formula(spec["topN"]["by"]))
         everything += rls + [self.model.expand_formula(f) for f in self.model.data_source_filters]
+        entitlements = self._entitlements()
+        for ent in entitlements:
+            everything += [self.model.expand_formula(_field_ref(name)) for name, _ in ent.keys]
         for node in everything:
             self._register_columns(node)
         self._build_src()
@@ -329,6 +337,7 @@ class _Planner:
             self._row(self.model.expand_formula(f), base_scope).e for f in self.model.data_source_filters
         ]
         conditions += [self._row(n, base_scope).e for n in rls]
+        conditions += [self._entitlement(ent, i, base_scope) for i, ent in enumerate(entitlements)]
         conditions += [self._filter_condition(n, spec, base_scope) for n, spec in context]
         self._add_cte("base", self._select_star(base_scope, conditions))
 
@@ -602,10 +611,46 @@ class _Planner:
                 dimension.append((target, spec))
         return context, dimension, measure
 
+    def _applies(self, policy: Any) -> bool:
+        exempt = self.session.groups & policy.exempt_groups or self.session.username in policy.exempt_users
+        return not exempt
+
+    def _entitlements(self) -> list[Any]:
+        return [p.entitlement for p in self.model.rls if p.entitlement is not None and self._applies(p)]
+
+    def _entitlement(self, ent: Any, i: int, scope: _RowScope) -> exp.Expr:
+        """``EXISTS (SELECT 1 FROM entitlements e WHERE e.user = :viewer AND e.key = row.key ...)``."""
+        alias = f"ent{i}"
+        user_col = _col(alias, _validated(ent.user_column, "column"))
+        who: exp.Expr
+        if ent.match_on == "group":
+            groups = sorted(self.session.groups)
+            if not groups:
+                return exp.false()
+            who = exp.In(this=user_col, expressions=[self._bind(g, "string").e for g in groups])
+        else:
+            value = self.session.username if ent.match_on == "username" else self.session.email
+            if not value:
+                return exp.false()
+            who = exp.EQ(this=user_col, expression=self._bind(value, "string").e)
+        keys: list[exp.Expr] = [
+            exp.EQ(
+                this=_col(alias, _validated(column, "column")),
+                expression=self._row(self.model.expand_formula(_field_ref(name)), scope).e,
+            )
+            for name, column in ent.keys
+        ]
+        sub = (
+            exp.select(exp.Literal.number(1))
+            .from_(self._table_ref(ent.table, alias))
+            .where(exp.and_(who, *keys))
+        )
+        return exp.Exists(this=sub)
+
     def _rls_conditions(self) -> list[Node]:
         out = []
         for policy in self.model.rls:
-            if self.session.groups & policy.exempt_groups or self.session.username in policy.exempt_users:
+            if not self._applies(policy):
                 continue
             if policy.filter:
                 node = self.model.expand_formula(policy.filter)

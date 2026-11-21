@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -38,6 +38,9 @@ class SiteUser:
     fullname: str
     site_role: SiteRole
     groups: frozenset[str]
+    #: Admin-set attributes for RLS (``USERATTRIBUTE``); identity-provider claims override them.
+    attributes: Mapping[str, str] = field(default_factory=dict)
+    email: str = ""
 
 
 @dataclass(frozen=True)
@@ -140,6 +143,8 @@ class Site:
                 u.get("fullname", u["username"]),
                 SiteRole(u.get("siteRole", self.default_role)),
                 frozenset(u.get("groups", [])),
+                {str(k): str(v) for k, v in (u.get("attributes") or {}).items()},
+                str(u.get("email", "")),
             )
             for u in doc.get("users", [])
         }

@@ -178,7 +178,14 @@ class DbSite:
             ).mappings():
                 groups = frozenset(memberships.get(u["id"], set()))
                 role = max_role(SiteRole(u["site_role"]), *(minimum[g] for g in groups if g in minimum))
-                users[u["username"]] = SiteUser(u["username"], u["fullname"] or u["username"], role, groups)
+                users[u["username"]] = SiteUser(
+                    u["username"],
+                    u["fullname"] or u["username"],
+                    role,
+                    groups,
+                    dict(u["attributes"] or {}),
+                    u["email"] or "",
+                )
         settings = site["settings"] or {}
         return _Snapshot(
             time.monotonic(),
@@ -378,6 +385,7 @@ class DbSite:
         *,
         email: str | None = None,
         auth_source: str = "idp",
+        attributes: Mapping[str, str] | None = None,
     ) -> str:
         """The user's id; creates the user, and their membership of this site, when missing."""
         with self.engine.begin() as conn:
@@ -391,9 +399,18 @@ class DbSite:
                         fullname=fullname,
                         email=email,
                         auth_source=auth_source,
+                        attributes=dict(attributes or {}),
                         created_at=now(),
                     )
                 )
+            else:
+                changes: dict[str, Any] = {}
+                if attributes is not None:
+                    changes["attributes"] = dict(attributes)
+                if email is not None:
+                    changes["email"] = email
+                if changes:
+                    conn.execute(update(t.users).where(t.users.c.id == uid).values(changes))
             exists = conn.execute(
                 select(t.site_users.c.site_role).where(
                     t.site_users.c.site_id == self.id, t.site_users.c.user_id == uid
@@ -735,7 +752,15 @@ class DbSessionStore:
         return str(uid)
 
     def create(
-        self, username: str, fullname: str, groups: frozenset[str], role: SiteRole, ttl_s: float
+        self,
+        username: str,
+        fullname: str,
+        groups: frozenset[str],
+        role: SiteRole,
+        ttl_s: float,
+        *,
+        email: str = "",
+        attributes: Mapping[str, str] | None = None,
     ) -> str:
         token = secrets.token_urlsafe(32)
         when = now()
@@ -749,6 +774,8 @@ class DbSessionStore:
                     fullname=fullname,
                     groups=sorted(groups),
                     site_role=role.value,
+                    email=email,
+                    attributes=dict(attributes or {}),
                     created_at=when,
                     expires_at=when + dt.timedelta(seconds=ttl_s),
                 )
@@ -778,6 +805,8 @@ class DbSessionStore:
             frozenset(row["groups"]),
             SiteRole(row["site_role"]),
             _aware(row["expires_at"]).timestamp(),
+            row["email"] or "",
+            dict(row["attributes"] or {}),
         )
 
     def delete(self, token: str | None) -> None:
@@ -886,7 +915,15 @@ class DbSessionStore:
         user = site.users.get(username)
         if user is None:
             return None
-        return SessionInfo(username, fullname or username, user.groups, user.site_role, expires.timestamp())
+        return SessionInfo(
+            username,
+            fullname or username,
+            user.groups,
+            user.site_role,
+            expires.timestamp(),
+            user.email,
+            dict(user.attributes),
+        )
 
     def list_pats(self, username: str) -> list[dict[str, Any]]:
         p = t.personal_access_tokens

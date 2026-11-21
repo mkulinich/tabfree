@@ -155,6 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             scopes=config.oidc_scopes,
             username_claim=config.oidc_username_claim,
             groups_claim=config.oidc_groups_claim,
+            attribute_claims=tuple(config.oidc_attribute_claims),
         )
     app.state.context = Context(config, site, sessions, service, oidc, today, accounts=accounts, audit=audit)
     app.include_router(create_router(app.state.context))

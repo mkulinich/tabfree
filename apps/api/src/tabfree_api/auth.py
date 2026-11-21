@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -107,9 +107,12 @@ class SessionInfo:
     groups: frozenset[str]
     site_role: SiteRole
     expires: float
+    email: str = ""
+    #: User attributes for RLS (``USERATTRIBUTE``): identity-provider claims and admin-set values.
+    attributes: Mapping[str, str] = field(default_factory=dict)
 
     def principal(self) -> Principal:
-        return Principal(self.username, self.groups, self.site_role, self.fullname)
+        return Principal(self.username, self.groups, self.site_role, self.fullname, self.attributes)
 
 
 def _digest(token: str) -> str:
@@ -136,8 +139,17 @@ class SessionStore:
             )
 
     def create(
-        self, username: str, fullname: str, groups: frozenset[str], role: SiteRole, ttl_s: float
+        self,
+        username: str,
+        fullname: str,
+        groups: frozenset[str],
+        role: SiteRole,
+        ttl_s: float,
+        *,
+        email: str = "",
+        attributes: Mapping[str, str] | None = None,
     ) -> str:
+        """A session. The SQLite store (Phase 1 mode) does not keep email or attributes."""
         token = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock, self._con:
@@ -212,6 +224,7 @@ class Identity:
     fullname: str
     email: str | None
     groups: frozenset[str]
+    attributes: Mapping[str, str] = field(default_factory=dict)
 
 
 class OidcClient:
@@ -225,6 +238,7 @@ class OidcClient:
         scopes: str = "openid email profile",
         username_claim: str = "preferred_username",
         groups_claim: str = "groups",
+        attribute_claims: tuple[str, ...] = (),
         http: Http | None = None,
     ) -> None:
         self.issuer = issuer.rstrip("/")
@@ -234,6 +248,7 @@ class OidcClient:
         self.scopes = scopes
         self.username_claim = username_claim
         self.groups_claim = groups_claim
+        self.attribute_claims = attribute_claims
         self._http = http or UrllibHttp()
         self._discovery: Mapping[str, Any] | None = None
         self._jwks: jwt.PyJWKSet | None = None
@@ -315,6 +330,11 @@ class OidcClient:
             fullname=str(claims.get("name") or username),
             email=str(claims["email"]) if claims.get("email") else None,
             groups=frozenset(str(g) for g in groups),
+            attributes={
+                claim: ",".join(map(str, value)) if isinstance(value, list) else str(value)
+                for claim in self.attribute_claims
+                if (value := claims.get(claim)) is not None
+            },
         )
 
 

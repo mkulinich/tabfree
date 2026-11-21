@@ -133,7 +133,31 @@ def create_router(ctx: Context) -> APIRouter:
             raise HTTPException(403, "missing the X-TabFree-Request header")
 
     def viewer_session(info: SessionInfo) -> Session:
-        return Session(username=info.username, fullname=info.fullname, groups=info.groups, today=ctx.today)
+        return Session(
+            username=info.username,
+            fullname=info.fullname,
+            email=info.email,
+            groups=info.groups,
+            attributes=dict(info.attributes),
+            today=ctx.today,
+        )
+
+    def new_session(username: str, fullname: str, groups: frozenset[str], role: SiteRole, **idp: Any) -> str:
+        """A session with the user's attributes: admin-set ones, overridden by identity-provider claims."""
+        user = ctx.site.users.get(username)
+        attributes = {**(user.attributes if user else {}), **(idp.get("attributes") or {})}
+        email = idp.get("email") or (user.email if user else "")
+        return str(
+            ctx.sessions.create(
+                username,
+                fullname,
+                groups,
+                role,
+                settings.session_hours * 3600,
+                email=email,
+                attributes=attributes,
+            )
+        )
 
     def require_view(info: SessionInfo, dashboard: str) -> None:
         # 404, not 403, so viewers cannot probe which dashboards exist.
@@ -193,7 +217,9 @@ def create_router(ctx: Context) -> APIRouter:
         if role is SiteRole.UNLICENSED:
             ctx.audit("sign_in", identity.username, "deny", method="oidc", reason="unlicensed")
             raise HTTPException(403, "your account has no license on this site")
-        token = ctx.sessions.create(identity.username, fullname, groups, role, settings.session_hours * 3600)
+        token = new_session(
+            identity.username, fullname, groups, role, email=identity.email, attributes=identity.attributes
+        )
         ctx.audit("sign_in", identity.username, method="oidc")
         response = RedirectResponse(return_to, status_code=303)
         set_session_cookie(response, token)
@@ -225,7 +251,7 @@ def create_router(ctx: Context) -> APIRouter:
         if site_user is None:
             raise HTTPException(400, "unknown user")
         fullname, groups, role = ctx.site.resolve(site_user.username, site_user.fullname, frozenset())
-        token = ctx.sessions.create(site_user.username, fullname, groups, role, settings.session_hours * 3600)
+        token = new_session(site_user.username, fullname, groups, role)
         ctx.audit("sign_in", site_user.username, method="dev")
         response = RedirectResponse("/", status_code=303)
         set_session_cookie(response, token)
@@ -262,7 +288,7 @@ def create_router(ctx: Context) -> APIRouter:
         if role is SiteRole.UNLICENSED:
             ctx.audit("sign_in", username, "deny", method="local", reason="unlicensed")
             raise HTTPException(403, "your account has no license on this site")
-        token = ctx.sessions.create(username, fullname, groups, role, settings.session_hours * 3600)
+        token = new_session(username, fullname, groups, role)
         ctx.audit("sign_in", username, method="local")
         response = RedirectResponse("/", status_code=303)
         set_session_cookie(response, token)
