@@ -98,7 +98,12 @@ def test_permissions_dialog(app: Any) -> None:
     admin, erin = as_user(app, "admin"), as_user(app, "erin")
     project = admin.get("/api/permissions/project/sales").json()
     assert project["assetPermissions"] == "locked"
-    assert {r["group"] for r in project["defaults"]["dashboard"]} == {"Executives", "Managers", "Contractors"}
+    assert {r["group"] for r in project["defaults"]["dashboard"]} == {
+        "Executives",
+        "Managers",
+        "Contractors",
+        "Authors",
+    }
     assert erin.get("/api/permissions/project/sales").status_code == 404
     # Locked project: the dashboard's own rules cannot change.
     locked = admin.put(

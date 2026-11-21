@@ -511,7 +511,7 @@ tabfree/
 
 **Goal:** users change dashboards on the fly, and developers author them from Claude Code.
 
-- [ ] **P4.1** TabFree MCP server (Streamable HTTP, OAuth 2.1, tokens issued on behalf of the user):
+- [x] **P4.1** TabFree MCP server (Streamable HTTP, OAuth 2.1, tokens issued on behalf of the user):
   - **Read:** `list_content`, `search_content`, `describe_model` (fields, plus sample values fenced as untrusted).
   - **Query:** `run_governed_query` (semantic queries only).
   - **Dashboard edits:** `get_dashboard`, `create_dashboard`, `edit_dashboard_files` (patch-style).
@@ -519,7 +519,7 @@ tabfree/
   - **Publishing:** `request_publish` / `confirm_publish`.
   - **History:** `list_revisions`, `diff_revisions`.
   - **Docs:** `learn(topic)` serves the component and manifest documentation.
-- [ ] **P4.2** `tabfree` CLI and a Claude Code kit: `tabfree login | pull | push | preview`, a `CLAUDE.md` and skills for dashboard authoring, and component reference docs.
+- [x] **P4.2** `tabfree` CLI and a Claude Code kit: `tabfree login | pull | push | preview`, a `CLAUDE.md` and skills for dashboard authoring, and component reference docs.
 - [ ] **P4.3** In-app "Edit with Claude":
   - a chat panel beside the dashboard
   - the Author service starts a sandbox (Fargate task: Agent SDK, Claude via Bedrock) with the bundle checked out
@@ -527,21 +527,33 @@ tabfree/
   - streaming progress
   - each change becomes a draft revision with a live preview and a diff
   - publishing is gated by the Web Edit/Overwrite capability and an optional approval policy
-- [ ] **P4.4** Quick-edit path: an in-process tool loop for small edits (target under 30 s), with no sandbox start.
-- [ ] **P4.5** Validation pipeline, shared with migration:
+- [x] **P4.4** Quick-edit path: an in-process tool loop for small edits (target under 30 s), with no sandbox start.
+- [x] **P4.5** Validation pipeline, shared with migration:
   - manifest schema check
   - queries compile on both dialects
   - data sanity checks
   - screenshot diff against the previous revision
   - static scan of custom JS (no network APIs, no `eval`)
   - accessibility lint
-- [ ] **P4.6** Guardrails:
+- [x] **P4.6** Guardrails:
   - per-user permissions on every tool call
   - token budgets and rate limits per user and per site
   - untrusted data fencing (prompt-injection defence)
   - two-step publish
   - every tool call written to `audit_event` with the agent session id
-- [ ] **P4.7** Provider configuration: Bedrock or the Anthropic API; model per task (a fast model for quick edits, the strongest for multi-tile builds and migration); AI can be switched off entirely.
+- [x] **P4.7** Provider configuration: Bedrock or the Anthropic API; model per task (a fast model for quick edits, the strongest for multi-tile builds and migration); AI can be switched off entirely.
+
+**Phase 4 status (2026-11-21).** Built and tested offline (`make check`). No real model call has been made, and nothing ran on AWS: the quick-edit loop and the Author service are tested with a scripted model, the Fargate launcher with a fake ECS client, and the sandbox image has not been built.
+
+| Task | Status |
+|---|---|
+| P4.1 MCP server | Done: Streamable HTTP at `/mcp` (stateless JSON responses, protocol versions 2025-03-26 to 2025-11-25, Origin check), 17 tools with scopes and annotations, an MCP Apps `ui://tabfree/preview` page. OAuth 2.1: RFC 9728 and RFC 8414 metadata, dynamic client registration, S256 PKCE with a consent page, rotating refresh tokens with replay detection, revocation, RFC 8707 resource binding; PATs also accepted. Tested with an in-process client; not yet with Claude Code or Claude Desktop against a deployed server. |
+| P4.2 CLI and kit | Done: `tabfree login` (browser OAuth, loopback redirect), `pull`, `push`, `validate`, `diff`, `preview`, `publish` (shows the diff, asks), `kit` (CLAUDE.md, `.mcp.json`, the `tabfree-dashboard` skill). Standard library only; an end-to-end test drives the real API. |
+| P4.3 Edit with Claude | Mostly done: the portal's draft page (live preview as the author, chat with streamed progress, diff, files, two-step publish), sessions with follow-up turns, the Fargate launcher (one task per session, no public IP, a 30-minute on-behalf-of token, progress reports) and the Agent SDK image (`apps/author-agent`: only TabFree MCP tools, no settings, turn and dollar caps). Still open: the Terraform for the author cluster, task definition and egress-restricted security group, and running a real session. |
+| P4.4 quick edits | Done: an in-process tool loop with the same tools (minus confirm), a cached system prompt with the docs, the draft fenced in the first message, turn, time and token limits. The under-30-seconds target is not yet measured. |
+| P4.5 validation | Done: manifest and references (now including the P3.6 components), both dialects, data checks as the author, a custom-script scan that fails network, navigation and dynamic code, accessibility warnings, and a screenshot diff (stdlib PNG decoder) when the renderer is configured. Migration (Phase 5) reuses it. |
+| P4.6 guardrails | Done: per-user and per-site daily token budgets (shared in the database), MCP calls per minute per user, fenced data in every tool result, two-step publish that agents cannot confirm, an optional approval policy, and every tool call audited with the agent session id. |
+| P4.7 provider | Done: `off` (the default), the Claude API (server-side refusal fallback) or Amazon Bedrock, with a model and effort per task. |
 
 **Milestone M4, beta authoring:**
 - A user with Web Edit asks in the browser to "make the region chart stacked and add a YoY column". They review the draft and publish in under 2 minutes.

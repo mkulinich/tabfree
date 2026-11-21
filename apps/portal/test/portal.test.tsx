@@ -64,3 +64,23 @@ describe("permission rules grid", () => {
     expect(screen.queryByRole("button", { name: "Add rule" })).toBeNull();
   });
 });
+
+describe("edit with Claude", () => {
+  it("shows the person's messages, Claude's replies and tool steps", async () => {
+    const { ChatLog } = await import("../src/pages/draft.js");
+    render(
+      <ChatLog
+        events={[
+          { type: "user", text: "Make it stacked" },
+          { type: "tool", text: "Editing the draft: 1 change(s) to index.html" },
+          { type: "done", text: "Stacked the region chart." },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Make it stacked").textContent).toBe("You: Make it stacked");
+    expect(screen.getByText(/Editing the draft/).className).toBe("chat-tool");
+    expect(screen.getByText("Stacked the region chart.").textContent).toBe(
+      "Claude: Stacked the region chart.",
+    );
+  });
+});

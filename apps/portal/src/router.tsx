@@ -4,6 +4,7 @@ import { Layout } from "./layout.js";
 import { AccountPage } from "./pages/account.js";
 import { AdminAudit, AdminGroups, AdminSite, AdminUsers } from "./pages/admin.js";
 import { DashboardPage } from "./pages/dashboard.js";
+import { DraftPage } from "./pages/draft.js";
 import { ExplorePage } from "./pages/explore.js";
 import { HomePage } from "./pages/home.js";
 import { ModelPage } from "./pages/model.js";
@@ -41,6 +42,7 @@ export const dashboard = createRoute({
   },
   component: DashboardPage,
 });
+export const draftRoute = createRoute({ getParentRoute: () => root, path: "/drafts/$id", component: DraftPage });
 export const model = createRoute({ getParentRoute: () => root, path: "/models/$id", component: ModelPage });
 const account = createRoute({ getParentRoute: () => root, path: "/account", component: AccountPage });
 const adminUsers = createRoute({ getParentRoute: () => root, path: "/admin/users", component: AdminUsers });
@@ -52,6 +54,7 @@ const tree = root.addChildren([
   home,
   explore,
   dashboard,
+  draftRoute,
   model,
   account,
   adminUsers,

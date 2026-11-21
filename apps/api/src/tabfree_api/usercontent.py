@@ -48,6 +48,10 @@ def build_frame(html: str, runtime: str) -> str:
     return f"<!doctype html><html><head>{csp}{script}</head><body>{html}</body></html>"
 
 
+#: Frame names for drafts: ``draft:<id>`` (signed like dashboards, for the draft's author).
+DRAFT_PREFIX = "draft:"
+
+
 class FrameSigner:
     def __init__(self, key: bytes | None = None) -> None:
         self._key = key or secrets.token_bytes(32)
@@ -79,7 +83,18 @@ def create_router(ctx: Any, signer: FrameSigner, runtime_dir: Path, portal_origi
         runtime = runtime_dir / "frame.js"
         if not runtime.is_file():
             raise HTTPException(503, "build the runtime first: npm run build -w @tabfree/runtime")
-        bundle = ctx.site.bundle(dashboard)
+        if dashboard.startswith(DRAFT_PREFIX):
+            # A draft preview (Phase 4): the signature was issued to the draft's author only.
+            from tabfree_api.authoring.drafts import DraftStore
+
+            if not hasattr(ctx.site, "engine"):
+                raise HTTPException(404)
+            draft = DraftStore(ctx.site.engine, ctx.site.id).get(dashboard[len(DRAFT_PREFIX) :])
+            if draft is None or draft.status != "open":
+                raise HTTPException(404)
+            html = draft.files.get("index.html", "")
+        else:
+            html = ctx.site.bundle(dashboard).html
         headers = {
             "Content-Security-Policy": f"{FRAME_CSP}; frame-ancestors {portal_origin}",
             "X-Content-Type-Options": "nosniff",
@@ -87,7 +102,7 @@ def create_router(ctx: Any, signer: FrameSigner, runtime_dir: Path, portal_origi
             "Cache-Control": "private, max-age=60",
             "Cross-Origin-Opener-Policy": "same-origin",
         }
-        return HTMLResponse(build_frame(bundle.html, runtime.read_text(encoding="utf-8")), headers=headers)
+        return HTMLResponse(build_frame(html, runtime.read_text(encoding="utf-8")), headers=headers)
 
     return router
 

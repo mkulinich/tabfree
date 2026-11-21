@@ -184,7 +184,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         frame_signer=signer,
         renderer=renderer,
     )
-    app.include_router(create_router(app.state.context))
+    ctx = app.state.context
+    from tabfree_api.authoring import mcp as mcp_server
+    from tabfree_api.authoring.budget import TokenBudget
+
+    ctx.budget = TokenBudget(
+        site.id,
+        per_user=config.ai_daily_tokens_per_user,
+        per_site=config.ai_daily_tokens_per_site,
+        engine=getattr(site, "engine", None),
+        overrides=site.settings if hasattr(site, "settings") else None,
+    )
+    if config.database_url is not None:
+        from tabfree_api.authoring import oauth
+
+        ctx.oauth = oauth.OAuthStore(
+            site.engine,
+            site.id,
+            sessions,
+            access_ttl_s=config.oauth_access_ttl_s,
+            refresh_days=config.oauth_refresh_days,
+        )
+        app.include_router(oauth.create_router(ctx, ctx.oauth))
+    app.include_router(mcp_server.create_router(ctx))
+    from tabfree_api.authoring import provider as ai
+
+    ctx.provider = ai.from_settings(config)
+    if ctx.provider is not None and config.database_url is not None:
+        from tabfree_api.authoring.author import AuthorRunner, sandbox_from_settings
+
+        ctx.author = AuthorRunner(ctx, sandbox=sandbox_from_settings(config))
+    app.include_router(create_router(ctx))
     if signer is not None:
         app.include_router(
             usercontent.create_router(app.state.context, signer, config.runtime_dir, portal_origin)

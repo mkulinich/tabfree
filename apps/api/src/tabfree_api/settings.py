@@ -81,6 +81,41 @@ class Settings(BaseSettings):
     #: The built portal (npm run build -w @tabfree/portal); without it, / serves a minimal page.
     portal_dir: Path = REPO_ROOT / "apps" / "portal" / "dist"
 
+    # ---- AI authoring (Phase 4) ---------------------------------------------------------------------
+    #: Which model provider runs "Edit with Claude": "off" (AI disabled; drafts, validation and the MCP
+    #: server still work), "anthropic" (the Claude API; ANTHROPIC_API_KEY from the environment) or
+    #: "bedrock" (Amazon Bedrock in ``ai_bedrock_region``, with the task role's credentials).
+    ai_provider: Literal["off", "anthropic", "bedrock"] = "off"
+    ai_bedrock_region: str | None = None
+    #: Model per task (P4.7): quick edits, multi-tile builds in the sandbox, migration repair.
+    ai_model_quick: str = "claude-sonnet-5-5"
+    ai_model_build: str = "claude-opus-5-5"
+    ai_model_migrate: str = "claude-opus-5-5"
+    #: Model tokens per UTC day (input + output); site settings can override; 0 means no limit.
+    ai_daily_tokens_per_user: int = Field(default=2_000_000, ge=0)
+    ai_daily_tokens_per_site: int = Field(default=50_000_000, ge=0)
+    #: The quick-edit loop's limits (P4.4): model turns and the wall-clock budget per request.
+    ai_quick_max_turns: int = Field(default=12, ge=1, le=50)
+    ai_quick_timeout_s: float = Field(default=60.0, gt=0)
+    #: "Edit with Claude" sandboxes (P4.3): "none" (quick edits only), "local" (a subprocess, dev only)
+    #: or "fargate" (an ECS task per session; the cluster, task definition and network below).
+    author_backend: Literal["none", "local", "fargate"] = "none"
+    author_cluster: str | None = None
+    author_task_definition: str | None = None
+    author_subnets: list[str] = Field(default_factory=list)
+    author_security_groups: list[str] = Field(default_factory=list)
+    #: The MCP URL sandboxes call (inside the VPC); defaults to base_url + /mcp.
+    author_mcp_url: str | None = None
+    #: MCP tool calls per user per minute (P4.6).
+    mcp_calls_per_minute: int = Field(default=120, ge=0)
+    #: Browser origins allowed to call /mcp besides the portal's own (MCP clients send none).
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
+    #: OAuth for MCP clients (P4.1): token lifetimes, and the key that signs consent forms (set it when
+    #: several processes serve the API).
+    oauth_access_ttl_s: int = Field(default=3600, ge=60, le=86_400)
+    oauth_refresh_days: int = Field(default=30, ge=1, le=90)
+    oauth_signing_key: SecretStr | None = None
+
     # OpenID Connect. The secret comes from the environment (inject it with `secret run`), never a file.
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None

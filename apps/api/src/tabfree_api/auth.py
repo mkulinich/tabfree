@@ -110,6 +110,11 @@ class SessionInfo:
     email: str = ""
     #: User attributes for RLS (``USERATTRIBUTE``): identity-provider claims and admin-set values.
     attributes: Mapping[str, str] = field(default_factory=dict)
+    #: Set when an agent acts for the user (an on-behalf-of token, P4.3/P4.4): audited, and the agent
+    #: may not confirm a publish.
+    agent_session: str | None = None
+    #: OAuth scopes of the token (``tabfree.read``, ``tabfree.author``); None means a full session.
+    scopes: frozenset[str] | None = None
 
     def principal(self) -> Principal:
         return Principal(self.username, self.groups, self.site_role, self.fullname, self.attributes)

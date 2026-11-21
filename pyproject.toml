@@ -1,7 +1,7 @@
 # Workspace root (virtual: not itself a package). Each member has its own pyproject.toml.
 
 [tool.uv.workspace]
-members = ["packages/schemas", "packages/compiler", "packages/migrate", "apps/api"]
+members = ["packages/schemas", "packages/compiler", "packages/migrate", "packages/cli", "apps/api"]
 
 [dependency-groups]
 dev = [
@@ -14,6 +14,8 @@ dev = [
   "types-defusedxml>=0.7",
   "types-jsonschema>=4.23",
   "duckdb>=2.0.0",
+  # The quick-edit loop (P4.4) is type-checked against the SDK; tests use a scripted client.
+  "anthropic[bedrock]>=2.6",
   "xmlschema>=3.4",
 ]
 
@@ -41,13 +43,27 @@ known-first-party = ["tabfree_api", "tabfree_compiler", "tabfree_migrate", "tabf
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["packages/schemas/src", "packages/compiler/src", "packages/migrate/src", "apps/api/src"]
+files = [
+  "packages/schemas/src",
+  "packages/compiler/src",
+  "packages/migrate/src",
+  "packages/cli/src",
+  "apps/api/src",
+  "apps/author-agent/src",
+]
 
 [[tool.mypy.overrides]]
-module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*", "openpyxl", "openpyxl.*", "playwright", "playwright.*"]
+module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*", "openpyxl", "openpyxl.*", "playwright", "playwright.*", "claude_agent_sdk", "claude_agent_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["packages/schemas/tests", "packages/compiler/tests", "packages/migrate/tests", "apps/api/tests"]
+testpaths = [
+  "packages/schemas/tests",
+  "packages/compiler/tests",
+  "packages/migrate/tests",
+  "packages/cli/tests",
+  "apps/api/tests",
+  "apps/author-agent/tests",
+]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = ["integration: needs a real Tableau Server or AWS account; skipped unless enabled"]

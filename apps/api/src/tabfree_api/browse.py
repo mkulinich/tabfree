@@ -100,7 +100,16 @@ class SitePatch(BaseModel):
     settings: dict[str, Any] | None = None
 
 
-_SITE_SETTINGS = {"athenaWorkgroup": str, "dailyScanBudgetBytes": int, "maxConcurrentQueries": int}
+_SITE_SETTINGS = {
+    "athenaWorkgroup": str,
+    "dailyScanBudgetBytes": int,
+    "maxConcurrentQueries": int,
+    # Phase 4: "none" or "required" (a project leader approves drafts before they are published).
+    "authoringApproval": str,
+    "aiDailyTokensPerUser": int,
+    "aiDailyTokensPerSite": int,
+}
+_CHOICES = {"authoringApproval": ("none", "required")}
 
 
 def add_routes(
@@ -628,6 +637,8 @@ def add_routes(
                 expected = _SITE_SETTINGS.get(key)
                 if expected is None or not isinstance(value, expected) or isinstance(value, bool):
                     raise HTTPException(422, f"unknown or invalid site setting {key!r}")
+                if key in _CHOICES and value not in _CHOICES[key]:
+                    raise HTTPException(422, f"{key} is one of {', '.join(_CHOICES[key])}")
         database().update_site(name=body.name, default_site_role=body.defaultSiteRole, settings=body.settings)
         ctx.audit(
             "site_update",

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TabFree preview</title>
+<style>
+  :root { color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; }
+  body { margin: 0; }
+  #note { padding: 6px 10px; opacity: 0.75; }
+  #frame { min-height: 240px; }
+</style>
+</head>
+<body>
+<div id="note">Waiting for the preview…</div>
+<div id="frame"></div>
+<script>
+/*HOST*/
+</script>
+<script>
+  // An MCP App (ui:// resource) for the TabFree "preview" tool. The tool result carries the draft's
+  // bundle and its query results with the default filters; this page renders them with the dashboard
+  // runtime, without any network access. Live filtering happens in the TabFree portal.
+  (function () {
+    const FRAME = "__FRAME__";
+    const note = document.getElementById("note");
+    let mounted = null;
+    let nextId = 1;
+    function send(message) { window.parent.postMessage(message, "*"); }
+    function render(preview) {
+      const host = window.__tabfreeHost;
+      if (!host || !FRAME) { note.textContent = "The dashboard runtime is not built on this server."; return; }
+      if (!preview || typeof preview.html !== "string" || !preview.manifest) return;
+      mounted && mounted.destroy();
+      const results = preview.results || {};
+      const domains = preview.domains || {};
+      const empty = { columns: [], rows: [], truncated: false };
+      note.textContent = "Preview with the default filters. Open the draft in TabFree to filter live.";
+      mounted = host.mountDashboard({
+        container: document.getElementById("frame"),
+        manifest: preview.manifest,
+        html: preview.html,
+        runtime: FRAME,
+        theme: { mode: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light" },
+        runQuery: (request) => Promise.resolve(results[request.query] || empty),
+        runDomain: (request) => Promise.resolve(domains[request.filter] || empty),
+      });
+    }
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || data.jsonrpc !== "2.0") return;
+      if (data.method === "ui/notifications/tool-result") {
+        const content = data.params && data.params.structuredContent;
+        render(content && content.preview);
+      } else if (data.id === 1 && data.result) {
+        send({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+      }
+    });
+    send({
+      jsonrpc: "2.0",
+      id: nextId++,
+      method: "ui/initialize",
+      params: {
+        protocolVersion: "2026-01-26",
+        appInfo: { name: "tabfree-preview", version: "1" },
+        appCapabilities: {},
+      },
+    });
+  })();
+</script>
+</body>
+</html>

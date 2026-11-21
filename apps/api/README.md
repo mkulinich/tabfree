@@ -23,6 +23,7 @@ uv run pytest apps/api
 | `engines.py` | DuckDB (local sample data), Athena (`ExecutionParameters`, workgroup per site, result reuse, bytes scanned) and the Redshift Data API (named parameters). Timeouts cancel the engine query. The AWS engines are unit-tested with fake clients only. |
 | `portal.py` | `/auth/*`, `/api/me`, `/api/dashboards[/{id}[/query|/domain]]`, `/api/models/{model}/query`, `/runtime/*.js`, and the portal page. |
 | `preview.py` | `/preview`: the same dashboards with a user picker and no sign-in (dev only). |
+| `authoring/` | Phase 4: drafts and the two-step publish, the validation pipeline, the MCP server and its OAuth server, AI guardrails, the model provider, the quick-edit loop and the "Edit with Claude" session runner (see below). |
 
 ## Metadata database (P3.1, P3.2)
 
@@ -53,6 +54,42 @@ TABFREE_SITE_ID=dev TABFREE_DEV_LOGIN=1 uv run uvicorn tabfree_api.main:app_fact
 - **Audit:** sign-in and sign-out, views, queries (a hash of the request, never filter values), exports, denials, permission and admin changes, tokens. Administrators read it at `/api/admin/audit` and on the portal's Audit log page.
 
 State-changing requests need the header `X-TabFree-Request: 1` (CSRF defence). Dashboards a viewer may not see return 404, not 403.
+
+## AI authoring and MCP (Phase 4)
+
+Everything in `authoring/` goes through one permission-checking service (`service.py`), so the MCP
+tools, the portal's draft pages and the agents can do exactly what the signed-in person can.
+
+- **Drafts** (`drafts.py`): private working copies of a bundle (`tabfree.json`, `index.html`,
+  `README.md`). Starting one needs Web Edit; a new dashboard needs Publish on its project. Edits are
+  patch-style (`files.py`: write, exact replace, JSON pointer set/remove), all-or-nothing.
+- **Validation** (`validation.py`, P4.5): manifest and component references; every query compiled on
+  Athena and Redshift; every query run as the author (errors fail, empty or all-null results warn);
+  custom JavaScript scanned (network, navigation and dynamic code fail); accessibility warnings; and a
+  screenshot diff against the published revision when the export renderer is configured.
+- **Publishing** takes two steps: `request_publish` validates and returns a confirmation code and the
+  diff; `confirm_publish` needs Overwrite (or Publish for a new dashboard), the code, unchanged files
+  and, with the site setting `authoringApproval: required`, a project leader's approval. Agents can
+  never confirm.
+- **MCP server** (`mcp.py`, P4.1): Streamable HTTP at `/mcp` (stateless, JSON responses), 17 tools
+  (`tools.py`) including `learn` for the docs in `authoring/docs/`, and an MCP Apps `ui://` preview.
+  Data values and dashboard text in tool results are fenced as untrusted (`fence.py`).
+- **OAuth 2.1** (`oauth.py`): protected-resource and authorization-server metadata, dynamic client
+  registration (public clients, https or loopback redirects), authorization code with S256 PKCE and a
+  consent page, one-hour access tokens and rotating 30-day refresh tokens (replay revokes the family),
+  revocation. Personal access tokens work as bearer tokens too. Claude Code: add
+  `{"type": "http", "url": "https://<server>/mcp"}` to `.mcp.json` (or run `tabfree kit`).
+- **Edit with Claude** (`author.py`, `quick.py`, P4.3/P4.4): `POST /api/drafts/{id}/chat` starts a
+  session; progress streams from `/api/agent-sessions/{id}/events` (server-sent events). Quick edits
+  run an in-process tool loop with the same tools as the user; larger builds start one ECS Fargate task
+  per session with the Agent SDK (`apps/author-agent`) and a 30-minute on-behalf-of token.
+- **Guardrails** (`budget.py`, P4.6): MCP tool calls per user per minute, and model tokens per user
+  and per site per UTC day (`ai_usage` table; site settings `aiDailyTokensPerUser`/`PerSite`).
+  Every tool call is audited with the agent session id.
+- **Provider** (`provider.py`, P4.7): `TABFREE_AI_PROVIDER=off|anthropic|bedrock`, with a model per
+  task (`TABFREE_AI_MODEL_QUICK`, `_BUILD`, `_MIGRATE`). Off by default; drafts, validation, MCP and
+  the CLI work without it. The Claude API key comes from `ANTHROPIC_API_KEY` in the environment
+  (inject it with `secret run`); Bedrock uses the task role.
 
 ## Query service (P2.7)
 

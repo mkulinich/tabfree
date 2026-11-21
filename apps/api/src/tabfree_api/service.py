@@ -33,6 +33,7 @@ from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
 from tabfree_compiler import CompiledQuery, CompileError, SemanticModel, Session, compile_query
 from tabfree_compiler.blend import compile_blend
 from tabfree_compiler.dashboard import BoundQuery, bind_domain, bind_query
+from tabfree_compiler.sql import Dialect
 from tabfree_schemas import SchemaKind, load_schema
 
 ROW_LIMIT = 10_000
@@ -188,34 +189,13 @@ class QueryService:
         table_calcs: Literal["runtime", "sql"] = "runtime",
     ) -> _Outcome:
         started = time.perf_counter()
-        model, doc = self._model(bound.model)
+        _model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
         limits = limits or self.limits
         query = dict(bound.query)
         cap = min(int(query.get("limit", limits.row_limit)), limits.row_limit)
         query["limit"] = cap + 1  # one extra row tells us the result was truncated
-        if query.get("blend"):
-            # Data blending: every secondary model joins in the same statement (same connection).
-            primary = next((a for a, m in bound.models.items() if m == bound.model), bound.model)
-            compiled = compile_blend(
-                {alias: self._model(model_id)[0] for alias, model_id in bound.models.items()},
-                primary,
-                query,
-                dialect=engine.dialect,
-                session=session,
-                parameters=bound.parameters,
-                filters=bound.filters,
-            )
-        else:
-            compiled = compile_query(
-                model,
-                query,
-                dialect=engine.dialect,
-                session=session,
-                parameters=bound.parameters,
-                filters=bound.filters,
-                table_calcs=table_calcs,
-            )
+        compiled = self._compile(replace(bound, query=query), session, engine.dialect, table_calcs)
         deferred = tuple(compiled.deferred_table_calcs)
         columns = _columns(compiled, doc, bound.query)
         version = self._data_version(bound.model)
@@ -263,6 +243,42 @@ class QueryService:
         self.cache.put(key, value)
         self._audit(session, what, value, "reuse" if result.reused else "miss", scanned, started)
         return _Outcome(columns, value, cached=False, deferred=deferred)
+
+    def _compile(
+        self,
+        bound: BoundQuery,
+        session: Session,
+        dialect: Dialect,
+        table_calcs: Literal["runtime", "sql"] = "runtime",
+    ) -> CompiledQuery:
+        model, _doc = self._model(bound.model)
+        if bound.query.get("blend"):
+            # Data blending: every secondary model joins in the same statement (same connection).
+            primary = next((a for a, m in bound.models.items() if m == bound.model), bound.model)
+            return compile_blend(
+                {alias: self._model(model_id)[0] for alias, model_id in bound.models.items()},
+                primary,
+                bound.query,
+                dialect=dialect,
+                session=session,
+                parameters=bound.parameters,
+                filters=bound.filters,
+            )
+        return compile_query(
+            model,
+            bound.query,
+            dialect=dialect,
+            session=session,
+            parameters=bound.parameters,
+            filters=bound.filters,
+            table_calcs=table_calcs,
+        )
+
+    def compile_named(
+        self, manifest: Mapping[str, Any], name: str, dialect: Dialect, session: Session
+    ) -> CompiledQuery:
+        """Compile a dashboard query with its default state, without running it (validation, P4.5)."""
+        return self._compile(bind_query(manifest, name, {}, {}), session, dialect)
 
     def _options(self, compiled: CompiledQuery, model: str, version: str) -> ExecuteOptions:
         limits = self.limits

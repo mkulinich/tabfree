@@ -32,6 +32,8 @@ aws = [
 ]
 # P3.7: PNG/PDF exports render the dashboard in headless Chromium (`playwright install chromium`).
 render = ["playwright>=1.49"]
+# Phase 4 (P4.4, P4.7): "Edit with Claude" through the Claude API or Amazon Bedrock. AI is optional.
+ai = ["anthropic[bedrock]>=1.0"]
 
 [tool.uv.sources]
 tabfree-compiler = { workspace = true }

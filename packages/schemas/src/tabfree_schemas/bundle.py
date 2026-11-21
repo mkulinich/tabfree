@@ -22,12 +22,19 @@ from tabfree_schemas.validate import SchemaKind, check_manifest_references, sche
 #: outputs of the element's query; "filter"/"parameter" name declarations.
 COMPONENTS: dict[str, dict[str, str]] = {
     "tf-dashboard": {},
-    "tf-chart": {"query": "query", "x": "column", "y": "column", "color": "column"},
-    "tf-crosstab": {"query": "query"},
+    "tf-chart": {"query": "query", "x": "column", "y": "column", "color": "column", "drill": "query"},
+    "tf-crosstab": {"query": "query", "columns": "column"},
     "tf-kpi": {"query": "query", "measure": "column", "change": "column"},
     "tf-map": {"query": "query", "geo": "column", "color": "column"},
     "tf-filter": {"name": "filter"},
     "tf-parameter": {"name": "parameter"},
+    # Layout and content objects (P3.6).
+    "tf-container": {},
+    "tf-float": {},
+    "tf-legend": {"query": "query", "field": "column"},
+    "tf-text": {"query": "query"},
+    "tf-image": {},
+    "tf-export": {"query": "query"},
 }
 REQUIRED: dict[str, tuple[str, ...]] = {
     "tf-chart": ("query", "x", "y"),
@@ -36,10 +43,29 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "tf-map": ("query", "geo", "color"),
     "tf-filter": ("name",),
     "tf-parameter": ("name",),
+    "tf-legend": ("query", "field"),
+    "tf-image": ("src",),
 }
 ENUMS = {
     ("tf-chart", "mark"): {"bar", "line", "area", "point"},
-    ("tf-filter", "control"): {"dropdown", "checklist", "relative-date", "range", "wildcard"},
+    ("tf-filter", "control"): {
+        "dropdown",
+        "radio",
+        "slider",
+        "checklist",
+        "multi-dropdown",
+        "search",
+        "date",
+        # Older names, still accepted (relative-date and wildcard filters pick their own control).
+        "relative-date",
+        "range",
+        "wildcard",
+    },
+    ("tf-dashboard", "size"): {"automatic", "fixed"},
+    ("tf-container", "direction"): {"horizontal", "vertical"},
+    ("tf-chart", "sort"): {"asc", "desc"},
+    ("tf-image", "fit"): {"contain", "cover", "fill"},
+    ("tf-export", "format"): {"csv", "crosstab", "png", "pdf"},
     ("tf-parameter", "control"): {"slider", "dropdown", "input"},
 }
 

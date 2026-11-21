@@ -431,3 +431,92 @@ main.print .viewer {
   border: none;
   margin: 0;
 }
+
+/* Drafts and Edit with Claude (P4.3) */
+.draft {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  padding: 8px 16px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .draft {
+    grid-template-columns: 1fr;
+  }
+}
+.chat {
+  position: sticky;
+  top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: 8px;
+  max-height: calc(100vh - 80px);
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+}
+.chat h2,
+.publish h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.chat-log li {
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.chat-user {
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.chat-tool,
+.chat-status,
+.chat-draft,
+.chat-tool_result {
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-error {
+  color: var(--deny);
+}
+.chat-form {
+  display: grid;
+  gap: 6px;
+}
+.chat-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+.publish {
+  margin-top: 16px;
+}
+pre.diff {
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  overflow: auto;
+  max-height: 480px;
+  white-space: pre;
+}
+.checks {
+  margin: 0;
+  padding-left: 18px;
+}
+.check-fail {
+  color: var(--deny);
+}
+.check-pass {
+  color: var(--allow);
+}

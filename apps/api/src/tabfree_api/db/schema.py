@@ -291,3 +291,120 @@ legacy_urls = Table(
     Column("content_id", String(100), nullable=False),
     CheckConstraint(_in("kind", CONTENT_KINDS), name="kind"),
 )
+
+# ---- Phase 4: AI authoring ------------------------------------------------------------------------
+
+DRAFT_STATUSES = ("open", "published", "discarded")
+
+drafts = Table(
+    "drafts",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    Column("kind", String(16), nullable=False, server_default="dashboard"),
+    #: The dashboard the draft edits, or the id a new dashboard will get.
+    Column("content_id", String(100), nullable=False),
+    #: For a new dashboard: the project it will be published to.
+    Column("project_id", String(100)),
+    #: The revision the draft started from (None: a new dashboard).
+    Column("base_revision", Integer),
+    #: The bundle: path → text ("tabfree.json", "index.html").
+    Column("files", Document, nullable=False, default=dict),
+    Column("created_by", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    #: The agent session that made the latest change (None: edited directly).
+    Column("agent_session", String(64)),
+    Column("status", String(16), nullable=False, server_default="open"),
+    #: Two-step publish: the SHA-256 of the confirmation code, the files it covers and its expiry.
+    Column("publish_code_sha256", String(64)),
+    Column("publish_files_sha256", String(64)),
+    Column("publish_expires_at", Timestamp),
+    Column("publish_message", Text, nullable=False, server_default=""),
+    #: An approver's sign-off when the site requires approval (username, at).
+    Column("approved_by", String(255)),
+    Column("published_revision", Integer),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+    CheckConstraint(_in("status", DRAFT_STATUSES), name="status"),
+    Index("ix_drafts_site_content", "site_id", "kind", "content_id"),
+)
+
+oauth_clients = Table(
+    "oauth_clients",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    Column("name", String(200), nullable=False),
+    Column("redirect_uris", Document, nullable=False),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+oauth_codes = Table(
+    "oauth_codes",
+    metadata,
+    Column("code_sha256", String(64), primary_key=True),
+    Column("client_id", ForeignKey("oauth_clients.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("redirect_uri", Text, nullable=False),
+    Column("code_challenge", String(128), nullable=False),
+    Column("scope", String(200), nullable=False),
+    Column("resource", Text, nullable=False),
+    Column("expires_at", Timestamp, nullable=False),
+    Column("used_at", Timestamp),
+    #: The token family issued from this code (revoked if the code is replayed).
+    Column("family", String(36)),
+)
+
+oauth_tokens = Table(
+    "oauth_tokens",
+    metadata,
+    Column("token_sha256", String(64), primary_key=True),
+    Column("kind", String(8), nullable=False),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    #: None for tokens minted inside TabFree for an agent session (on behalf of the user).
+    Column("client_id", ForeignKey("oauth_clients.id", ondelete="CASCADE")),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("scope", String(200), nullable=False),
+    Column("resource", Text, nullable=False),
+    Column("agent_session", String(64)),
+    #: Refresh tokens rotate; a replayed one revokes its whole family.
+    Column("family", String(36), nullable=False, index=True),
+    Column("created_at", Timestamp, nullable=False),
+    Column("expires_at", Timestamp, nullable=False),
+    Column("revoked_at", Timestamp),
+    CheckConstraint(_in("kind", ("access", "refresh")), name="kind"),
+)
+
+ai_usage = Table(
+    "ai_usage",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("username", String(255), primary_key=True),
+    #: UTC day, YYYY-MM-DD.
+    Column("day", String(10), primary_key=True),
+    Column("requests", Integer, nullable=False, server_default="0"),
+    Column("input_tokens", BigInteger, nullable=False, server_default="0"),
+    Column("output_tokens", BigInteger, nullable=False, server_default="0"),
+)
+
+agent_sessions = Table(
+    "agent_sessions",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("draft_id", ForeignKey("drafts.id", ondelete="CASCADE"), nullable=False),
+    #: "quick" (in-process tool loop) or "sandbox" (a Fargate task with the Agent SDK).
+    Column("mode", String(16), nullable=False),
+    Column("model", String(100), nullable=False),
+    Column("status", String(16), nullable=False, server_default="running"),
+    #: Progress events shown in the chat panel: [{"type": ..., "text": ..., "at": ...}].
+    Column("events", Document, nullable=False, default=list),
+    #: The conversation so far, for follow-up turns (quick mode).
+    Column("transcript", Document, nullable=False, default=list),
+    Column("input_tokens", BigInteger, nullable=False, server_default="0"),
+    Column("output_tokens", BigInteger, nullable=False, server_default="0"),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+    CheckConstraint(_in("mode", ("quick", "sandbox")), name="mode"),
+    CheckConstraint(_in("status", ("running", "done", "failed", "cancelled")), name="status"),
+)

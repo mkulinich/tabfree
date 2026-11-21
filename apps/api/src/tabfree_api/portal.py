@@ -72,6 +72,12 @@ class Context:
         self.frame_signer = frame_signer
         #: Renders PNG/PDF exports (``exports.PlaywrightRenderer``); None refuses them.
         self.renderer = renderer
+        #: Phase 4: the OAuth store for MCP clients (database only), the AI token budget, the model
+        #: provider (None when AI is off) and the "Edit with Claude" session runner.
+        self.oauth: Any = None
+        self.budget: Any = None
+        self.provider: Any = None
+        self.author: Any = None
 
     def audit(self, action: str, actor: str | None, outcome: str = "ok", **detail: Any) -> None:
         """An audit event: in the database when there is one, always in the service log."""
@@ -132,9 +138,12 @@ def create_router(ctx: Context) -> APIRouter:
         tabfree_session: Annotated[str | None, Cookie()] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> SessionInfo:
-        # Scripts and the MCP server send a personal access token; browsers send the session cookie.
-        token = bearer(authorization) or tabfree_session
-        info = ctx.sessions.get(token)
+        # Scripts and the CLI send a personal access token or an OAuth access token; browsers send the
+        # session cookie.
+        from tabfree_api.authoring.oauth import resolve_bearer
+
+        token = bearer(authorization)
+        info = resolve_bearer(ctx, token) if token else ctx.sessions.get(tabfree_session)
         if info is None:
             raise HTTPException(401, "sign in first")
         return info
@@ -335,6 +344,10 @@ def create_router(ctx: Context) -> APIRouter:
     from tabfree_api import browse
 
     browse.add_routes(router, ctx, current, csrf)
+
+    from tabfree_api.authoring import routes as authoring_routes
+
+    authoring_routes.add_routes(router, ctx, current, csrf)
 
     # ---- personal access tokens (P3.2) -------------------------------------------------------------
 
@@ -611,7 +624,14 @@ def create_router(ctx: Context) -> APIRouter:
             raise HTTPException(404)
         return FileResponse(path, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
-    for route in ("/explore", "/account", "/dashboards/{_id}", "/models/{_id}", "/admin/{_page}"):
+    for route in (
+        "/explore",
+        "/account",
+        "/dashboards/{_id}",
+        "/drafts/{_id}",
+        "/models/{_id}",
+        "/admin/{_page}",
+    ):
         router.add_api_route(route, lambda: spa() or RedirectResponse("/"), include_in_schema=False)
 
     @router.get("/", response_class=HTMLResponse, include_in_schema=False)

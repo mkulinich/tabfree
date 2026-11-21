@@ -7,10 +7,10 @@ import {
   mountDashboard,
 } from "@tabfree/runtime/host";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { type DashboardInfo, enc, get } from "../api.js";
+import { type DashboardInfo, enc, get, send } from "../api.js";
 import { FavoriteButton } from "../components/items.js";
 import { PermissionsDialog } from "../components/permissions.js";
 import { RevisionsDialog } from "../components/revisions.js";
@@ -134,6 +134,18 @@ export function DashboardPage() {
 
 function InteractivePage({ id }: { id: string }) {
   const [dialog, setDialog] = useState<"permissions" | "revisions" | null>(null);
+  const navigate = useNavigate();
+  const [editError, setEditError] = useState<string | null>(null);
+  const edit = async () => {
+    setEditError(null);
+    try {
+      // Your open draft of this dashboard, or a new one (needs Web Edit).
+      const draft = await send<{ id: string }>("POST", `/api/dashboards/${enc(id)}/drafts`);
+      await navigate({ to: "/drafts/$id", params: { id: draft.id } });
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const info = useQuery({
     queryKey: ["dashboard-info", id],
     queryFn: () => get<DashboardInfo>(`/api/dashboards/${enc(id)}/info`),
@@ -159,6 +171,11 @@ function InteractivePage({ id }: { id: string }) {
           />
         ) : null}
         <div className="toolbar">
+          {caps["web_edit"] ? (
+            <button type="button" className="primary" onClick={() => void edit()}>
+              Edit with Claude
+            </button>
+          ) : null}
           {caps["set_permissions"] ? (
             <button type="button" onClick={() => setDialog("permissions")}>
               Permissions…
@@ -171,6 +188,11 @@ function InteractivePage({ id }: { id: string }) {
           ) : null}
         </div>
       </div>
+      {editError ? (
+        <p className="problem" role="alert">
+          {editError}
+        </p>
+      ) : null}
       {info.data && info.data.tabs.length > 1 ? (
         <nav aria-label="Workbook tabs" className="tabs">
           {info.data.tabs.map((t) => (

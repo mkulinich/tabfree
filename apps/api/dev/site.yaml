@@ -24,6 +24,8 @@ models:
           capabilities: { view: allow, connect: allow }
         - group: Managers
           capabilities: { view: allow, connect: allow }
+        - group: Authors
+          capabilities: { view: allow, connect: allow }
         - group: Contractors
           capabilities: { view: deny, connect: deny }
     - id: superstore
@@ -39,11 +41,25 @@ projects:
     locked: true
     permissions:
       - group: Executives
-        capabilities: { view: allow, download_summary_data: allow }
+        capabilities: { view: allow, download_summary_data: allow, web_edit: allow }
       - group: Managers
         capabilities: { view: allow }
       - group: Contractors
         capabilities: { view: deny }
+      # Phase 4: authors edit with Claude (Web Edit) and save over dashboards (Overwrite).
+      - group: Authors
+        capabilities: { view: allow, web_edit: allow, overwrite: allow, download_summary_data: allow }
+    # Authors may publish new dashboards here; Priya leads the project (she approves drafts when the
+    # site requires approval).
+    defaults:
+      project:
+        - group: Authors
+          capabilities: { view: allow, publish: allow }
+        - group: Executives
+          capabilities: { view: allow }
+        - group: Managers
+          capabilities: { view: allow }
+    leaders: [priya]
     dashboards:
       - id: sales-overview
         owner: admin
@@ -68,3 +84,5 @@ users:
   - { username: dave, fullname: Dave (South manager), siteRole: viewer, groups: [Managers] }
   - { username: mallory, fullname: Mallory (contractor), siteRole: viewer, groups: [Managers, Contractors] }
   - { username: ivan, fullname: Ivan (no groups), siteRole: viewer }
+  - { username: casey, fullname: Casey (author), siteRole: creator, groups: [Authors, Executives] }
+  - { username: priya, fullname: Priya (Sales project leader), siteRole: creator, groups: [Authors] }
