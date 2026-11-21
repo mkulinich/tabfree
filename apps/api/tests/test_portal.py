@@ -22,7 +22,10 @@ CSRF = {"X-TabFree-Request": "1"}
 @pytest.fixture(scope="module")
 def app(tmp_path_factory: pytest.TempPathFactory) -> Any:
     db = tmp_path_factory.mktemp("sessions") / "s.db"
-    return create_app(Settings(environment="test", dev_login=True, session_db=db))
+    # The minimal built-in page (no portal build), so these tests do not depend on `npm run build`.
+    return create_app(
+        Settings(environment="test", dev_login=True, session_db=db, portal_dir=db.parent / "none")
+    )
 
 
 def signed_in(app: Any, user: str) -> TestClient:
@@ -114,3 +117,20 @@ def test_rules_must_be_well_formed() -> None:
         parse_rules([{"user": "a", "group": "b", "capabilities": {}}])
     with pytest.raises(ValueError, match="allow"):
         parse_rules([{"user": "a", "capabilities": {"view": "maybe"}}])
+
+
+def test_the_built_portal_is_served_for_its_routes(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text('<div id="root"></div><script src="/assets/app.js"></script>')
+    (dist / "assets" / "app.js").write_text("console.log(1)")
+    app = create_app(Settings(environment="test", session_db=tmp_path / "s.db", portal_dir=dist))
+    client = TestClient(app)
+    for path in ("/", "/explore", "/dashboards/sales-overview", "/models/x", "/admin/users", "/account"):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert '<div id="root">' in page.text
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+    assert client.get("/assets/app.js").headers["cache-control"].startswith("public")
+    assert client.get("/assets/../index.html").status_code == 404
+    assert client.get("/assets/nope.js").status_code == 404

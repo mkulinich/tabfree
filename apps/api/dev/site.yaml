@@ -21,16 +21,16 @@ models:
       dataVersion: "2024-12-31"
       permissions:
         - group: Executives
-          capabilities: { connect: allow }
+          capabilities: { view: allow, connect: allow }
         - group: Managers
-          capabilities: { connect: allow }
+          capabilities: { view: allow, connect: allow }
         - group: Contractors
-          capabilities: { connect: deny }
+          capabilities: { view: deny, connect: deny }
     - id: superstore
       dataVersion: "2019-12-30"
       permissions:
         - group: Executives
-          capabilities: { connect: allow }
+          capabilities: { view: allow, connect: allow }
 
 projects:
   - id: sales

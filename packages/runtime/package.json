@@ -6,10 +6,12 @@
   "type": "module",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./host": {
+      "source": "./src/host.ts",
       "types": "./dist/host.d.ts",
       "import": "./dist/host.js"
     },

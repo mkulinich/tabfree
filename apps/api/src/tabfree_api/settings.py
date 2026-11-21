@@ -63,6 +63,8 @@ class Settings(BaseSettings):
 
     #: Built runtime bundles (npm run build -w @tabfree/runtime).
     runtime_dir: Path = REPO_ROOT / "packages" / "runtime" / "dist" / "bundle"
+    #: The built portal (npm run build -w @tabfree/portal); without it, / serves a minimal page.
+    portal_dir: Path = REPO_ROOT / "apps" / "portal" / "dist"
 
     # OpenID Connect. The secret comes from the environment (inject it with `secret run`), never a file.
     oidc_issuer: str | None = None

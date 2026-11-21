@@ -339,4 +339,7 @@ def capabilities(
 ) -> dict[str, bool]:
     """Every applicable capability → allowed, for the UI (which buttons to show)."""
     kind = "project" if isinstance(entry, Project) else entry.kind
-    return {str(cap): evaluate(principal, cap, entry, projects).allowed for cap in sorted(APPLICABLE[kind])}
+    return {
+        str(cap): evaluate(principal, cap, entry, projects).allowed
+        for cap in sorted(APPLICABLE[kind], key=list(Capability).index)
+    }

@@ -317,6 +317,10 @@ def create_router(ctx: Context) -> APIRouter:
             "siteRole": info.site_role.value,
         }
 
+    from tabfree_api import browse
+
+    browse.add_routes(router, ctx, current, csrf)
+
     # ---- personal access tokens (P3.2) -------------------------------------------------------------
 
     def pat_store() -> Any:
@@ -438,8 +442,38 @@ def create_router(ctx: Context) -> APIRouter:
 
     # ---- portal --------------------------------------------------------------------------------
 
+    # The portal is a single-page app: its routes all serve index.html, which then calls the API.
+    portal_index = settings.portal_dir / "index.html"
+    portal_headers = {
+        # Dashboards run in sandboxed srcdoc frames, which inherit this page's policy, so script-src
+        # cannot be locked down here until bundles move to their own origin (P3.6).
+        "Content-Security-Policy": (
+            "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+        ),
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "same-origin",
+    }
+
+    def spa() -> Response | None:
+        if not portal_index.is_file():
+            return None
+        return HTMLResponse(portal_index.read_text(encoding="utf-8"), headers=portal_headers)
+
+    @router.get("/assets/{name}", include_in_schema=False)
+    def portal_asset(name: str) -> FileResponse:
+        path = (settings.portal_dir / "assets" / name).resolve()
+        if path.parent != (settings.portal_dir / "assets").resolve() or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    for route in ("/explore", "/account", "/dashboards/{_id}", "/models/{_id}", "/admin/{_page}"):
+        router.add_api_route(route, lambda: spa() or RedirectResponse("/"), include_in_schema=False)
+
     @router.get("/", response_class=HTMLResponse, include_in_schema=False)
     def home(tabfree_session: Annotated[str | None, Cookie()] = None) -> Response:
+        app_page = spa()
+        if app_page is not None:
+            return app_page
         info = ctx.sessions.get(tabfree_session)
         if info is None:
             return HTMLResponse(_shell("TabFree", '<p><a href="/auth/login">Sign in</a></p>'))

@@ -1,0 +1,129 @@
+import { type DashboardHost, HostQueryError, type Manifest, mountDashboard } from "@tabfree/runtime/host";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+
+import { type DashboardInfo, enc, get } from "../api.js";
+import { FavoriteButton } from "../components/items.js";
+import { PermissionsDialog } from "../components/permissions.js";
+import { RevisionsDialog } from "../components/revisions.js";
+import { Problem } from "../layout.js";
+import { dashboard } from "../router.js";
+
+let frameRuntime: Promise<string> | null = null;
+/** The frame runtime is inlined into each dashboard's sandboxed srcdoc (the frame has no network). */
+function runtimeSource(): Promise<string> {
+  frameRuntime ??= fetch("/runtime/frame.js").then((r) => {
+    if (!r.ok) throw new Error("the dashboard runtime is not built (npm run build -w @tabfree/runtime)");
+    return r.text();
+  });
+  return frameRuntime;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-tabfree-request": "1" },
+    body: JSON.stringify(body),
+  });
+  const json: unknown = await response.json();
+  if (!response.ok) {
+    const detail = (json as { detail?: unknown }).detail;
+    throw new HostQueryError(response.status === 404 ? "not_found" : "query_failed", String(detail ?? "failed"));
+  }
+  return json as T;
+}
+
+function Viewer({ id }: { id: string }) {
+  const container = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let host: DashboardHost | null = null;
+    let cancelled = false;
+    setError(null);
+    (async () => {
+      const [bundle, runtime] = await Promise.all([
+        get<{ manifest: Manifest; html: string }>(`/api/dashboards/${enc(id)}`),
+        runtimeSource(),
+      ]);
+      if (cancelled || !container.current) return;
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      host = mountDashboard({
+        container: container.current,
+        manifest: bundle.manifest,
+        html: bundle.html,
+        runtime,
+        theme: { mode: dark ? "dark" : "light" },
+        runQuery: (request) => post(`/api/dashboards/${enc(id)}/query`, request),
+        runDomain: (request) => post(`/api/dashboards/${enc(id)}/domain`, request),
+        onDashboardError: (message) => setError(message),
+      });
+    })().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      cancelled = true;
+      host?.destroy();
+    };
+  }, [id]);
+  return (
+    <>
+      {error ? <Problem error={new Error(error)} /> : null}
+      <div ref={container} className="viewer" />
+    </>
+  );
+}
+
+export function DashboardPage() {
+  const { id } = dashboard.useParams();
+  const [dialog, setDialog] = useState<"permissions" | "revisions" | null>(null);
+  const info = useQuery({
+    queryKey: ["dashboard-info", id],
+    queryFn: () => get<DashboardInfo>(`/api/dashboards/${enc(id)}/info`),
+  });
+  if (info.error) return <Problem error={info.error} />;
+  const caps = info.data?.capabilities ?? {};
+  return (
+    <div className="dashboard">
+      <div className="viewer-bar">
+        {info.data?.projectPath ? (
+          <nav aria-label="Breadcrumb" className="crumbs">
+            {info.data.project ? (
+              <Link to="/explore" search={{ project: info.data.project }}>
+                {info.data.projectPath.join(" / ")}
+              </Link>
+            ) : null}
+          </nav>
+        ) : null}
+        <h1>{info.data?.name ?? id}</h1>
+        {info.data?.kind ? (
+          <FavoriteButton
+            item={{ kind: "dashboard", id, favorite: Boolean(info.data.favorite), name: info.data.name ?? id }}
+          />
+        ) : null}
+        <div className="toolbar">
+          {caps["set_permissions"] ? (
+            <button type="button" onClick={() => setDialog("permissions")}>
+              Permissions…
+            </button>
+          ) : null}
+          {caps["overwrite"] ? (
+            <button type="button" onClick={() => setDialog("revisions")}>
+              Revisions…
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {info.data && info.data.tabs.length > 1 ? (
+        <nav aria-label="Workbook tabs" className="tabs">
+          {info.data.tabs.map((t) => (
+            <Link key={t.id} to="/dashboards/$id" params={{ id: t.id }} aria-current={t.id === id ? "page" : undefined}>
+              {t.name}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
+      <Viewer id={id} />
+      {dialog === "permissions" ? <PermissionsDialog kind="dashboard" id={id} onClose={() => setDialog(null)} /> : null}
+      {dialog === "revisions" ? <RevisionsDialog kind="dashboard" id={id} onClose={() => setDialog(null)} /> : null}
+    </div>
+  );
+}

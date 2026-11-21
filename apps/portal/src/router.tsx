@@ -1,0 +1,60 @@
+import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+
+import { Layout } from "./layout.js";
+import { AccountPage } from "./pages/account.js";
+import { AdminAudit, AdminGroups, AdminSite, AdminUsers } from "./pages/admin.js";
+import { DashboardPage } from "./pages/dashboard.js";
+import { ExplorePage } from "./pages/explore.js";
+import { HomePage } from "./pages/home.js";
+import { ModelPage } from "./pages/model.js";
+
+const text = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
+
+const root = createRootRoute({ component: Layout });
+const home = createRoute({ getParentRoute: () => root, path: "/", component: HomePage });
+export const explore = createRoute({
+  getParentRoute: () => root,
+  path: "/explore",
+  validateSearch: (s: Record<string, unknown>): { project?: string; q?: string; kind?: string } => {
+    const out: { project?: string; q?: string; kind?: string } = {};
+    const project = text(s["project"]);
+    const q = text(s["q"]);
+    const kind = text(s["kind"]);
+    if (project) out.project = project;
+    if (q) out.q = q;
+    if (kind === "dashboard" || kind === "model") out.kind = kind;
+    return out;
+  },
+  component: ExplorePage,
+});
+export const dashboard = createRoute({
+  getParentRoute: () => root,
+  path: "/dashboards/$id",
+  component: DashboardPage,
+});
+export const model = createRoute({ getParentRoute: () => root, path: "/models/$id", component: ModelPage });
+const account = createRoute({ getParentRoute: () => root, path: "/account", component: AccountPage });
+const adminUsers = createRoute({ getParentRoute: () => root, path: "/admin/users", component: AdminUsers });
+const adminGroups = createRoute({ getParentRoute: () => root, path: "/admin/groups", component: AdminGroups });
+const adminSite = createRoute({ getParentRoute: () => root, path: "/admin/site", component: AdminSite });
+const adminAudit = createRoute({ getParentRoute: () => root, path: "/admin/audit", component: AdminAudit });
+
+const tree = root.addChildren([
+  home,
+  explore,
+  dashboard,
+  model,
+  account,
+  adminUsers,
+  adminGroups,
+  adminSite,
+  adminAudit,
+]);
+
+export const router = createRouter({ routeTree: tree, defaultPreload: "intent" });
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}

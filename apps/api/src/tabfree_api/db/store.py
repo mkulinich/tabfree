@@ -698,6 +698,249 @@ class DbSite:
             )
         self.invalidate()
 
+    # ---- portal: listings, favorites, recents (P3.5) -------------------------------------------------
+
+    def content_info(self, kind: str) -> dict[str, dict[str, Any]]:
+        """Names, descriptions, owners, update times and origins of live content of one kind."""
+        c = t.content
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(c, t.users.c.username)
+                .outerjoin(t.users, t.users.c.id == c.c.owner_id)
+                .where(c.c.site_id == self.id, c.c.kind == kind, c.c.deleted_at.is_(None))
+            ).mappings()
+            return {
+                r["id"]: {
+                    "name": r["name"],
+                    "description": r["description"],
+                    "owner": r["username"],
+                    "updatedAt": _aware(r["updated_at"]).isoformat(),
+                    "revision": r["current_revision"],
+                    "origin": r["origin"],
+                }
+                for r in rows
+            }
+
+    def favorites(self, username: str) -> list[tuple[str, str]]:
+        f = t.favorites
+        with self.engine.connect() as conn:
+            uid = self._user_id(conn, username)
+            return [
+                (k, cid)
+                for k, cid in conn.execute(
+                    select(f.c.kind, f.c.content_id)
+                    .where(f.c.site_id == self.id, f.c.user_id == uid)
+                    .order_by(f.c.created_at.desc())
+                )
+            ]
+
+    def set_favorite(self, username: str, kind: str, content_id: str, on: bool) -> None:
+        f = t.favorites
+        with self.engine.begin() as conn:
+            uid = self._user_id(conn, username)
+            key = and_(
+                f.c.site_id == self.id, f.c.user_id == uid, f.c.kind == kind, f.c.content_id == content_id
+            )
+            exists = conn.execute(select(f.c.kind).where(key)).first() is not None
+            if on and not exists:
+                conn.execute(
+                    insert(f).values(
+                        site_id=self.id, user_id=uid, kind=kind, content_id=content_id, created_at=now()
+                    )
+                )
+            elif not on and exists:
+                conn.execute(delete(f).where(key))
+
+    def recents(self, username: str, limit: int = 20) -> list[tuple[str, str]]:
+        """Content this user viewed most recently, from the audit log."""
+        a = t.audit_events
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(a.c.resource_kind, a.c.resource_id, func.max(a.c.id).label("last"))
+                .where(
+                    a.c.site_id == self.id, a.c.actor == username, a.c.action == "view", a.c.outcome == "ok"
+                )
+                .group_by(a.c.resource_kind, a.c.resource_id)
+                .order_by(func.max(a.c.id).desc())
+                .limit(limit)
+            )
+            return [(str(k), str(cid)) for k, cid, _ in rows]
+
+    # ---- admin (P3.5) ------------------------------------------------------------------------------------
+
+    def admin_users(self) -> list[dict[str, Any]]:
+        """Everyone on the site, disabled users included, with groups and last sign-in."""
+        snap = self._snap()
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(t.users, t.site_users.c.site_role)
+                .join(t.site_users, t.site_users.c.user_id == t.users.c.id)
+                .where(t.site_users.c.site_id == self.id)
+                .order_by(t.users.c.username)
+            ).mappings()
+            out = []
+            for u in rows:
+                live = snap.users.get(u["username"])
+                out.append(
+                    {
+                        "username": u["username"],
+                        "fullname": u["fullname"],
+                        "email": u["email"],
+                        "siteRole": u["site_role"],
+                        "effectiveSiteRole": live.site_role.value if live else u["site_role"],
+                        "authSource": u["auth_source"],
+                        "disabled": bool(u["disabled"]),
+                        "groups": sorted(live.groups) if live else [],
+                        "attributes": u["attributes"] or {},
+                        "lastSignInAt": _aware(u["last_sign_in_at"]).isoformat()
+                        if u["last_sign_in_at"]
+                        else None,
+                    }
+                )
+        return out
+
+    def set_user(
+        self,
+        username: str,
+        *,
+        site_role: SiteRole | None = None,
+        disabled: bool | None = None,
+        fullname: str | None = None,
+        attributes: Mapping[str, str] | None = None,
+    ) -> None:
+        with self.engine.begin() as conn:
+            uid = self._user_id(conn, username)
+            if site_role is not None:
+                conn.execute(
+                    update(t.site_users)
+                    .where(t.site_users.c.site_id == self.id, t.site_users.c.user_id == uid)
+                    .values(site_role=site_role.value)
+                )
+            changes: dict[str, Any] = {}
+            if disabled is not None:
+                changes["disabled"] = disabled
+            if fullname is not None:
+                changes["fullname"] = fullname
+            if attributes is not None:
+                changes["attributes"] = dict(attributes)
+            if changes:
+                conn.execute(update(t.users).where(t.users.c.id == uid).values(changes))
+        self.invalidate()
+
+    def admin_groups(self) -> list[dict[str, Any]]:
+        snap = self._snap()
+        members: dict[str, list[str]] = {}
+        for user in snap.users.values():
+            for g in user.groups:
+                members.setdefault(g, []).append(user.username)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(t.groups).where(t.groups.c.site_id == self.id).order_by(t.groups.c.name)
+            )
+            return [
+                {
+                    "name": g.name,
+                    "source": g.source,
+                    "minimumSiteRole": g.minimum_site_role,
+                    "members": sorted(members.get(g.name, [])),
+                }
+                for g in rows
+            ]
+
+    def delete_group(self, name: str) -> bool:
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                delete(t.groups).where(t.groups.c.site_id == self.id, t.groups.c.name == name)
+            )
+        self.invalidate()
+        return bool(result.rowcount)
+
+    def update_site(
+        self,
+        *,
+        name: str | None = None,
+        default_site_role: SiteRole | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> None:
+        changes: dict[str, Any] = {}
+        if name is not None:
+            changes["name"] = name
+        if default_site_role is not None:
+            changes["default_site_role"] = default_site_role.value
+        if settings is not None:
+            changes["settings"] = dict(settings)
+        if changes:
+            with self.engine.begin() as conn:
+                conn.execute(update(t.sites).where(t.sites.c.id == self.id).values(changes))
+        self.invalidate()
+
+    def settings(self) -> dict[str, Any]:
+        with self.engine.connect() as conn:
+            value = conn.execute(select(t.sites.c.settings).where(t.sites.c.id == self.id)).scalar()
+        return dict(value or {})
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        asset_permissions: str | None = None,
+        owner: str | None = None,
+    ) -> None:
+        with self.engine.begin() as conn:
+            changes: dict[str, Any] = {}
+            if name is not None:
+                changes["name"] = name
+            if description is not None:
+                changes["description"] = description
+            if asset_permissions is not None:
+                changes["asset_permissions"] = asset_permissions
+            if owner is not None:
+                changes["owner_id"] = self._user_id(conn, owner)
+            if changes:
+                conn.execute(
+                    update(t.projects)
+                    .where(t.projects.c.site_id == self.id, t.projects.c.id == project_id)
+                    .values(changes)
+                )
+        self.invalidate()
+
+    def delete_project(self, project_id: str) -> None:
+        """Refused while the project (or a nested one) still holds live content."""
+        nested = {
+            p.id for p in self.projects.values() if project_id in {a.id for a in _chain(p.id, self.projects)}
+        }
+        with self.engine.begin() as conn:
+            live = conn.execute(
+                select(func.count())
+                .select_from(t.content)
+                .where(
+                    t.content.c.site_id == self.id,
+                    t.content.c.project_id.in_(sorted(nested)),
+                    t.content.c.deleted_at.is_(None),
+                )
+            ).scalar_one()
+            if live:
+                raise ContentError("move or delete the project's content first")
+            conn.execute(
+                delete(t.permission_rules).where(
+                    t.permission_rules.c.site_id == self.id,
+                    t.permission_rules.c.resource_kind == "project",
+                    t.permission_rules.c.resource_id.in_(sorted(nested)),
+                )
+            )
+            conn.execute(
+                delete(t.projects).where(t.projects.c.site_id == self.id, t.projects.c.id == project_id)
+            )
+        self.invalidate()
+
+
+def _chain(project: str, projects: Mapping[str, Project]) -> list[Project]:
+    from tabfree_api.authz import ancestry
+
+    return ancestry(project, projects)
+
 
 class _Models(Mapping[str, Mapping[str, Any]]):
     """The site's semantic models (current revisions), for the query service."""

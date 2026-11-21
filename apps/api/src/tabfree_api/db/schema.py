@@ -268,3 +268,14 @@ audit_events = Table(
     Column("detail", Document, nullable=False, default=dict),
     Index("ix_audit_events_site_at", "site_id", "at"),
 )
+
+favorites = Table(
+    "favorites",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("kind", String(16), primary_key=True),
+    Column("content_id", String(100), primary_key=True),
+    Column("created_at", Timestamp, nullable=False),
+    CheckConstraint(_in("kind", RESOURCE_KINDS), name="kind"),
+)
