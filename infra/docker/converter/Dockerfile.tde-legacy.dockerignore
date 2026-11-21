@@ -1,0 +1,10 @@
+# BuildKit reads <Dockerfile>.dockerignore: keep the context to the uv workspace sources.
+**
+!pyproject.toml
+!uv.lock
+!packages/**
+!apps/**
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+packages/runtime

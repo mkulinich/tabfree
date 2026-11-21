@@ -16,7 +16,7 @@ variable "ecr_namespace" {
 variable "repositories" {
   description = "ECR repositories to create, one per TabFree image."
   type        = list(string)
-  default     = ["api", "worker", "author", "snapshot"]
+  default     = ["api", "worker", "author", "snapshot", "converter"]
 }
 
 variable "image_tag_mutability" {

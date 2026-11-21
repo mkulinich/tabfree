@@ -32,6 +32,9 @@ known-first-party = ["tabfree_api", "tabfree_compiler", "tabfree_migrate", "tabf
 "**/tests/**" = ["S101", "S105", "S106"]
 # Hyper SQL is built from catalog names, always quoted; the files themselves are the input.
 "packages/migrate/src/tabfree_migrate/hyper.py" = ["S608"]
+"packages/migrate/src/tabfree_migrate/parity.py" = ["S608"]
+"packages/migrate/src/tabfree_migrate/tde.py" = ["S608"]
+"packages/migrate/tests/test_parity.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"

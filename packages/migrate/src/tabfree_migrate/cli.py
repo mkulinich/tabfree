@@ -211,6 +211,150 @@ def convert_hyper_command(
         typer.echo(f"{result.glue_table:<30} {result.rows:>10} rows -> {result.parquet}")
 
 
+@app.command("convert-batch")
+def convert_batch_command(
+    out: Annotated[
+        str, typer.Option(envvar="TABFREE_CONVERT_OUT", help="Output: a directory or s3://bucket/prefix.")
+    ],
+    input_dir: Annotated[
+        Path | None, typer.Option(help="Directory of .hyper/.tde/.twbx/.tdsx files to convert.")
+    ] = None,
+    store: Annotated[
+        str | None,
+        typer.Option(
+            envvar="TABFREE_CONVERT_STORE",
+            help="Content-addressed store written by `download` (directory or s3://); uses its manifest.",
+        ),
+    ] = None,
+    database: Annotated[
+        str, typer.Option(envvar="TABFREE_GLUE_DATABASE", help="Glue database for the Athena DDL.")
+    ] = "tabfree_lake",
+    iceberg_root: Annotated[
+        str | None,
+        typer.Option(
+            envvar="TABFREE_ICEBERG_ROOT", help="S3 prefix for Iceberg tables (Glue database location)."
+        ),
+    ] = None,
+    workers: Annotated[int, typer.Option(min=1, help="Parallel conversions in this process.")] = max(
+        1, (os.cpu_count() or 2) // 2
+    ),
+    shard: Annotated[str, typer.Option(help="INDEX/COUNT: this task's share, for parallel tasks.")] = "0/1",
+    tde: Annotated[
+        str, typer.Option(help="flag (report .tde as needs-upgrade) or upgrade (legacy image only).")
+    ] = "flag",
+    work_dir: Annotated[
+        Path | None, typer.Option(envvar="TABFREE_WORK_DIR", help="Scratch directory (needs space).")
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Convert again even if already done.")] = False,
+) -> None:
+    """Convert many extracts in parallel to Parquet + Athena DDL, resumably (P2.8).
+
+    Writes extracts/<sha256>/ (Parquet per table and report.json) and extracts/manifest.json to
+    --out. A re-run skips extracts already converted. Legacy .tde files are reported as
+    needs-upgrade. Conversion needs the [hyper] extra (Linux x86-64 or Windows).
+    """
+    from tabfree_migrate.blobstore import sink_for
+    from tabfree_migrate.convert_batch import (
+        BatchOptions,
+        convert_batch,
+        parse_shard,
+        sources_from_directory,
+        sources_from_store,
+    )
+
+    if tde not in {"flag", "upgrade"}:
+        typer.echo("error: --tde must be flag or upgrade", err=True)
+        raise typer.Exit(code=2)
+    try:
+        shard_spec = parse_shard(shard)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    store_sink = sink_for(store) if store is not None else None
+    if store_sink is not None and input_dir is None:
+        sources = sources_from_store(store_sink)
+    elif input_dir is not None and store_sink is None:
+        sources = sources_from_directory(input_dir)
+    else:
+        typer.echo("error: give exactly one of --input-dir or --store", err=True)
+        raise typer.Exit(code=2)
+    options = BatchOptions(
+        out=out,
+        database=database,
+        iceberg_root=iceberg_root,
+        tde_mode="upgrade" if tde == "upgrade" else "flag",
+        work_dir=str(work_dir) if work_dir else "",
+    )
+
+    def show(report: dict[str, object]) -> None:
+        tables = cast("list[dict[str, object]]", report.get("tables") or [])
+        detail = report.get("error") or ", ".join(
+            f"{t.get('glue_table')} ({t.get('rows')} rows)" for t in tables
+        )
+        typer.echo(f"{report.get('status')!s:<14} {report.get('origin')}  {detail}")
+
+    stats = convert_batch(
+        sources, options, store=store_sink, workers=workers, shard=shard_spec, force=force, on_report=show
+    )
+    typer.echo(
+        f"converted {stats.converted}, skipped {stats.skipped}, needs-upgrade {stats.flagged}, "
+        f"upgraded {stats.upgraded}, failed {stats.failed}"
+    )
+    if stats.failed:
+        raise typer.Exit(code=1)
+
+
+@app.command("parity-check")
+def parity_check_command(
+    report_path: Annotated[Path, typer.Argument(help="An extracts/<sha256>/report.json from convert-batch.")],
+    engine: Annotated[str, typer.Option(help="duckdb (local Parquet) or athena (needs AWS).")] = "duckdb",
+    root: Annotated[
+        Path | None, typer.Option(help="duckdb: the local --out directory the report's Parquet keys are in.")
+    ] = None,
+    database: Annotated[str, typer.Option(envvar="TABFREE_GLUE_DATABASE")] = "tabfree_lake",
+    workgroup: Annotated[str | None, typer.Option(envvar="TABFREE_ATHENA_WORKGROUP")] = None,
+) -> None:
+    """Compare per-column statistics of converted tables with those Hyper recorded (P2.8)."""
+    from tabfree_migrate.convert_batch import check_report_parity
+    from tabfree_migrate.parity import AthenaRunner, QueryRunner, duckdb_parquet_runner
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    runner: QueryRunner
+    if engine == "duckdb":
+        if root is None:
+            typer.echo("error: --root is required with --engine duckdb", err=True)
+            raise typer.Exit(code=2)
+        files = {str(t["glue_table"]): str(root / str(t["parquet"])) for t in report.get("tables", [])}
+        runner = duckdb_parquet_runner(files)
+        dialect = "duckdb"
+    elif engine == "athena":
+        if not workgroup:
+            typer.echo("error: --workgroup is required with --engine athena", err=True)
+            raise typer.Exit(code=2)
+        import importlib
+
+        boto3 = importlib.import_module("boto3")
+        runner = AthenaRunner(boto3.client("athena"), workgroup)
+        dialect = "athena"
+    else:
+        typer.echo("error: --engine must be duckdb or athena", err=True)
+        raise typer.Exit(code=2)
+    results = check_report_parity(
+        report, runner, "athena" if dialect == "athena" else "duckdb", database=database
+    )
+    failed = False
+    for table, result in results.items():
+        typer.echo(f"{'ok  ' if result.ok else 'FAIL'} {table}: {len(result.checks)} checks")
+        for check in [*result.errors, *result.warnings]:
+            typer.echo(
+                f"  {check.severity:<7} {check.column}.{check.stat} ({check.rule}): "
+                f"expected {check.expected!r}, got {check.actual!r}"
+            )
+        failed = failed or not result.ok
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def report(
     paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx files (or directories to search)")],
