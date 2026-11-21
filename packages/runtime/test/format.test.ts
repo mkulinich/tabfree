@@ -65,10 +65,20 @@ describe("applyTableCalcs", () => {
       { name: "Share", type: "percent_of_total", of: "Sales", computeUsing: "table_down" },
       { name: "Rank", type: "rank", of: "Sales", computeUsing: "table_down" },
     ]);
-    expect(column(out, "Diff")).toEqual([null, 10, null, null, null]);
+    // Tableau's Difference is ZN([Sales]) - LOOKUP(ZN([Sales]), -1): a null month counts as 0.
+    expect(column(out, "Diff")).toEqual([null, 10, null, -5, 15]);
     expect(column(out, "Share")).toEqual([0.2, 0.4, 0.1, null, 0.3]);
     expect(column(out, "Rank")).toEqual([3, 1, 4, null, 2]);
     expect(out.columns.find((c) => c.name === "Share")?.format).toBe("0.0%");
+  });
+
+  it("re-exports the @tabfree/tablecalc engine: custom formulas, options and filters", () => {
+    const out = applyTableCalcs(
+      table,
+      [{ name: "Prev", type: "custom", expr: "LOOKUP(SUM([Sales]), -1)", computeUsing: "table_across" }],
+      { across: ["Month"], filters: [{ expr: "[Region] = 'West'" }] },
+    );
+    expect(column(out, "Prev")).toEqual([null, 5, null]);
   });
 
   it("rejects unsupported calculations and unknown columns", () => {

@@ -1,0 +1,22 @@
+{
+  "name": "@tabfree/tablecalc",
+  "version": "0.0.1",
+  "description": "TabFree table-calculation engine: Tableau table calcs (addressing, partitioning, quick calcs, custom expressions, densification) over a query result.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

@@ -5,6 +5,7 @@
   "description": "TabFree TypeScript workspaces (dashboard runtime; the portal arrives in Phase 3).",
   "license": "Apache-2.0",
   "workspaces": [
+    "packages/tablecalc",
     "packages/runtime"
   ],
   "engines": {
