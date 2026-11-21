@@ -217,6 +217,9 @@ def report(
     out: Annotated[Path, typer.Option(help="Directory for report.md and report.json.")] = Path("report"),
     inventory: Annotated[Path | None, typer.Option(help="The crawler's inventory database.")] = None,
     usage: Annotated[Path | None, typer.Option(help="CSV with workbook,views_180d columns.")] = None,
+    repository: Annotated[
+        Path | None, typer.Option(help="The repository harvest database (usage from views_stats).")
+    ] = None,
 ) -> None:
     """Inventory report (P1.6): census, connections, RLS, compiler readiness and triage."""
     from tabfree_migrate import report as rpt
@@ -237,7 +240,7 @@ def report(
             typer.echo(f"skip {path}: {exc}")
     workbooks, connections, estate = rpt.build(
         irs,
-        usage=rpt.load_usage(usage) if usage else None,
+        usage=rpt.load_usage(usage) if usage else rpt.repository_usage(repository) if repository else None,
         inventory=rpt.inventory_details(inventory) if inventory else None,
     )
     md, js = rpt.write_report(out, workbooks, connections, estate)

@@ -14,6 +14,7 @@ needs the owner's confirmation, and the thresholds are first guesses to calibrat
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import json
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -156,6 +157,50 @@ def triage(wb: WorkbookReport) -> tuple[Triage, list[str]]:
 def load_usage(path: Path) -> dict[str, int]:
     with path.open(newline="", encoding="utf-8") as handle:
         return {row["workbook"]: int(row["views_180d"]) for row in csv.DictReader(handle)}
+
+
+def repository_usage(
+    db: Path, now: dt.datetime | None = None, days: int = RETIRE_AFTER_DAYS
+) -> dict[str, int]:
+    """Views per workbook name in the last ``days`` days, from the repository harvest (P1.3).
+
+    ``views_stats`` keeps one row per user and view, with a running count (``nviews``) and the time of
+    the last view. A workbook counts as used when any of its views was last seen inside the window;
+    its number is the running total of those rows (an upper bound on views in the window). Workbooks
+    whose views were all last seen earlier get 0.
+    """
+    from tabfree_migrate.repository import RepositoryStore
+
+    cutoff = (now or dt.datetime.now(dt.UTC)) - dt.timedelta(days=days)
+    store = RepositoryStore(db)
+    try:
+        workbook_names = {
+            int(r["id"]): str(r["name"]) for r in store.rows("workbooks") if r.get("id") is not None
+        }
+        view_workbook = {
+            int(r["id"]): int(r["workbook_id"])
+            for r in store.rows("views")
+            if r.get("workbook_id") is not None
+        }
+        usage = dict.fromkeys(workbook_names.values(), 0)
+        for row in store.rows("views_stats"):
+            workbook = workbook_names.get(view_workbook.get(int(row.get("view_id") or -1), -1))
+            seen = _timestamp(row.get("time"))
+            if workbook is not None and seen is not None and seen >= cutoff:
+                usage[workbook] += int(row.get("nviews") or 0)
+        return usage
+    finally:
+        store.close()
+
+
+def _timestamp(value: Any) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
 
 
 def inventory_details(db: Path) -> dict[str, dict[str, Any]]:

@@ -85,3 +85,30 @@ def test_report_command_over_the_corpus(tmp_path: Path) -> None:
     data = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
     tdvt = next(w for w in data["workbooks"] if w["name"] == "TDVT Results")
     assert tdvt["triage"] == "retire"
+
+
+def test_usage_from_the_repository_harvest(tmp_path: Path) -> None:
+    import datetime as dt
+
+    from tabfree_migrate.report import repository_usage
+    from tabfree_migrate.repository import RepositoryStore
+
+    db = tmp_path / "repo.db"
+    store = RepositoryStore(db)
+    run = store.start_run("fixture")
+    store.put_rows("fixture", "workbooks", [{"id": 1, "name": "Busy"}, {"id": 2, "name": "Stale"}], run)
+    store.put_rows("fixture", "views", [{"id": 10, "workbook_id": 1}, {"id": 20, "workbook_id": 2}], run)
+    store.put_rows(
+        "fixture",
+        "views_stats",
+        [
+            {"id": 1, "view_id": 10, "nviews": 7, "time": "2026-10-01T09:00:00"},
+            {"id": 2, "view_id": 10, "nviews": 3, "time": "2026-11-01T09:00:00"},
+            {"id": 3, "view_id": 20, "nviews": 50, "time": "2025-01-01T09:00:00"},
+        ],
+        run,
+    )
+    store.db.commit()  # the harvest commits at the end of a run
+    store.close()
+    usage = repository_usage(db, now=dt.datetime(2026, 11, 20, tzinfo=dt.UTC))
+    assert usage == {"Busy": 10, "Stale": 0}
