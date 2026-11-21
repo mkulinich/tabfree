@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dimensional Hierarchy Example</title>
+    <style>
+      tf-dashboard { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .wide { grid-column: 1 / -1; }
+      .filters, .kpis { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; }
+      h1 { grid-column: 1 / -1; font-size: 18px; margin: 0; }
+      p.help { grid-column: 1 / -1; margin: 0; color: var(--tf-muted); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <tf-dashboard>
+      <h1>Dimensional Hierarchy Example</h1>
+      <p class="help">Click a category, then a sub-category, to drill down. Click again to go back up.</p>
+      <div class="filters">
+        <tf-filter name="region" control="checklist"></tf-filter>
+        <tf-filter name="segment"></tf-filter>
+      </div>
+      <div class="kpis">
+        <tf-kpi query="kpis" measure="Sales" label="Sales in view"></tf-kpi>
+        <tf-kpi query="kpis" measure="Total Sales" label="Total sales (FIXED)"></tf-kpi>
+        <tf-kpi query="kpis" measure="Share of Total" label="As a % of total sales"></tf-kpi>
+      </div>
+      <tf-chart title="Category: % of total sales" query="by_category" mark="bar" x="% of Total Sales" y="Category" color="Profit Ratio"></tf-chart>
+      <tf-chart title="Sub-Category: % of total sales" query="by_subcategory" mark="bar" x="% of Total Sales" y="Sub-Category" height="420"></tf-chart>
+      <tf-chart title="Ship cost per Segment (avg discount)" query="discount_by_segment" mark="bar" x="Segment" y="Avg Discount" color="Ship Mode"></tf-chart>
+      <tf-crosstab class="wide" title="Products" query="products" max-rows="200"></tf-crosstab>
+    </tf-dashboard>
+  </body>
+</html>

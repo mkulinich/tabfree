@@ -61,7 +61,8 @@ class QueryService:
         model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
         query = dict(bound.query)
-        query["limit"] = min(int(query.get("limit", ROW_LIMIT)), ROW_LIMIT) + 1
+        cap = min(int(query.get("limit", ROW_LIMIT)), ROW_LIMIT)
+        query["limit"] = cap + 1  # one extra row tells us the result was truncated
         compiled = compile_query(
             model,
             query,
@@ -70,10 +71,14 @@ class QueryService:
             parameters=bound.parameters,
             filters=bound.filters,
         )
-        result = engine.execute(compiled, ROW_LIMIT)
-        truncated = len(result.rows) > ROW_LIMIT
-        rows = result.rows[:ROW_LIMIT]
+        result = engine.execute(compiled, cap)
+        # A query's own limit is part of its design (e.g. "top 200"), not a truncation.
+        truncated = len(result.rows) > cap and cap == ROW_LIMIT
+        rows = result.rows[:cap]
         formats = {f["name"]: f["format"] for f in doc.get("fields", []) if f.get("format")}
+        for spec in bound.query.get("measures", []):  # a format on the query's measure wins
+            if isinstance(spec, Mapping) and spec.get("format"):
+                formats[spec.get("as") or spec["field"]] = spec["format"]
         columns: list[dict[str, Any]] = []
         for c in compiled.columns:
             column: dict[str, Any] = {

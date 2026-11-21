@@ -94,7 +94,8 @@ function applyOne(table: Table, calc: TableCalc): Table {
     name: calc.name,
     type: type ? "integer" : "float",
     role: "measure",
-    ...(calc.type.startsWith("percent") ? { format: "0.0%" } : source?.format ? { format: source.format } : {}),
+    // Ranks, indexes and counts are plain integers; only value-like results keep the source's format.
+    ...(calc.type.startsWith("percent") ? { format: "0.0%" } : !type && source?.format ? { format: source.format } : {}),
   };
   return { columns: [...table.columns, column], rows: table.rows.map((row, i) => [...row, out[i] ?? null]) };
 }

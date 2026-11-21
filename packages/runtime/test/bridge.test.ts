@@ -37,7 +37,10 @@ const manifest: Manifest = {
   actions: [{ type: "filter", source: ["by_region"], targets: ["trend"], fields: ["Region"] }],
 };
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** MessagePort delivery is asynchronous and can take more than one macrotask under load. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function connectFrame(host: DashboardHost, hostListener: (e: MessageEvent) => void): Promise<TabfreeClient> {
   const frameListeners = new Set<(e: MessageEvent) => void>();

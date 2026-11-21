@@ -35,7 +35,7 @@ def test_preview_is_off_by_default_and_refused_outside_dev(tmp_path: Path) -> No
 
 def test_page_and_bundle(client: TestClient) -> None:
     assert "View as" in client.get("/preview").text
-    assert client.get("/preview/api/dashboards").json() == ["sales-overview"]
+    assert "sales-overview" in client.get("/preview/api/dashboards").json()
     bundle = client.get("/preview/api/dashboards/sales-overview").json()
     assert bundle["manifest"]["id"] == "sales-overview"
     assert "<tf-chart" in bundle["html"]

@@ -23,10 +23,11 @@ SAMPLE_TODAY = dt.date(2024, 12, 31)
 @functools.cache
 def _sample_engine() -> DuckDBEngine:
     """One read-only sample database per process."""
-    from tabfree_api.sample import load_sample_data
+    from tabfree_api.sample import load_sample_data, load_superstore
 
     engine = DuckDBEngine.in_memory()
     load_sample_data(engine.connection)
+    load_superstore(engine.connection)
     return engine
 
 

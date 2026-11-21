@@ -29,7 +29,7 @@ export const STYLES = `
 }
 html, body { margin: 0; background: var(--tf-bg); color: var(--tf-text); }
 tf-dashboard { display: block; padding: 16px; }
-tf-chart, tf-crosstab, tf-kpi { display: block; min-width: 0; background: var(--tf-surface);
+tf-chart, tf-crosstab, tf-kpi, tf-map { display: block; min-width: 0; background: var(--tf-surface);
   border: 1px solid var(--tf-border); border-radius: 8px; padding: 12px; }
 tf-filter, tf-parameter { display: inline-flex; flex-direction: column; gap: 4px; min-width: 160px; }
 [aria-busy="true"] { opacity: 0.6; }
@@ -43,6 +43,10 @@ tf-filter, tf-parameter { display: inline-flex; flex-direction: column; gap: 4px
 .tf-range, .tf-slider { display: flex; gap: 6px; align-items: center; }
 .tf-range .tf-input { width: 6em; }
 .tf-error { color: var(--tf-error); }
+.tf-kpi-change { font-size: 12px; font-weight: 600; }
+.tf-up { color: var(--tf-c2); } .tf-down { color: var(--tf-c3); } .tf-flat { color: var(--tf-muted); }
+.tf-empty { fill: var(--tf-grid); }
+.tf-svg .tf-tile-label { fill: var(--tf-text); font-size: 10px; pointer-events: none; }
 .tf-note { color: var(--tf-muted); font-size: 12px; margin-top: 6px; }
 .tf-svg { display: block; max-width: 100%; height: auto; overflow: visible; }
 .tf-svg text { fill: var(--tf-muted); font-size: 11px; }

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+from pathlib import Path
 from typing import Any
+
+#: Tableau's Sample - Superstore, converted from the corpus (corpus/derived/superstore/PROVENANCE.md).
+SUPERSTORE = Path(__file__).resolve().parents[4] / "corpus" / "derived" / "superstore"
 
 #: Regional managers, as in the example model's people table (the RLS rule keys on them).
 MANAGERS = {"East": "alice", "West": "bob", "Central": "carol", "South": "dave"}
@@ -76,3 +80,15 @@ def load_sample_data(con: Any) -> None:
     )
     con.execute("CREATE OR REPLACE TABLE tabfree_lake.people (region VARCHAR, regional_manager VARCHAR)")
     con.executemany("INSERT INTO tabfree_lake.people VALUES (?, ?)", list(MANAGERS.items()))
+
+
+def load_superstore(con: Any, folder: Path = SUPERSTORE) -> bool:
+    """Load the real Superstore tables as tabfree_lake.superstore_*; False if the files are absent."""
+    if not (folder / "orders.parquet").is_file():
+        return False
+    con.execute("CREATE SCHEMA IF NOT EXISTS tabfree_lake")
+    for table in ("orders", "people", "returns"):  # constant names, never input
+        path = folder / f"{table}.parquet"
+        sql = f"CREATE OR REPLACE TABLE tabfree_lake.superstore_{table} AS SELECT * FROM read_parquet(?)"  # noqa: S608
+        con.execute(sql, [str(path)])
+    return True

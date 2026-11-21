@@ -5,7 +5,8 @@
  * - `<tf-dashboard>`: root container; applies the theme and reports the frame height.
  * - `<tf-chart query mark x y color>`: bar, line, area or point chart.
  * - `<tf-crosstab query>`: a sortable table.
- * - `<tf-kpi query measure label>`: one big number.
+ * - `<tf-kpi query measure label change>`: one big number, optionally with a ▲/▼ change measure.
+ * - `<tf-map query geo color>`: US state tile map; click a state to select it.
  * - `<tf-filter name control>`: dropdown, checklist, relative-date, range or wildcard control.
  * - `<tf-parameter name control>`: slider, dropdown or input.
  */
@@ -13,6 +14,7 @@
 import { ChartError, renderChart, type Mark } from "./chart.js";
 import { h } from "./dom.js";
 import { formatValue } from "./format.js";
+import { MapError, renderStateMap } from "./map.js";
 import type { FilterSpec, FilterValue, Period, Scalar, Tuple } from "./protocol.js";
 import { client, QueryError, type QueryResult, type TabfreeClient } from "./sdk.js";
 
@@ -227,7 +229,7 @@ export class TfCrosstab extends TfElement {
 // ---- tf-kpi ------------------------------------------------------------------------------------
 
 export class TfKpi extends TfElement {
-  static observedAttributes = ["query", "measure", "label"];
+  static observedAttributes = ["query", "measure", "label", "change"];
 
   protected async render(isCurrent: () => boolean): Promise<void> {
     if (!this.tf) return;
@@ -238,10 +240,51 @@ export class TfKpi extends TfElement {
     const column = result.columns[i];
     if (i < 0 || !column) throw new Error(`the query has no column "${measure}"`);
     const value = result.rows[0]?.[i] ?? null;
-    this.replaceChildren(
+    const parts: HTMLElement[] = [
       h("div", { class: "tf-kpi-label" }, this.getAttribute("label") ?? measure),
       h("div", { class: "tf-kpi-value" }, formatValue(value, column)),
-    );
+    ];
+    const changeName = this.getAttribute("change");
+    if (changeName) {
+      const ci = result.columns.findIndex((c) => c.name === changeName);
+      if (ci < 0) throw new Error(`the query has no column "${changeName}"`);
+      const change = result.rows[0]?.[ci] ?? null;
+      const direction = typeof change !== "number" ? "flat" : change > 0.02 ? "up" : change < -0.02 ? "down" : "flat";
+      const arrow = { up: "▲", down: "▼", flat: "■" }[direction];
+      const text = typeof change === "number" ? formatValue(change, { type: "float", format: "0.0%" }) : "n/a";
+      parts.push(h("div", { class: `tf-kpi-change tf-${direction}` }, `${arrow} ${text}`));
+    }
+    this.replaceChildren(...parts);
+  }
+}
+
+// ---- tf-map -----------------------------------------------------------------------------------
+
+export class TfMap extends TfElement {
+  static observedAttributes = ["query", "geo", "color"];
+  #selected: Tuple | null = null;
+
+  protected async render(isCurrent: () => boolean): Promise<void> {
+    if (!this.tf) return;
+    const query = required(this, "query");
+    const result = await this.tf.query(query);
+    if (!isCurrent()) return;
+    const highlight = this.tf.state.highlight;
+    let svg: SVGSVGElement;
+    try {
+      svg = renderStateMap(required(this, "geo"), required(this, "color"), result, {
+        width: Math.max(240, Math.floor(this.clientWidth || 480) - 24),
+        highlight: highlight ? highlight.tuples : this.#selected ? [this.#selected] : null,
+        onSelect: (tuple) => {
+          const same = tuple !== null && this.#selected !== null && sameTuple(tuple, this.#selected);
+          this.#selected = same ? null : tuple;
+          this.tf?.select(query, this.#selected ? [this.#selected] : []);
+        },
+      });
+    } catch (error) {
+      throw error instanceof MapError ? new Error(error.message) : error;
+    }
+    this.replaceChildren(...[this.title_(), svg].filter((n): n is HTMLElement | SVGSVGElement => n !== null));
   }
 }
 
@@ -412,6 +455,7 @@ export const ELEMENTS: Record<string, CustomElementConstructor> = {
   "tf-chart": TfChart,
   "tf-crosstab": TfCrosstab,
   "tf-kpi": TfKpi,
+  "tf-map": TfMap,
   "tf-filter": TfFilter,
   "tf-parameter": TfParameter,
 };

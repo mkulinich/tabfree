@@ -45,20 +45,24 @@ def test_anonymous_requests_need_sign_in(app: Any) -> None:
     assert "Sign in" in client.get("/").text
 
 
+ALL = ["dimensional-hierarchy", "sales-analysis", "sales-overview"]
+
+
 @pytest.mark.parametrize(
-    ("user", "visible"),
+    ("user", "expected"),
     [
-        ("admin", True),  # site administrator
-        ("erin", True),  # Executives: allow
-        ("alice", True),  # Managers: allow
-        ("mallory", False),  # Managers allow + Contractors deny: deny wins
-        ("ivan", False),  # no rule applies: unspecified is denied
+        ("admin", ALL),  # site administrator
+        ("erin", ALL),  # Executives: allowed in both projects
+        ("alice", ["sales-analysis", "sales-overview"]),  # Managers: the Sales project only
+        ("mallory", []),  # Managers allow + Contractors deny: deny wins
+        ("ivan", []),  # no rule applies: unspecified is denied
     ],
 )
-def test_view_permission(app: Any, user: str, visible: bool) -> None:
+def test_view_permission(app: Any, user: str, expected: list[str]) -> None:
     client = signed_in(app, user)
     listed = [d["id"] for d in client.get("/api/dashboards").json()]
-    assert listed == (["sales-overview"] if visible else [])
+    assert listed == expected
+    visible = "sales-overview" in expected
     assert client.get("/api/dashboards/sales-overview").status_code == (200 if visible else 404)
     assert run(client, "kpis").status_code == (200 if visible else 404)
 

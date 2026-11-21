@@ -1,0 +1,172 @@
+# Tableau's "Sample - Superstore" (orders, people, returns), converted from the .xls packaged in the corpus
+# workbook "Dimensional-Flat example Hierarchy Navigator_v2018.2.twbx" (see corpus/derived/superstore).
+# Calculated fields come from two corpus workbooks recreated in P1.12:
+#   - Dimensional-Flat example Hierarchy Navigator: Total Sales ({FIXED : SUM([Sales])}), Profit Ratio
+#   - eBike Sales Analysis: the prorated "Current vs Previous" month comparison and its BAN measures,
+#     re-pointed from the eBike data source to Superstore fields (Order Placed Date -> Order Date,
+#     Units -> Quantity, Return Flag -> Returned).
+schema: tabfree/model@0
+id: superstore
+title: Superstore
+description: Tableau's Sample - Superstore orders with regional managers and returns.
+
+connection:
+  engine: athena
+  database: tabfree_lake
+  workgroup: tabfree-sandbox
+
+settings:
+  weekStart: sunday
+
+tables:
+  - id: orders
+    source: { table: superstore_orders }
+    primaryKey: [row_id]
+    columns:
+      - { name: row_id, type: integer }
+      - { name: order_id, type: string }
+      - { name: order_date, type: date }
+      - { name: ship_date, type: date }
+      - { name: ship_mode, type: string }
+      - { name: customer_id, type: string }
+      - { name: customer_name, type: string }
+      - { name: segment, type: string }
+      - { name: country, type: string }
+      - { name: city, type: string }
+      - { name: state, type: string }
+      - { name: postal_code, type: string }
+      - { name: region, type: string }
+      - { name: product_id, type: string }
+      - { name: category, type: string }
+      - { name: sub_category, type: string }
+      - { name: product_name, type: string }
+      - { name: sales, type: float }
+      - { name: quantity, type: integer }
+      - { name: discount, type: float }
+      - { name: profit, type: float }
+  - id: people
+    source: { table: superstore_people }
+    primaryKey: [region]
+    columns:
+      - { name: region, type: string }
+      - { name: regional_manager, type: string }
+  - id: returns
+    source: { table: superstore_returns }
+    primaryKey: [order_id]
+    columns:
+      - { name: order_id, type: string }
+      - { name: returned, type: string }
+
+relationships:
+  - { left: orders, right: people, on: [{ left: region, right: region }], cardinality: many_to_one }
+  - { left: orders, right: returns, on: [{ left: order_id, right: order_id }], cardinality: many_to_one }
+
+fields:
+  - { id: order_id, name: Order ID, role: dimension, type: string, table: orders, column: order_id }
+  - { id: order_date, name: Order Date, role: dimension, type: date, table: orders, column: order_date }
+  - { id: ship_date, name: Ship Date, role: dimension, type: date, table: orders, column: ship_date }
+  - { id: ship_mode, name: Ship Mode, role: dimension, type: string, table: orders, column: ship_mode }
+  - { id: customer_name, name: Customer Name, role: dimension, type: string, table: orders, column: customer_name }
+  - { id: segment, name: Segment, role: dimension, type: string, table: orders, column: segment }
+  - { id: city, name: City, role: dimension, type: string, table: orders, column: city }
+  - { id: state, name: State, role: dimension, type: string, table: orders, column: state, semanticRole: state_province }
+  - { id: region, name: Region, role: dimension, type: string, table: orders, column: region }
+  - { id: category, name: Category, role: dimension, type: string, table: orders, column: category }
+  - { id: sub_category, name: Sub-Category, role: dimension, type: string, table: orders, column: sub_category }
+  - { id: product_name, name: Product Name, role: dimension, type: string, table: orders, column: product_name }
+  - { id: regional_manager, name: Regional Manager, role: dimension, type: string, table: people, column: regional_manager }
+  - { id: returned, name: Returned, role: dimension, type: string, table: returns, column: returned }
+  - { id: sales, name: Sales, role: measure, type: float, table: orders, column: sales, defaultAggregation: sum, format: "$#,##0" }
+  - { id: quantity, name: Quantity, role: measure, type: integer, table: orders, column: quantity, defaultAggregation: sum, format: "#,##0" }
+  - { id: discount, name: Discount, role: measure, type: float, table: orders, column: discount, defaultAggregation: avg, format: "0.0%" }
+  - { id: profit, name: Profit, role: measure, type: float, table: orders, column: profit, defaultAggregation: sum, format: "$#,##0" }
+
+  # From "Dimensional-Flat example Hierarchy Navigator"
+  - id: total_sales
+    name: Total Sales
+    description: "Sales across the whole data source, whatever the view (Tableau: {fixed: sum([Sales])})."
+    role: measure
+    type: float
+    formula: "{fixed: sum([Sales])}"
+    defaultAggregation: min
+    format: "$#,##0"
+  - { id: profit_ratio, name: Profit Ratio, role: measure, type: float, formula: "SUM([Profit])/SUM([Sales])", format: "0.0%" }
+  - id: category_sales
+    name: Category Sales
+    role: measure
+    type: float
+    formula: "{FIXED [Category] : SUM([Sales])}"
+    defaultAggregation: min
+    format: "$#,##0"
+  - { id: share_of_category, name: Share of Category, role: measure, type: float, formula: "SUM([Sales]) / MIN([Category Sales])", format: "0.0%" }
+
+  # From "eBike Sales Analysis" (prorated month-over-month comparison anchored on a date parameter)
+  - id: current_vs_previous
+    name: Current vs Previous
+    description: Compares the same days of the anchor month and the month before it (prorated).
+    role: dimension
+    type: string
+    formula: |
+      // prorates days to compare the same days in each month
+      IF DATETRUNC('month', [Parameters].[Anchor Date]) = DATETRUNC('month', [Order Date])
+         AND DATEDIFF('day', DATETRUNC('month', [Order Date]), [Order Date])
+             <= DATEDIFF('day', DATETRUNC('month', [Parameters].[Anchor Date]), [Parameters].[Anchor Date])
+      THEN 'Current'
+      ELSEIF DATEDIFF('month', [Order Date], [Parameters].[Anchor Date]) = 1
+         AND DATEDIFF('day', DATETRUNC('month', [Order Date]), [Order Date])
+             <= DATEDIFF('day', DATETRUNC('month', [Parameters].[Anchor Date]), [Parameters].[Anchor Date])
+      THEN 'Previous'
+      END
+  - { id: sales_current, name: Sales (Current), role: measure, type: float, formula: "IF [Current vs Previous] = 'Current' THEN [Sales] END", defaultAggregation: sum, format: "$#,##0" }
+  - { id: sales_previous, name: Sales (Previous), role: measure, type: float, formula: "IF [Current vs Previous] = 'Previous' THEN [Sales] END", defaultAggregation: sum, format: "$#,##0" }
+  - { id: sales_change, name: Sales (% Change), role: measure, type: float, formula: "(SUM([Sales (Current)]) / SUM([Sales (Previous)])) - 1", format: "0.0%" }
+  - { id: orders_current, name: Orders (Current), role: measure, type: integer, formula: "COUNTD(IF [Current vs Previous] = 'Current' THEN [Order ID] END)", format: "#,##0" }
+  - { id: orders_previous, name: Orders (Previous), role: measure, type: integer, formula: "COUNTD(IF [Current vs Previous] = 'Previous' THEN [Order ID] END)", format: "#,##0" }
+  - { id: orders_change, name: Orders (% Change), role: measure, type: float, formula: "([Orders (Current)] / [Orders (Previous)]) - 1", format: "0.0%" }
+  - id: returns_current
+    name: Returns (Current)
+    role: measure
+    type: integer
+    formula: "SUM(IF [Returned] = 'Yes' AND [Current vs Previous] = 'Current' THEN [Quantity] ELSE 0 END)"
+    format: "#,##0"
+  - id: returns_previous
+    name: Returns (Previous)
+    role: measure
+    type: integer
+    formula: "SUM(IF [Returned] = 'Yes' AND [Current vs Previous] = 'Previous' THEN [Quantity] ELSE 0 END)"
+    format: "#,##0"
+  - { id: returns_change, name: Returns (% Change), role: measure, type: float, formula: "([Returns (Current)] / [Returns (Previous)]) - 1", format: "0.0%" }
+  - { id: discounted, name: Discounted, role: measure, type: float, formula: "[Sales] * [Discount]", defaultAggregation: sum, format: "$#,##0" }
+  - { id: discount_current, name: Discount (Current), role: measure, type: float, formula: "IF [Current vs Previous] = 'Current' THEN [Discounted] END", defaultAggregation: sum, format: "$#,##0" }
+  - { id: discount_previous, name: Discount (Previous), role: measure, type: float, formula: "IF [Current vs Previous] = 'Previous' THEN [Discounted] END", defaultAggregation: sum, format: "$#,##0" }
+  - { id: discount_change, name: Discount (% Change), role: measure, type: float, formula: "(SUM([Discount (Current)]) / SUM([Discount (Previous)])) - 1", format: "0.0%" }
+  - id: in_last_12_months
+    name: In Last 12 Months
+    role: dimension
+    type: boolean
+    formula: "DATEDIFF('month', [Order Date], [Parameters].[Anchor Date]) >= 0 AND DATEDIFF('month', [Order Date], [Parameters].[Anchor Date]) <= 11"
+  - id: selected_view
+    name: Selected View
+    description: "eBike's c_Select View: the grouping chosen with the View By parameter."
+    role: dimension
+    type: string
+    formula: |
+      CASE [Parameters].[View By]
+        WHEN 'Category' THEN [Category]
+        WHEN 'Segment' THEN [Segment]
+        WHEN 'Region' THEN [Region]
+        ELSE [Sub-Category]
+      END
+
+parameters:
+  - { id: anchor_date, name: Anchor Date, type: date, default: "2019-11-15" }
+  - id: view_by
+    name: View By
+    type: string
+    default: Category
+    allowed: { list: [Category, Sub-Category, Segment, Region] }
+
+source:
+  system: tableau
+  datasource: Sample - Superstore
+  connectionClass: excel-direct

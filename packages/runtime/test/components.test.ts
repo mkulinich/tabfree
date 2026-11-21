@@ -17,8 +17,11 @@ const results: Record<string, QueryResult> = {
   },
   kpis: {
     query: "kpis",
-    columns: [{ name: "Profit Ratio", type: "float", role: "measure", format: "0.0%" }],
-    rows: [[0.1234]],
+    columns: [
+      { name: "Profit Ratio", type: "float", role: "measure", format: "0.0%" },
+      { name: "Change", type: "float", role: "measure" },
+    ],
+    rows: [[0.1234, -0.25]],
     truncated: false,
   },
 };
@@ -86,9 +89,12 @@ describe("<tf-*> components", () => {
     expect(fake.select).toHaveBeenCalledWith("by_region", [{ Region: "East" }]);
   });
 
-  it("tf-kpi formats its measure", async () => {
-    const root = await mount('<tf-kpi query="kpis" measure="Profit Ratio"></tf-kpi>');
+  it("tf-kpi formats its measure and shows a change", async () => {
+    const root = await mount('<tf-kpi query="kpis" measure="Profit Ratio" change="Change"></tf-kpi>');
     expect(root.querySelector(".tf-kpi-value")?.textContent).toBe("12.3%");
+    const change = root.querySelector(".tf-kpi-change");
+    expect(change?.textContent).toBe("▼ -25.0%");
+    expect(change?.classList.contains("tf-down")).toBe(true);
   });
 
   it("tf-filter offers the domain and sets the filter", async () => {

@@ -1,0 +1,55 @@
+{
+  "schema": "tabfree/dashboard@0",
+  "id": "sales-analysis",
+  "title": "Sales Analysis",
+  "description": "Recreation of the corpus dashboard 'Sales Analysis' (eBike Sales Analysis.twbx) on Superstore data: prorated current-vs-previous month BANs, a 12-month trend, a View By breakdown, a state map and filter actions. Min/max dots on the area charts are not reproduced yet.",
+  "models": { "store": "superstore" },
+  "parameters": {
+    "anchor_date": { "label": "Anchor date", "type": "date", "default": "2019-11-15" },
+    "view_by": {
+      "label": "View by",
+      "type": "string",
+      "default": "Category",
+      "allowed": { "list": ["Category", "Sub-Category", "Segment", "Region"] }
+    }
+  },
+  "filters": {
+    "category": { "label": "Category", "field": "Category", "kind": "categorical", "multi": false, "appliesTo": "all" }
+  },
+  "queries": {
+    "bans": {
+      "measures": [
+        "Sales (Current)", "Sales (% Change)",
+        "Orders (Current)", "Orders (% Change)",
+        "Returns (Current)", "Returns (% Change)",
+        "Discount (Current)", "Discount (% Change)"
+      ]
+    },
+    "trend": {
+      "dimensions": [{ "field": "Order Date", "dateTrunc": "month", "as": "Month" }],
+      "measures": ["Sales"],
+      "where": [{ "field": "In Last 12 Months", "kind": "categorical", "members": [true] }],
+      "tableCalcs": [{ "name": "3-Month Average", "type": "moving_avg", "of": "Sales", "computeUsing": "table_down", "frame": { "start": -2, "end": 0 } }],
+      "sort": [{ "by": "Month", "dir": "asc" }]
+    },
+    "by_view": {
+      "dimensions": [{ "field": "Selected View", "as": "Group" }],
+      "measures": ["Sales (Current)", "Sales (Previous)", "Sales (% Change)"],
+      "sort": [{ "by": "Sales (Current)", "dir": "desc" }]
+    },
+    "by_state": {
+      "dimensions": ["State"],
+      "measures": ["Sales (Current)", "Orders (Current)"]
+    },
+    "top_products": {
+      "dimensions": ["Product Name"],
+      "measures": ["Sales (Current)", "Returns (Current)"],
+      "where": [{ "field": "Product Name", "kind": "top_n", "topN": { "n": 10, "by": "SUM([Sales (Current)])" } }],
+      "sort": [{ "by": "Sales (Current)", "dir": "desc" }]
+    }
+  },
+  "actions": [
+    { "type": "filter", "name": "Map → Dashboard", "source": ["by_state"], "targets": ["bans", "trend", "by_view", "top_products"], "fields": ["State"] }
+  ],
+  "source": { "system": "tableau", "workbook": "eBike Sales Analysis", "dashboard": "Sales Analysis" }
+}

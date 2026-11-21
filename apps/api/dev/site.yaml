@@ -19,6 +19,16 @@ projects:
     dashboards:
       - id: sales-overview
         owner: admin
+      - id: sales-analysis
+        owner: admin
+  - id: migrated
+    name: Migrated from Tableau (P1.12)
+    locked: false
+    permissions:
+      - group: Executives
+        capabilities: { view: allow }
+    dashboards:
+      - id: dimensional-hierarchy
 
 # Site roles and groups for the dev login. With OIDC, groups come from the ID token's groups claim.
 users:

@@ -1,0 +1,46 @@
+{
+  "schema": "tabfree/dashboard@0",
+  "id": "dimensional-hierarchy",
+  "title": "Dimensional Hierarchy Example",
+  "description": "Recreation of the corpus dashboard 'Dimensional Hierarchy Example' (Dimensional-Flat example Hierarchy Navigator_v2018.2.twbx). The Hierarchy Navigator extension is replaced by drill-down filter actions; the tree map by a bar chart.",
+  "models": { "store": "superstore" },
+  "filters": {
+    "region": { "label": "Region", "field": "Region", "kind": "categorical", "multi": true, "appliesTo": "all" },
+    "segment": { "label": "Segment", "field": "Segment", "kind": "categorical", "multi": false, "appliesTo": "all" }
+  },
+  "queries": {
+    "kpis": {
+      "description": "Sales in view vs the FIXED total ({fixed: sum([Sales])}) that ignores dimension filters.",
+      "measures": ["Sales", "Total Sales", { "expr": "SUM([Sales]) / MIN([Total Sales])", "as": "Share of Total", "format": "0.0%" }]
+    },
+    "by_category": {
+      "dimensions": ["Category"],
+      "measures": ["Sales", "Profit Ratio"],
+      "tableCalcs": [{ "name": "% of Total Sales", "type": "percent_of_total", "of": "Sales", "computeUsing": "table_down" }],
+      "sort": [{ "by": "Sales", "dir": "desc" }]
+    },
+    "by_subcategory": {
+      "dimensions": ["Category", "Sub-Category"],
+      "measures": ["Sales"],
+      "tableCalcs": [{ "name": "% of Total Sales", "type": "percent_of_total", "of": "Sales", "computeUsing": "table_down" }],
+      "sort": [{ "by": "Sales", "dir": "desc" }]
+    },
+    "products": {
+      "dimensions": ["Category", "Sub-Category", "Product Name"],
+      "measures": ["Sales", "Quantity", "Profit", "Share of Category"],
+      "tableCalcs": [{ "name": "Rank", "type": "rank", "of": "Sales", "computeUsing": "table_down" }],
+      "sort": [{ "by": "Sales", "dir": "desc" }],
+      "limit": 200
+    },
+    "discount_by_segment": {
+      "description": "The original's 'Ship cost per Segment' sheet: AVG(Discount) by Segment and Ship Mode.",
+      "dimensions": ["Segment", "Ship Mode"],
+      "measures": [{ "field": "Discount", "agg": "avg", "as": "Avg Discount", "format": "0.0%" }]
+    }
+  },
+  "actions": [
+    { "type": "filter", "name": "Drill into a category", "source": ["by_category"], "targets": ["by_subcategory", "products", "kpis"], "fields": ["Category"] },
+    { "type": "filter", "name": "Drill into a sub-category", "source": ["by_subcategory"], "targets": ["products"], "fields": ["Sub-Category"] }
+  ],
+  "source": { "system": "tableau", "workbook": "Dimensional-Flat example Hierarchy Navigator_v2018.2", "dashboard": "Dimensional Hierarchy Example" }
+}

@@ -121,7 +121,8 @@ def test_full_sign_in_creates_a_session_with_groups(client: TestClient, idp: Fak
     assert "SameSite=lax" in cookie
     me = client.get("/api/me").json()
     assert me == {"username": "erin", "fullname": "Erin E", "groups": ["Executives"], "siteRole": "explorer"}
-    assert [d["id"] for d in client.get("/api/dashboards").json()] == ["sales-overview"]
+    listed = [d["id"] for d in client.get("/api/dashboards").json()]
+    assert listed == ["dimensional-hierarchy", "sales-analysis", "sales-overview"]
 
 
 @pytest.mark.parametrize(
