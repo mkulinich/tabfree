@@ -47,6 +47,12 @@ Build a new server whose content model, permission engine ([ADR-006](0006-tablea
   2. Can Superset's roles pass the Tableau effective-permission matrix without forking? The spike needs a first cut of the matrix that P3.3 later completes.
 - **Both pass:** supersede this ADR with "extend Superset". **Either fails:** record the result here and set the status to Accepted.
 - **Revisit if:** Superset adds capability-level denies and nested projects upstream, or Lightdash moves data apps under an OSI license.
+- **2026-11-20, P1.14 desk phase (preliminary).** Both questions fail on Superset 7.0 (7.0.0rc3), per the evidence in [p1-14-superset-spike.md](../research/notes/p1-14-superset-spike.md):
+  1. Extensions contribute views only inside SQL Lab and run unsandboxed in the host page. `/api/v1/chart/data` accepts any query the browser composes, so "named queries only" would need a backend endpoint on unstable internals.
+  2. Dashboard RBAC has editors and viewers but no deny, no per-capability rules, and no projects, locked projects or project leaders.
+
+  The status stays "Accepted — pending validation" until the shortened hands-on spike (about 1.5 days) confirms these findings. It must check three things: that Superset's CSP allows the sandboxed iframe, whether a named-query endpoint can keep Superset's RLS, and how the first-cut permission matrix behaves as Superset fixtures.
+- **Revisit also if:** extension pages, extension defaults and a public, stable query API all land upstream.
 
 ## References
 

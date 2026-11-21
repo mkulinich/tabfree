@@ -50,6 +50,15 @@ Callers see one interface: check a capability, list permitted objects. P3.3 pick
 - **P3.3:** a table-driven matrix covering user versus group rules, allow/deny/unspecified, nested and locked projects, site-role ceilings, owners, project leaders (including inherited ones) and views of hidden-tab workbooks. A backend must pass all of it; list-filtering latency at the P7.2 scale breaks ties.
 - **P5.5 / M5:** for each user, Tableau's "Query Workbooks for User" matches TabFree's View results, with zero unexplained differences.
 - **Revisit if:** Tableau's documentation or Server behaviour contradicts the precedence above.
+- **2026-11-20, P1.7 desk research:** Tableau's [Effective permissions](https://docs.salesforce.com/tableau/current/en-us/server/permission_effective.md) article gives this order:
+  1. site role ceiling
+  2. administrators, owners and project leaders
+  3. user rules: a user Allow beats a group Deny
+  4. group rules: Deny wins among groups
+  5. group sets
+  6. anything unspecified is denied
+
+  This is the precedence above, plus a level for **group sets**, which the P3.3 matrix must add. The P1.13 evaluator (`apps/api/src/tabfree_api/authz.py`) implements every level except group sets. Mapping each Deny to a Cedar `forbid`, as unshackle does, would get this order wrong: a `forbid` also overrides user Allows. See [p1-7-reuse-evaluation.md](../research/notes/p1-7-reuse-evaluation.md).
 
 ## References
 

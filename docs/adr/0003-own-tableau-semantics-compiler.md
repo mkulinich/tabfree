@@ -48,6 +48,7 @@ P2.11 picks the execution and caching layer: Cube Core runs the compiled SQL and
 - **M2:** ≥ 95% of TDVT tests pass on both dialects, and ≥ 90% of corpus worksheets match Tableau's CSV exports.
 - **P2.11:** adopt Cube only if it runs the staged LOD SQL unchanged while providing pre-aggregations, caching and access policies.
 - **Revisit if:** a dialect's TDVT pass rate stalls below target, or Ossie stabilises with LOD and table-calc coverage.
+- **2026-11-20, P1.10:** `packages/compiler` passes 771 of 779 TDVT expression tests (`standard`, `lodcalcs`, `median`, `pretest`) executed on DuckDB, including every LOD test. The 8 known deviations are listed with reasons in `tabfree_compiler.tdvt`. The generated SQL for every test parses as Athena, Redshift and Trino, but has not yet run on those engines; that is a P2.3/P2.10 gate. The parser is hand-written, following the vendored grammar: see [ADR-012](0012-hand-written-calc-parser.md) (Proposed).
 
 ## References
 
