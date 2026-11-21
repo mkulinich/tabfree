@@ -7,7 +7,8 @@ The dashboard runtime: everything that runs in the browser around a TabFree dash
 | [`protocol.ts`](src/protocol.ts) | both | Typed messages between the sandboxed frame and the host, with strict validators for both directions. |
 | [`host.ts`](src/host.ts) | portal | `mountDashboard()`: creates the sandboxed iframe and runs the handshake. Accepts only declared queries, filters and parameters, and turns selections into the manifest's actions. Applies table calcs, then calls your `runQuery`/`runDomain` (the governed query API). |
 | [`sdk.ts`](src/sdk.ts) | frame | `TabfreeClient`: `query(name)`, `domain(filter)`, `setFilter`, `setParameter`, `select`, plus `state` events. Results are shared per state, so several components that name the same query make one request. |
-| [`components.ts`](src/components.ts) | frame | `<tf-dashboard>`, `<tf-chart>`, `<tf-crosstab>`, `<tf-kpi>`, `<tf-filter>`, `<tf-parameter>`. |
+| [`components.ts`](src/components.ts) | frame | `<tf-dashboard>`, `<tf-chart>`, `<tf-crosstab>`, `<tf-kpi>` (with an optional `change` measure shown as ▲/▼), `<tf-map>`, `<tf-filter>`, `<tf-parameter>`. |
+| [`map.ts`](src/map.ts) | frame | A US state tile map for `<tf-map query geo color>`; it needs no boundary files. Geographic maps arrive in Phase 4. |
 | [`chart.ts`](src/chart.ts) | frame | A dependency-free SVG renderer for bar, line, area and point marks (see below). |
 | [`tablecalc.ts`](src/tablecalc.ts) | portal | Table calculations, which the JS engine owns ([ADR-004](../../docs/adr/0004-table-calcs-sql-and-js-engine.md)): running, difference, percent of total, moving and window aggregates, ranks, index, first, last, size and total. |
 | [`format.ts`](src/format.ts) | both | Tableau/Excel number formats from the model (`$#,##0`, `0.0%`). |
@@ -29,7 +30,7 @@ The dashboard runtime: everything that runs in the browser around a TabFree dash
 </tf-dashboard>
 ```
 
-Attributes name queries, filters and parameters from `tabfree.json`, and output columns of those queries.
+Attributes name queries, filters and parameters from `tabfree.json`, and output columns of those queries. `uv run tabfree-validate path/to/bundle/` checks every reference before you publish.
 
 - **Charts:** a dimension on one axis and a measure on the other gives bars, lines or areas; the bars are horizontal when the dimension is on `y`. Two measures give a scatter plot.
 - **Colour:** `color` takes a dimension (one series each, with a legend) or a measure (shaded marks).

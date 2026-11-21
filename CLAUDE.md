@@ -19,11 +19,15 @@ make dev-up           # local stack via Docker (Postgres, Trino+Iceberg, S3 emul
 uv run pytest packages/schemas -q            # one Python package
 npm test -w @tabfree/runtime                 # one TS package
 uv run tabfree-validate path/to/tabfree.json # validate a manifest, model or IR file
+uv run tabfree-validate path/to/bundle/      # a dashboard bundle: every <tf-*> reference against tabfree.json
 uv run tabfree-migrate smoke                 # read-only Tableau Server check (needs TABLEAU_* env vars)
 uv run tabfree-compile tdvt                  # Tableau's TDVT calc tests through the compiler, on DuckDB
 uv run tabfree-compile query MODEL MANIFEST QUERY --dialect athena --user alice  # print compiled SQL
 npm run build -w @tabfree/runtime            # frame + host bundles (needed by the preview)
-TABFREE_PREVIEW=1 uv run uvicorn tabfree_api.main:app --port 8765  # dashboards at /preview (dev only, no auth)
+TABFREE_DEV_LOGIN=1 TABFREE_PREVIEW=1 uv run uvicorn tabfree_api.main:app_factory --factory --port 8765
+                                             # portal at / (dev sign-in), /preview without sign-in (dev only)
+uv run tabfree-migrate report corpus/workbooks --out report   # P1.6 inventory report
+uv run python -m tabfree_api.probe --engine duckdb            # P1.16 latency probe harness (athena/redshift need AWS)
 ```
 
 ## Layout
