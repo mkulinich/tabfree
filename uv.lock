@@ -1638,6 +1638,7 @@ version = "0.0.1"
 source = { editable = "packages/migrate" }
 dependencies = [
     { name = "defusedxml" },
+    { name = "tabfree-compiler" },
     { name = "tabfree-schemas" },
     { name = "tableauserverclient" },
     { name = "typer" },
@@ -1653,6 +1654,7 @@ hyper = [
 requires-dist = [
     { name = "defusedxml", specifier = ">=0.7" },
     { name = "pyarrow", marker = "extra == 'hyper'", specifier = ">=17" },
+    { name = "tabfree-compiler", editable = "packages/compiler" },
     { name = "tabfree-schemas", editable = "packages/schemas" },
     { name = "tableauhyperapi", marker = "extra == 'hyper'", specifier = ">=0.0.21000" },
     { name = "tableauserverclient", specifier = ">=0.30" },

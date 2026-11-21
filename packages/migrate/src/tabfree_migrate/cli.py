@@ -202,3 +202,36 @@ def convert_hyper_command(
     write_report(results, out / "conversion.json")
     for result in results:
         typer.echo(f"{result.glue_table:<30} {result.rows:>10} rows -> {result.parquet}")
+
+
+@app.command()
+def report(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx files (or directories to search)")],
+    out: Annotated[Path, typer.Option(help="Directory for report.md and report.json.")] = Path("report"),
+    inventory: Annotated[Path | None, typer.Option(help="The crawler's inventory database.")] = None,
+    usage: Annotated[Path | None, typer.Option(help="CSV with workbook,views_180d columns.")] = None,
+) -> None:
+    """Inventory report (P1.6): census, connections, RLS, compiler readiness and triage."""
+    from tabfree_migrate import report as rpt
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    files: list[Path] = []
+    for path in paths:
+        files += (
+            sorted(p for p in path.rglob("*") if p.suffix.lower() in (".twb", ".twbx"))
+            if path.is_dir()
+            else [path]
+        )
+    irs = []
+    for path in files:
+        try:
+            irs.append((str(path), parse_file(path)))
+        except TableauFileError as exc:
+            typer.echo(f"skip {path}: {exc}")
+    workbooks, connections, estate = rpt.build(
+        irs,
+        usage=rpt.load_usage(usage) if usage else None,
+        inventory=rpt.inventory_details(inventory) if inventory else None,
+    )
+    md, js = rpt.write_report(out, workbooks, connections, estate)
+    typer.echo(f"{len(workbooks)} workbooks -> {md} and {js}")
