@@ -5,6 +5,16 @@ description = "TabFree compiler: Tableau calculation language and semantic queri
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
+keywords = ["tableau", "sql", "athena", "redshift", "trino", "semantic-layer", "compiler", "tdvt"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+  "Typing :: Typed",
+]
 dependencies = [
   "defusedxml>=0.7",
   "sqlglot>=30",

@@ -49,12 +49,51 @@ compiled.sql, compiled.parameters, compiled.columns
 
 ## Conformance
 
-`tabfree-compile tdvt` runs Tableau's TDVT expression suites (vendored in `corpus/tdvt`) on DuckDB. As of 2026-11-20, 771 of 779 tests pass across `standard`, `lodcalcs`, `median` and `pretest`. The eight that fail are listed with reasons in `tdvt.KNOWN_DEVIATIONS`, and `tests/test_tdvt.py` fails if anything else breaks. Generated SQL for every test also parses as Athena, Redshift and Trino.
+`tabfree-compile tdvt` runs Tableau's TDVT expression suites (vendored in `corpus/tdvt`) on DuckDB:
 
-DuckDB checks semantics, not dialect behaviour. Running the same suites on Trino (the local stack) and on real Athena and Redshift is still to do.
+| Suite | Passed | Notes |
+|---|---|---|
+| standard | 761 of 769 | Calcs, operators, strings, numbers, dates, casts, logic |
+| lodcalcs | 5 of 5 | FIXED, INCLUDE and EXCLUDE, including nested LODs |
+| regexcalcs | 145 of 148, with the ICU-only file run on the real engines | REGEXP_MATCH, REGEXP_EXTRACT, REGEXP_EXTRACT_NTH and REGEXP_REPLACE |
+| iso8601week | 194 of 194 | ISO-8601 calendar |
+| dateparse, percentile, median, pretest | 30 of 30 | |
+| **Total** | **1,135 of 1,146 (99.0%)** | |
+
+The 11 failures are listed with reasons in `tdvt.KNOWN_DEVIATIONS`; most are errors in the expected files themselves. `tests/test_tdvt.py` fails if anything else breaks.
+
+Generated SQL for every test parses as Athena, Redshift and Trino. `python -m tabfree_api.conformance --engine athena|redshift` runs the same suites on the real engines; the nightly `conformance` workflow does this once AWS is configured.
+
+Other checks:
+- **`tabfree_compiler.parity`:** compares a view's result with Tableau's own CSV export.
+- **`tabfree_migrate.vds`:** asks Tableau's VizQL Data Service for its answer to a calculation.
+
+## Phase 2 additions
+
+- **The full function map:**
+  - regex functions
+  - the ISO-8601 calendar
+  - DATEPARSE with ICU patterns
+  - PERCENTILE, CORR and COVAR
+  - FINDNTH, PROPER, MAKEDATETIME and MAKETIME
+  - USERATTRIBUTEINCLUDES
+  - fiscal years on date pills
+  - an explicit list of unsupported functions, each with its reason
+- **Planner:**
+  - groups, bins, and sets (member, Top N and condition)
+  - totals and subtotals, re-aggregated rather than summed
+  - Measure Names/Values
+  - computed sorts
+  - native-grain aggregation over relationships
+  - data blending (`compile_blend`)
+- **Calculation dependency graph** with each calc's kind (`analyze_calcs`).
+- **SQL window push-down of table calcs** (`table_calcs="sql"`), with `deferred_table_calcs` for the rest.
 
 ## Not yet
 
-- **Functions:** regular expressions, `DATEPARSE`, `PERCENTILE` and the ISO-8601 calendar (P2.3).
-- **Table calculations:** they run in the runtime's JS engine (ADR-004).
-- **Data modelling:** many-to-many relationships and native-grain relationship queries (P2.5), blending, sets and groups as query inputs, and entitlement-table RLS.
+- **Functions:** spatial functions (Phase 4); RAWSQL, SCRIPT_* and MODEL_* are refused with a reason.
+- **Data modelling:**
+  - many-to-many relationships
+  - blends across different connections (two queries joined in the service)
+  - entitlement-table RLS
+- **Engines:** running on Athena and Redshift. The SQL parses for both, but the TDVT runs there need an AWS account (P2.9/P2.10).

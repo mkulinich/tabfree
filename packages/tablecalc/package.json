@@ -12,11 +12,22 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "keywords": [
+    "tableau",
+    "table-calculations",
+    "analytics",
+    "window-functions"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
