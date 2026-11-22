@@ -42,8 +42,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ctx = create_app(settings.model_copy(update={"jobs_inline": False})).state.context
     queue = JobQueue(ctx.site.engine)
     if args.command == "prune":
+        from tabfree_api.lifecycle import purge_expired
+
         removed = queue.prune(queue.clock() - dt.timedelta(days=settings.job_retention_days))
-        print(f"pruned {removed} finished jobs")
+        purged = purge_expired(ctx.site)
+        print(f"pruned {removed} finished jobs; purged {purged} items from the recycle bin")
         return 0
     if args.command == "drain":
         Scheduler(ctx.site.engine, queue, clock=queue.clock).tick()

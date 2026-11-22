@@ -2,11 +2,19 @@ import { createRootRoute, createRoute, createRouter } from "@tanstack/react-rout
 
 import { Layout } from "./layout.js";
 import { AccountPage } from "./pages/account.js";
-import { AdminAudit, AdminGroups, AdminSite, AdminUsers } from "./pages/admin.js";
+import {
+  AdminAudit,
+  AdminGroups,
+  AdminRecycleBin,
+  AdminSite,
+  AdminUsers,
+  AdminWebhooks,
+} from "./pages/admin.js";
 import { DashboardPage } from "./pages/dashboard.js";
 import { DraftPage } from "./pages/draft.js";
 import { ExplorePage } from "./pages/explore.js";
 import { HomePage } from "./pages/home.js";
+import { JobsPage } from "./pages/jobs.js";
 import { MigrationItemPage, MigrationPage } from "./pages/migration.js";
 import { ModelPage } from "./pages/model.js";
 
@@ -67,12 +75,15 @@ export const migrationItemRoute = createRoute({
   path: "/migration/$id",
   component: MigrationItemPage,
 });
+const jobsRoute = createRoute({ getParentRoute: () => root, path: "/jobs", component: JobsPage });
 export const model = createRoute({ getParentRoute: () => root, path: "/models/$id", component: ModelPage });
 const account = createRoute({ getParentRoute: () => root, path: "/account", component: AccountPage });
 const adminUsers = createRoute({ getParentRoute: () => root, path: "/admin/users", component: AdminUsers });
 const adminGroups = createRoute({ getParentRoute: () => root, path: "/admin/groups", component: AdminGroups });
 const adminSite = createRoute({ getParentRoute: () => root, path: "/admin/site", component: AdminSite });
 const adminAudit = createRoute({ getParentRoute: () => root, path: "/admin/audit", component: AdminAudit });
+const adminBin = createRoute({ getParentRoute: () => root, path: "/admin/recycle-bin", component: AdminRecycleBin });
+const adminHooks = createRoute({ getParentRoute: () => root, path: "/admin/webhooks", component: AdminWebhooks });
 
 const tree = root.addChildren([
   home,
@@ -85,8 +96,11 @@ const tree = root.addChildren([
   adminGroups,
   adminSite,
   adminAudit,
+  adminBin,
+  adminHooks,
   migrationRoute,
   migrationItemRoute,
+  jobsRoute,
 ]);
 
 export const router = createRouter({ routeTree: tree, defaultPreload: "intent" });

@@ -29,12 +29,31 @@ function useTableauLinks(signedIn: boolean) {
   return missing;
 }
 
+/** Sharing links ("/s/<id>" → "/?share=<id>"): resolved after sign-in, so View is checked for the viewer. */
+function useShareLinks(signedIn: boolean) {
+  const navigate = useNavigate();
+  const [missing, setMissing] = useState<string | null>(null);
+  useEffect(() => {
+    const share = new URLSearchParams(location.search).get("share");
+    if (!signedIn || !share) return;
+    get<{ dashboard: string; state: { filters?: unknown; parameters?: unknown } }>(`/api/share/${encodeURIComponent(share)}`)
+      .then(({ dashboard, state }) => {
+        const json = JSON.stringify({ filters: state.filters ?? {}, parameters: state.parameters ?? {} });
+        const encoded = btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        void navigate({ to: "/dashboards/$id", params: { id: dashboard }, search: { state: encoded }, replace: true });
+      })
+      .catch(() => setMissing(share));
+  }, [signedIn, navigate]);
+  return missing;
+}
+
 export function Layout() {
   const me = useMe();
   const site = useSite();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const missingLink = useTableauLinks(Boolean(me.data));
+  const missingShare = useShareLinks(Boolean(me.data));
 
   if (me.error instanceof ApiError && me.error.status === 401) {
     return (
@@ -80,6 +99,7 @@ export function Layout() {
             Home
           </Link>
           <Link to="/explore">Explore</Link>
+          <Link to="/jobs">Subscriptions</Link>
           {site.data?.admin ? <Link to="/admin/users">Manage site</Link> : null}
         </nav>
         <form role="search" onSubmit={search} className="search">
@@ -110,6 +130,11 @@ export function Layout() {
         {missingLink ? (
           <p role="alert" className="note page">
             That Tableau link has no dashboard here, or it is not shared with you.
+          </p>
+        ) : null}
+        {missingShare ? (
+          <p role="alert" className="note page">
+            That link does not exist, or its dashboard is not shared with you.
           </p>
         ) : null}
         <Outlet />

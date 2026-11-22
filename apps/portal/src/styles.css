@@ -534,3 +534,12 @@ pre.diff {
 .waves td, .migration-items td { font-variant-numeric: tabular-nums; }
 button.link { background: none; border: none; padding: 0; color: LinkText; text-decoration: underline; cursor: pointer; }
 .history { padding-left: 1.2em; }
+
+/* Phase 6: quality, comments, dialogs */
+.pill.certified { font-weight: 600; }
+.quality-warning { border-left: 4px solid currentColor; padding: 4px 12px; margin: 8px 0; }
+.comments { max-width: 48rem; margin-top: 24px; }
+.comments textarea { width: 100%; }
+.stack { display: grid; gap: 8px; }
+ul.plain, ol.plain { list-style: none; padding: 0; }
+ul.plain li, ol.plain li { margin: 6px 0; }

@@ -25,6 +25,8 @@ function AdminShell({ title, children }: { title: string; children: ReactNode })
         <Link to="/admin/groups">Groups</Link>
         <Link to="/admin/site">Settings</Link>
         <Link to="/admin/audit">Audit log</Link>
+        <Link to="/admin/recycle-bin">Recycle bin</Link>
+        <Link to="/admin/webhooks">Webhooks</Link>
         <Link to="/migration">Migration</Link>
       </nav>
       <h1>{title}</h1>
@@ -377,6 +379,140 @@ export function AdminAudit() {
           ))}
         </tbody>
       </table>
+    </AdminShell>
+  );
+}
+
+interface Deleted {
+  kind: "dashboard" | "model";
+  id: string;
+  name: string;
+  owner: string | null;
+  deletedAt: string;
+  purgeAfter: string;
+}
+
+/** Deleted dashboards and models (P6.6): restore them, or purge them before their 30 days are up. */
+export function AdminRecycleBin() {
+  const client = useQueryClient();
+  const bin = useQuery({ queryKey: ["recycle-bin"], queryFn: () => get<Deleted[]>("/api/recycle-bin") });
+  const act = useMutation({
+    mutationFn: ({ item, purge }: { item: Deleted; purge: boolean }) =>
+      send(purge ? "DELETE" : "POST", `/api/recycle-bin/${item.kind}/${enc(item.id)}${purge ? "" : "/restore"}`),
+    onSuccess: () => void client.invalidateQueries(),
+  });
+  return (
+    <AdminShell title="Recycle bin">
+      {bin.error ? <Problem error={bin.error} /> : null}
+      {act.error ? <Problem error={act.error} /> : null}
+      {bin.data?.length === 0 ? <p className="muted">Nothing has been deleted.</p> : null}
+      <table className="items">
+        <tbody>
+          {(bin.data ?? []).map((item) => (
+            <tr key={`${item.kind}:${item.id}`}>
+              <td>
+                {item.name} <span className="muted small">({item.kind})</span>
+                <div className="muted small">
+                  deleted {when(item.deletedAt)} · owner {item.owner ?? "–"} · purged after {when(item.purgeAfter)}
+                </div>
+              </td>
+              <td className="toolbar">
+                <button type="button" onClick={() => act.mutate({ item, purge: false })}>
+                  Restore
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Delete ${item.name} for good? This cannot be undone.`)) act.mutate({ item, purge: true });
+                  }}
+                >
+                  Delete for good
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </AdminShell>
+  );
+}
+
+interface Webhook {
+  id: string;
+  name: string;
+  url: string;
+  events: string[];
+}
+
+const EVENTS = ["*", "content.published", "content.deleted", "content.restored", "model.refreshed", "job.failed", "comment.created"];
+
+/** Outgoing webhooks (P6.9). The signing secret is shown once, when the webhook is created. */
+export function AdminWebhooks() {
+  const client = useQueryClient();
+  const hooks = useQuery({ queryKey: ["webhooks"], queryFn: () => get<Webhook[]>("/api/webhooks") });
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [event, setEvent] = useState("*");
+  const [secret, setSecret] = useState<string | null>(null);
+  const create = useMutation({
+    mutationFn: () => send<{ secret: string }>("POST", "/api/webhooks", { name, url, events: [event] }),
+    onSuccess: (out) => {
+      setSecret(out.secret);
+      setName("");
+      setUrl("");
+      void client.invalidateQueries({ queryKey: ["webhooks"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => send("DELETE", `/api/webhooks/${enc(id)}`),
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["webhooks"] }),
+  });
+  return (
+    <AdminShell title="Webhooks">
+      {hooks.error ? <Problem error={hooks.error} /> : null}
+      {create.error ? <Problem error={create.error} /> : null}
+      {secret ? (
+        <p role="status" className="note">
+          Signing secret (shown once): <code>{secret}</code>. Verify <code>X-TabFree-Signature</code> with it.
+        </p>
+      ) : null}
+      <ul className="plain">
+        {(hooks.data ?? []).map((h) => (
+          <li key={h.id}>
+            <strong>{h.name}</strong> <span className="muted small">{h.url} · {h.events.join(", ")}</span>{" "}
+            <button type="button" onClick={() => remove.mutate(h.id)}>
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="inline-form"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          create.mutate();
+        }}
+      >
+        <label>
+          Name <input value={name} required maxLength={200} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          URL <input type="url" value={url} required placeholder="https://" onChange={(e) => setUrl(e.target.value)} />
+        </label>
+        <label>
+          Event{" "}
+          <select value={event} onChange={(e) => setEvent(e.target.value)}>
+            {EVENTS.map((ev) => (
+              <option key={ev} value={ev}>
+                {ev === "*" ? "All events" : ev}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" disabled={create.isPending}>
+          Add webhook
+        </button>
+      </form>
     </AdminShell>
   );
 }

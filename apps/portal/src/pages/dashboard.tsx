@@ -14,6 +14,16 @@ import { type DashboardInfo, enc, get, send } from "../api.js";
 import { FavoriteButton } from "../components/items.js";
 import { PermissionsDialog } from "../components/permissions.js";
 import { RevisionsDialog } from "../components/revisions.js";
+import {
+  AlertDialog,
+  CommentsPanel,
+  encodeState,
+  type Quality,
+  QualityBanner,
+  ShareDialog,
+  SubscribeDialog,
+  ViewsDialog,
+} from "../components/userstate.js";
 import { Problem } from "../layout.js";
 import { dashboard } from "../router.js";
 
@@ -84,7 +94,15 @@ export function decodeState(encoded: string | undefined): Partial<DashboardState
   }
 }
 
-function Viewer({ id, initial }: { id: string; initial?: Partial<DashboardState> | undefined }) {
+function Viewer({
+  id,
+  initial,
+  onState,
+}: {
+  id: string;
+  initial?: Partial<DashboardState> | undefined;
+  onState?: (state: DashboardState) => void;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -104,6 +122,7 @@ function Viewer({ id, initial }: { id: string; initial?: Partial<DashboardState>
         runtime,
         ...(bundle.frameUrl ? { frameUrl: bundle.frameUrl } : {}),
         ...(initial ? { initialState: initial } : {}),
+        ...(onState ? { onStateChange: (state: DashboardState) => onState(state) } : {}),
         onExport: (request) => void startExport(id, request),
         theme: { mode: dark ? "dark" : "light" },
         runQuery: (request) => post(`/api/dashboards/${enc(id)}/query`, request),
@@ -129,11 +148,32 @@ export function DashboardPage() {
   const search = dashboard.useSearch();
   const initial = useMemo(() => decodeState(search.state), [search.state]);
   if (search.print === "1") return <Viewer id={id} initial={initial} />;
-  return <InteractivePage id={id} />;
+  return <InteractivePage id={id} initial={initial} />;
 }
 
-function InteractivePage({ id }: { id: string }) {
-  const [dialog, setDialog] = useState<"permissions" | "revisions" | null>(null);
+type DialogName = "permissions" | "revisions" | "views" | "share" | "subscribe" | "alert";
+
+function InteractivePage({ id, initial }: { id: string; initial: Partial<DashboardState> | undefined }) {
+  const [dialog, setDialog] = useState<DialogName | null>(null);
+  const go = useNavigate();
+  const current = useRef<Partial<DashboardState>>(initial ?? {});
+  const views = useQuery({
+    queryKey: ["views", id],
+    queryFn: () => get<{ views: { id: string; state: Partial<DashboardState> }[]; default: string | null }>(`/api/dashboards/${enc(id)}/views`),
+    retry: false,
+  });
+  const quality = useQuery({ queryKey: ["quality", id], queryFn: () => get<Quality>(`/api/content/dashboard/${enc(id)}/quality`), retry: false });
+  const bundle = useQuery({ queryKey: ["bundle", id], queryFn: () => get<{ manifest: Manifest }>(`/api/dashboards/${enc(id)}`) });
+  // An explicit state (a link, a custom view) wins; otherwise the person's default custom view.
+  const fallback = views.data?.default ? views.data.views.find((v) => v.id === views.data?.default)?.state : undefined;
+  const start = initial ?? fallback;
+  const apply = (state: Partial<DashboardState>) => {
+    setDialog(null);
+    void go({ to: "/dashboards/$id", params: { id }, search: { state: encodeState(state) } });
+  };
+  const queries = Object.keys(bundle.data?.manifest.queries ?? {});
+  const models = (bundle.data?.manifest as { models?: Record<string, string> } | undefined)?.models ?? {};
+  const model: string | undefined = Object.values(models)[0];
   const navigate = useNavigate();
   const [editError, setEditError] = useState<string | null>(null);
   const edit = async () => {
@@ -186,6 +226,18 @@ function InteractivePage({ id }: { id: string }) {
               Revisions…
             </button>
           ) : null}
+          <button type="button" onClick={() => setDialog("views")}>
+            Views…
+          </button>
+          <button type="button" onClick={() => setDialog("share")}>
+            Share
+          </button>
+          <button type="button" onClick={() => setDialog("subscribe")}>
+            Subscribe…
+          </button>
+          <button type="button" onClick={() => setDialog("alert")}>
+            Alert…
+          </button>
         </div>
       </div>
       {editError ? (
@@ -202,7 +254,19 @@ function InteractivePage({ id }: { id: string }) {
           ))}
         </nav>
       ) : null}
-      <Viewer id={id} />
+      <QualityBanner quality={quality.data} />
+      {views.isLoading && !initial ? null : (
+        <Viewer key={start ? encodeState(start) : "default"} id={id} initial={start} onState={(s) => (current.current = s)} />
+      )}
+      {caps["view_comments"] ? <CommentsPanel id={id} canAdd={Boolean(caps["add_comments"])} /> : null}
+      {dialog === "views" ? (
+        <ViewsDialog id={id} current={current.current} canShare={Boolean(caps["share_customized"])} onApply={apply} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog === "share" ? <ShareDialog id={id} current={current.current} onClose={() => setDialog(null)} /> : null}
+      {dialog === "subscribe" ? (
+        <SubscribeDialog id={id} title={info.data?.name ?? id} model={model} current={current.current} onClose={() => setDialog(null)} />
+      ) : null}
+      {dialog === "alert" ? <AlertDialog id={id} queries={queries} model={model} onClose={() => setDialog(null)} /> : null}
       {dialog === "permissions" ? <PermissionsDialog kind="dashboard" id={id} onClose={() => setDialog(null)} /> : null}
       {dialog === "revisions" ? <RevisionsDialog kind="dashboard" id={id} onClose={() => setDialog(null)} /> : null}
     </div>

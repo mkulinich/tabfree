@@ -376,6 +376,11 @@ def create_router(ctx: Context) -> APIRouter:
 
     jobs_routes.add_routes(router, ctx, current, csrf)
 
+    from tabfree_api import lifecycle, userstate
+
+    lifecycle.add_routes(router, ctx, current, csrf)
+    userstate.add_routes(router, ctx, current, csrf)
+
     # ---- personal access tokens (P3.2) -------------------------------------------------------------
 
     def pat_store() -> Any:
