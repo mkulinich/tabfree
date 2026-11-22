@@ -137,3 +137,41 @@ def test_new_functions_render_in_every_dialect(dialect: str) -> None:
         compiled = compile_expression(model, formula, dialect=dialect)  # type: ignore[arg-type]
         sql = compiled.sql if dialect == "redshift" else compiled.sql.replace("?", "NULL")
         sqlglot.parse_one(sql, read="trino" if dialect == "athena" else dialect)
+
+
+@pytest.mark.parametrize("dialect", ["athena", "trino"])
+def test_trino_function_names(dialect: str) -> None:
+    """Found by running TDVT on Trino: these names do not exist there, or mean something else."""
+    model = calcs_model()
+
+    def sql(formula: str) -> str:
+        return compile_expression(model, formula, dialect=dialect).sql.upper()  # type: ignore[arg-type]
+
+    div = sql("DIV([int0], [int1])")
+    assert "TRUNCATE(" in div
+    assert "TRUNC(" not in div
+    space = sql("SPACE([int2])")
+    assert "RPAD(" in space
+    assert "REPEAT(" not in space
+    ascii_ = sql("ASCII([str1])")
+    assert "CODEPOINT(" in ascii_
+    assert "UNICODE(" not in ascii_
+    median = sql("MEDIAN([num0])")
+    assert "APPROX_PERCENTILE(" in median
+    assert "PERCENTILE_CONT" not in median
+    assert "MEDIAN(" not in median
+    date = sql("DATE([str2])")
+    assert "COALESCE(TRY_CAST(" in date
+    assert "AS TIMESTAMP" in date
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "redshift"])
+def test_other_dialects_keep_their_function_names(dialect: str) -> None:
+    model = calcs_model()
+
+    def sql(formula: str) -> str:
+        return compile_expression(model, formula, dialect=dialect).sql.upper()  # type: ignore[arg-type]
+
+    assert "TRUNC(" in sql("DIV([int0], [int1])")
+    assert "REPEAT(" in sql("SPACE([int2])")
+    assert "CODEPOINT(" not in sql("ASCII([str1])")

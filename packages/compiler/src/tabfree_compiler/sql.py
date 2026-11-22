@@ -1216,7 +1216,7 @@ class _Planner:
         if name == "MEDIAN":
             return T(
                 exp.Median(this=e)
-                if self.dialect != "athena"
+                if self.dialect not in ("athena", "trino")
                 else exp.ApproxQuantile(this=e, quantile=exp.Literal.number(0.5)),
                 "float",
             )
@@ -1926,7 +1926,9 @@ _fn("ACOS", arity=(1, 1))(_arc_handler("ACOS"))
 def _div(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
     a, b = tr(args[0]), tr(args[1])
     q = exp.Div(this=_cast(a.e, "float"), expression=exp.Nullif(this=_cast(b.e, "float"), expression=_num(0)))
-    return T(_cast(exp.Anonymous(this="TRUNC", expressions=[q]), "integer"), "integer")
+    # Trino (and so Athena) has TRUNCATE; TRUNC is not a function there.
+    trunc = "TRUNCATE" if p.dialect in ("athena", "trino") else "TRUNC"
+    return T(_cast(exp.Anonymous(this=trunc, expressions=[q]), "integer"), "integer")
 
 
 def _minmax(op: str) -> Handler:
@@ -2036,6 +2038,10 @@ def _date(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
             "date",
         )
     if v.type == "string":
+        if p.dialect in ("athena", "trino"):
+            # Trino rejects a string with a time of day as a DATE, so fall back through TIMESTAMP.
+            via_timestamp = _cast(_try_cast(v.e.copy(), "datetime"), "date")
+            return T(exp.Coalesce(this=_try_cast(v.e, "date"), expressions=[via_timestamp]), "date")
         return T(_try_cast(v.e, "date"), "date")
     return T(_cast(v.e, "date"), "date")
 
@@ -2162,15 +2168,24 @@ def _replace(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
 @_fn("SPACE", arity=(1, 1))
 def _space(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
     n = _int_count(tr(args[0]))
-    return T(
-        _case([(exp.LT(this=n, expression=_num(0)), exp.Null())], exp.Repeat(this=_str(" "), times=n.copy())),
-        "string",
-    )
+    spaces: exp.Expr
+    if p.dialect in ("athena", "trino"):
+        # Trino's REPEAT returns an array of its argument, not a string.
+        spaces = exp.Anonymous(this="RPAD", expressions=[_str(""), n.copy(), _str(" ")])
+    else:
+        spaces = exp.Repeat(this=_str(" "), times=n.copy())
+    return T(_case([(exp.LT(this=n, expression=_num(0)), exp.Null())], spaces), "string")
 
 
 @_fn("ASCII", arity=(1, 1))
 def _ascii(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
-    return T(exp.Unicode(this=tr(args[0]).e), "integer")
+    s = tr(args[0]).e
+    if p.dialect in ("athena", "trino"):
+        # Trino has no UNICODE; CODEPOINT takes exactly one character (an empty string gives NULL).
+        first = exp.Nullif(this=exp.Substring(this=s, start=_num(1), length=_num(1)), expression=_str(""))
+        one = exp.Cast(this=first, to=exp.DataType.build("VARCHAR(1)"))
+        return T(exp.Anonymous(this="CODEPOINT", expressions=[one]), "integer")
+    return T(exp.Unicode(this=s), "integer")
 
 
 @_fn("CHAR", arity=(1, 1))
