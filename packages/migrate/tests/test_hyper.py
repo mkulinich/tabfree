@@ -147,8 +147,9 @@ def test_hyper_stats_match_duckdb_over_the_exported_parquet(extract: Path, tmp_p
         parity = compare_stats(result.hyper_stats(), actual, result.columns)
         assert parity.ok, parity.to_dict()
         if extract.name.startswith("europe"):
-            geo = [c for c in result.columns if c.hyper_type == "GEOGRAPHY"]
-            assert geo, "sample should hold a geography column"
+            geo = [c for c in result.columns if "GEOGRAPHY" in c.hyper_type.upper()]
+            types = [(c.name, c.hyper_type) for c in result.columns]
+            assert geo, f"sample should hold a geography column: {types}"
             first = str(result.stats["columns"][geo[0].glue_name]["min"])
             assert first.startswith(("POLYGON", "MULTIPOLYGON", "POINT", "LINESTRING"))
 

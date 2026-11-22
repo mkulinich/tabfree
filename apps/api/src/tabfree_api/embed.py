@@ -279,7 +279,7 @@ def add_routes(router: APIRouter, ctx: Any, current: Any, csrf: Any) -> None:
 
     @router.get("/embed/{dashboard}", include_in_schema=False)
     def embed_page(dashboard: str) -> HTMLResponse:
-        if not re.match(r"^[a-z0-9][a-z0-9-]{0,99}$", dashboard):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", dashboard):
             raise HTTPException(404)
         allowed = origins()
         nonce = secrets.token_urlsafe(16)
@@ -289,11 +289,7 @@ def add_routes(router: APIRouter, ctx: Any, current: Any, csrf: Any) -> None:
             f"connect-src 'self'; frame-src 'self' blob: {ctx.settings.usercontent_origin or ''}; "
             f"img-src 'self' data: blob:; frame-ancestors {ancestors}; base-uri 'none'; form-action 'none'"
         )
-        page = (
-            EMBED_PAGE.replace("__NONCE__", nonce)
-            .replace("__DASHBOARD__", json.dumps(dashboard))
-            .replace("__ORIGINS__", json.dumps(allowed))
-        )
+        page = EMBED_PAGE.replace("__NONCE__", nonce).replace("__ORIGINS__", json.dumps(allowed))
         return HTMLResponse(
             page,
             headers={

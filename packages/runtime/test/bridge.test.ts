@@ -105,6 +105,15 @@ describe("host and SDK", () => {
     expect(doc).toContain("<\\/script>"); // the runtime cannot close its own <script> early
     expect(doc.indexOf("Content-Security-Policy")).toBeLessThan(doc.indexOf("<title>"));
     expect(buildSrcdoc("<p>hi</p>", "")).toMatch(/^<!doctype html><html><head><meta/);
+    expect(buildSrcdoc('<HEAD lang="en"><title>t</title>', "")).toMatch(/^<HEAD lang="en"><meta/);
+    expect(buildSrcdoc("<header>x</header>", "")).toMatch(/^<!doctype html>/);
+  });
+
+  it("finds <head> in linear time on hostile input", () => {
+    const hostile = "<head ".repeat(50_000);
+    const started = performance.now();
+    expect(buildSrcdoc(hostile, "")).toMatch(/^<!doctype html>/);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("hands over a private port and initial state, then answers queries with table calcs", async () => {

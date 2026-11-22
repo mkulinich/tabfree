@@ -18,6 +18,7 @@ import re
 import secrets
 import uuid
 from typing import Annotated, Any, Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -31,6 +32,7 @@ from tabfree_api.db.store import now
 
 MENTION = re.compile(r"(?<![\w@])@([A-Za-z0-9._-]{1,64})")
 TAG = re.compile(r"^[\w .-]{1,50}$")
+SHARE_LINK = re.compile(r"[A-Za-z0-9_-]{1,64}")  # secrets.token_urlsafe
 MAX_STATE_CHARS = 20_000
 Kind = Literal["dashboard", "model"]
 
@@ -259,7 +261,9 @@ def add_routes(router: APIRouter, ctx: Any, current: Any, csrf: Any) -> None:
     @router.get("/s/{link}", include_in_schema=False)
     def share_redirect(link: str) -> RedirectResponse:
         # The portal resolves the link after sign-in, so permissions are checked for the viewer.
-        return RedirectResponse(f"/?share={link}", status_code=302)
+        if not SHARE_LINK.fullmatch(link):
+            raise HTTPException(404, "this link does not exist")
+        return RedirectResponse("/?" + urlencode({"share": link}), status_code=302)
 
     # ---- comments ------------------------------------------------------------------------------------
     @router.get("/api/dashboards/{dashboard}/comments")

@@ -25,6 +25,11 @@ describe("formatValue", () => {
   it("ignores unsupported patterns", () => {
     expect(parseNumberFormat("yyyy-mm-dd")).toBeNull();
     expect(formatValue(2.5, { type: "float", format: "yyyy" })).toBe("2.50");
+    expect(formatValue(2.5, { type: "float", format: '"$"#,##0.0" units"' })).toBe("$2.5 units");
+    const started = performance.now();
+    expect(parseNumberFormat('"'.repeat(50_000) + "#")).not.toBeUndefined();
+    expect(parseNumberFormat('"'.repeat(50_000) + ".")).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("abbreviates axis labels", () => {

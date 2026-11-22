@@ -164,6 +164,8 @@ def map_type(
     """Map one Hyper column type to its Athena/Iceberg type, export form and parity rule."""
     name = hyper_type.upper().split(".")[-1]
     name = _ALIASES.get(name, name)
+    if "GEOGRAPHY" in name:  # e.g. TABLEAU_GEOGRAPHY in some Hyper API releases
+        name = "GEOGRAPHY"
     rule = TYPE_RULES.get(name)
     notes: list[str] = []
     if rule is None:

@@ -228,15 +228,25 @@ export const FRAME_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; " +
   "font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
 
+/** Index just after the first `<head>` or `<head ...>` tag, or -1. Linear: no backtracking regex. */
+function headEnd(html: string): number {
+  const lower = html.toLowerCase();
+  for (let i = lower.indexOf("<head"); i >= 0; i = lower.indexOf("<head", i + 5)) {
+    const next = lower.charAt(i + 5);
+    if (next === ">" || /\s/.test(next)) {
+      const close = lower.indexOf(">", i + 5);
+      return close < 0 ? -1 : close + 1;
+    }
+  }
+  return -1;
+}
+
 /** The frame document: the bundle's HTML with the CSP and the runtime injected first in <head>. */
 export function buildSrcdoc(html: string, runtime: string): string {
   const csp = `<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">`;
   const script = `<script>${runtime.replace(/<\/(script)/gi, "<\\/$1")}</script>`;
-  const head = /<head(\s[^>]*)?>/i.exec(html);
-  if (head) {
-    const at = head.index + head[0].length;
-    return `${html.slice(0, at)}${csp}${script}${html.slice(at)}`;
-  }
+  const at = headEnd(html);
+  if (at >= 0) return `${html.slice(0, at)}${csp}${script}${html.slice(at)}`;
   return `<!doctype html><html><head>${csp}${script}</head><body>${html}</body></html>`;
 }
 

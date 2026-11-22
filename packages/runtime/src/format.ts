@@ -55,7 +55,11 @@ export function parseNumberFormat(pattern: string): NumberFormat | null {
   const cached = cache.get(pattern);
   if (cached !== undefined) return cached;
   const positive = pattern.split(";")[0] ?? "";
-  const match = /^([^#0.,]*)([#0,]*)(?:\.(0+|#+))?([^#0.,]*)$/.exec(positive);
+  // Split off the prefix first so no two unbounded groups can match the same text (no ReDoS).
+  const first = positive.search(/[#0.,]/);
+  const lead = first < 0 ? positive : positive.slice(0, first);
+  const body = /^([#0,]*)(?:\.(0+|#+))?([^#0.,]*)$/.exec(first < 0 ? "" : positive.slice(first));
+  const match = body ? [body[0], lead, body[1], body[2], body[3]] : null;
   let parsed: NumberFormat | null = null;
   if (match && (match[2] ?? "").length > 0) {
     const prefix = unquote(match[1] ?? "");

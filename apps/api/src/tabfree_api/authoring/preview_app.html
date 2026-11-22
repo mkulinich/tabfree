@@ -46,7 +46,11 @@
         runDomain: (request) => Promise.resolve(domains[request.filter] || empty),
       });
     }
+    // Only the host that embeds this app may talk to it.
+    const hostOrigin = document.referrer ? new URL(document.referrer).origin : null;
     window.addEventListener("message", (event) => {
+      if (event.source !== window.parent) return;
+      if (hostOrigin !== null && event.origin !== hostOrigin) return;
       const data = event.data;
       if (!data || data.jsonrpc !== "2.0") return;
       if (data.method === "ui/notifications/tool-result") {

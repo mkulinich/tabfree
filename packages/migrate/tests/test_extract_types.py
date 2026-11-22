@@ -63,6 +63,7 @@ def test_lossy_and_unknown_types_are_noted() -> None:
     assert any("double" in n for n in map_type("NUMERIC", 40, 2).notes)
     assert any("Unknown Hyper type" in n for n in map_type("SOMETHING_NEW").notes)
     assert any(str(GEOGRAPHY_SRID) in n and "WKT" in n for n in map_type("GEOGRAPHY").notes)
+    assert map_type("TABLEAU_GEOGRAPHY").parity == map_type("GEOGRAPHY").parity
     assert any("UTC" in n for n in map_type("TIMESTAMP_TZ").notes)
 
 

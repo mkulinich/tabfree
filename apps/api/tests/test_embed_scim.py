@@ -167,8 +167,9 @@ def test_the_embed_page_is_framed_only_by_connected_apps(app: Any) -> None:
     csp = page.headers["content-security-policy"]
     assert "frame-ancestors 'self' https://intranet.example https://portal.example:8443" in csp
     assert "nonce-" in csp
-    assert 'const dashboard = "sales-overview"' in page.text
+    assert 'const dashboard = location.pathname.split("/").pop();' in page.text
     assert TestClient(app).get("/embed/..%2Fapi").status_code == 404
+    assert TestClient(app).get("/embed/sales%0A").status_code == 404  # no trailing newline past the check
     script = TestClient(app).get("/embed.js")
     assert "window.TabFree" in script.text
     assert script.headers["content-type"].startswith("text/javascript")

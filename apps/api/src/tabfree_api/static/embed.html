@@ -4,7 +4,7 @@
 </head><body><div id="viz" role="main"></div>
 <script type="module" nonce="__NONCE__">
 import { mountDashboard } from "/runtime/host.js";
-const dashboard = __DASHBOARD__;
+const dashboard = location.pathname.split("/").pop();  // checked by the server: [a-z0-9-]
 const allowed = __ORIGINS__;
 const params = new URLSearchParams(location.hash.slice(1));
 history.replaceState(null, "", location.pathname);

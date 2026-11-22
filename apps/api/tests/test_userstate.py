@@ -96,6 +96,7 @@ def test_sharing_links_grant_nothing(app: Any) -> None:
     assert as_user(app, "ivan").get(f"/api/share/{link['id']}").status_code == 404
     redirect = TestClient(app).get(f"/s/{link['id']}", follow_redirects=False)
     assert redirect.headers["location"] == f"/?share={link['id']}"
+    assert TestClient(app).get("/s/a%26next%3D%2F%2Fevil", follow_redirects=False).status_code == 404
 
 
 def test_comments_and_mentions(app: Any) -> None:

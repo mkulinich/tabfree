@@ -17,6 +17,7 @@ Each check updates the item's fidelity and leaves a ``verification`` record.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -31,6 +32,8 @@ from tabfree_api.db.store import DbSite
 from tabfree_api.migration.fidelity import data_score, score, validation_score
 from tabfree_api.migration.store import MigrationStore
 from tabfree_compiler.parity import compare
+
+log = logging.getLogger(__name__)
 
 _EXPLAINED = {
     "retired": "retired in Tableau's place",
@@ -111,9 +114,10 @@ def access_parity(db: DbSite, store: MigrationStore) -> dict[str, Any]:
 def _parity(expected_csv: str, run: Any) -> dict[str, Any]:
     try:
         result = run()
-    except Exception as exc:  # a failing query is a parity failure, recorded with its reason
+    except Exception as exc:  # a failing query is a parity failure; the details go to the log only
+        log.warning("parity query failed", exc_info=True)
         return {
-            "error": f"{type(exc).__name__}: {exc}"[:500],
+            "error": f"the query failed ({type(exc).__name__}); see the server log",
             "expected": max(1, expected_csv.count("\n") - 1),
         }
     report = compare(expected_csv, result)
@@ -199,8 +203,9 @@ def visual_parity(ctx: Any, store: MigrationStore, item_id: str, info: SessionIn
     store.upsert(item_id, {"render_png": render})
     try:
         value = png.similarity(reference, render)
-    except png.PngError as exc:
-        return {"status": "failed", "reason": str(exc)}
+    except png.PngError:
+        log.warning("visual parity failed", exc_info=True)
+        return {"status": "failed", "reason": "the screenshots could not be compared; see the server log"}
     report = {"status": "done", "similarity": value}
     store.put_record("verification", f"visual:{item_id}", report)
     return report
