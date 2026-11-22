@@ -10,6 +10,7 @@ A `docker compose` stack that stands in for the AWS services TabFree uses (ADR-0
 | `trino` | Athena engine v3 | `trinodb/trino:484` | `http://localhost:8080` (web UI at `/ui/`) |
 | `aws-emulator` | SQS and SES | `motoserver/moto:5.2.5` | `http://localhost:4566` (dashboard at `/moto-api/`) |
 | `bootstrap` | (setup job) | `amazon/aws-cli:2.41.2` | none |
+| `sample-data` | (setup job) | the API image, built locally as `tabfree/api:local` | none |
 
 > **Status:** booted once, on Linux x86-64 with Docker 29.6 and Compose 5.1 (2026-11-22): every service came up healthy and the bootstrap finished without changes to this folder. Trino ran with `mem_limit: 2g` there. Not yet tried on Docker Desktop for macOS or Windows.
 
@@ -40,6 +41,12 @@ The `bootstrap` service ([`bootstrap/bootstrap.sh`](bootstrap/bootstrap.sh)) is 
 - the sample table `iceberg.tabfree_dev.sample_orders`: 12 made-up orders, Iceberg v2, Parquet, partitioned by month ([`bootstrap/sample-data.sql`](bootstrap/sample-data.sql))
 
 When it has finished, it stays up and reports healthy, which is what `up --wait` waits for. If it fails, it exits non-zero and `up --wait` fails; read `logs bootstrap`.
+
+After it, the `sample-data` service copies the tables the example models read into `iceberg.tabfree_lake` (at `s3://tabfree-lake/warehouse/tabfree_lake`): the generated `orders` (2,400 rows) and `people`, and Sample - Superstore from `corpus/derived/superstore` as `superstore_orders` (9,994 rows), `superstore_people` and `superstore_returns`. It is the same data the `sample` engine serves from DuckDB. It works the same way as the bootstrap: healthy once done, and a table that is already complete is left alone. The first `up` builds the API image for it, which takes a few minutes. To run it from the host instead:
+
+```sh
+uv run python -m tabfree_api.sample trino --url http://localhost:8080
+```
 
 Moto keeps its state in memory. Compose re-runs the bootstrap when you `restart aws-emulator`. If Moto restarts any other way, run `docker compose -f infra/docker/compose.yaml restart bootstrap`. Postgres, object-store data and the Iceberg catalog persist in named volumes (`tabfree_pgdata`, `tabfree_objectstore-data`, `tabfree_iceberg-catalog`).
 
@@ -72,7 +79,7 @@ ORDER BY sales DESC;
 
 From the host, use any Trino client against `http://localhost:8080`, for example `trino --server http://localhost:8080 --catalog iceberg --schema tabfree_dev`, or the Python `trino` package.
 
-**The TabFree API.** With `TABFREE_ENGINE=trino` the API runs every model's queries on this Trino instead of Athena (Athena engine v3 is Trino). A model's `connection.database` is the schema in the `iceberg` catalog, so the tables it names must exist there. It is a development setting: Trino here has no authentication, and the API refuses it outside `dev` and `test`.
+**The TabFree API.** With `TABFREE_ENGINE=trino` the API runs every model's queries on this Trino instead of Athena (Athena engine v3 is Trino). A model's `connection.database` is the schema in the `iceberg` catalog, so the tables it names must exist there; the `sample-data` service loads the ones the example dashboards use. It is a development setting: Trino here has no authentication, and the API refuses it outside `dev` and `test`.
 
 ```sh
 TABFREE_ENGINE=trino TABFREE_TRINO_URL=http://localhost:8080 TABFREE_DEV_LOGIN=1 \
