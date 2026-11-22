@@ -315,6 +315,15 @@ def _trino_value(value: Any, type_: str) -> Any:
     return value
 
 
+def trino_cast_literal(value: Any, type_: str) -> str:
+    """``CAST(<literal> AS <type_>)`` for loading rows into Trino; ``type_`` must be a trusted constant."""
+    if value is None:
+        return f"CAST(NULL AS {type_})"
+    if isinstance(value, dt.date | dt.datetime):
+        return f"CAST('{value}' AS {type_})"  # isoformat: digits and punctuation only
+    return f"CAST({athena_literal(value)} AS {type_})"
+
+
 class TrinoEngine:
     """Trino over its HTTP client protocol (standard library only).
 
@@ -547,4 +556,5 @@ __all__: Sequence[str] = [
     "TrinoEngine",
     "athena_literal",
     "engine_from_connection",
+    "trino_cast_literal",
 ]

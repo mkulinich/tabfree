@@ -32,7 +32,7 @@ from tabfree_api.engines import (
     Engine,
     RedshiftDataEngine,
     TrinoEngine,
-    athena_literal,
+    trino_cast_literal,
 )
 from tabfree_api.settings import REPO_ROOT
 from tabfree_compiler import tdvt
@@ -95,15 +95,6 @@ _TRINO_TYPES = {
 }
 
 
-def _trino_typed_literal(value: Any, type_: str) -> str:
-    target = _TRINO_TYPES[type_]
-    if value is None:
-        return f"CAST(NULL AS {target})"
-    if type_ in ("date", "datetime"):
-        return f"CAST('{value}' AS {target})"  # a date or datetime object: digits and punctuation only
-    return f"CAST({athena_literal(value)} AS {target})"
-
-
 def load_trino_calcs(engine: TrinoEngine, database: str, root: Path = TDVT_ROOT) -> None:
     """Create ``calcs`` in the Trino catalog from Calcs.csv, read with the same rules as DuckDB's loader."""
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", database):
@@ -114,7 +105,9 @@ def load_trino_calcs(engine: TrinoEngine, database: str, root: Path = TDVT_ROOT)
     columns = ", ".join(f'"{n}" {_TRINO_TYPES[t]}' for n, t in tdvt.CALCS_COLUMNS)
     values = ", ".join(
         "("
-        + ", ".join(_trino_typed_literal(v, t) for v, (_, t) in zip(row, tdvt.CALCS_COLUMNS, strict=True))
+        + ", ".join(
+            trino_cast_literal(v, _TRINO_TYPES[t]) for v, (_, t) in zip(row, tdvt.CALCS_COLUMNS, strict=True)
+        )
         + ")"
         for row in rows
     )

@@ -12,6 +12,8 @@
 #   aws-emulator  -> SQS + SES (Moto server)
 #   bootstrap     -> creates buckets, queues, the SES sender identity, the
 #                    tabfree_dev namespace and a sample Iceberg table
+#   sample-data   -> copies the example dashboards' tables into Trino
+#                    (iceberg.tabfree_lake), then exits; built from the API image
 #
 # Image choices and the reasons for them are in README.md. Every tag is pinned.
 #
@@ -176,6 +178,41 @@ services:
       timeout: 3s
       retries: 40
       start_period: 60s
+
+  # One-shot: the tables the example models read (packages/schemas/examples/models), so the API
+  # serves the example dashboards from Trino with TABFREE_ENGINE=trino. Idempotent: tables that are
+  # already complete are left alone. The first `up` builds the API image, which takes a few minutes.
+  # Like the bootstrap, it stays up and reports healthy only once it has succeeded, so `up --wait`
+  # returns when the tables are there; on failure it exits non-zero and `up --wait` fails.
+  sample-data:
+    image: tabfree/api:local
+    build:
+      context: ../..
+      dockerfile: infra/docker/api/Dockerfile
+      args:
+        EXTRAS: "preview"   # DuckDB generates the sample data
+    init: true   # forwards SIGTERM to the idle process so `down` is fast
+    command:
+      - sh
+      - -c
+      - >-
+        rm -f /tmp/sample-data.done &&
+        python -m tabfree_api.sample trino --url http://trino:8080
+        --location s3://tabfree-lake/warehouse/tabfree_lake &&
+        touch /tmp/sample-data.done && exec sleep infinity
+    environment:
+      TABFREE_SUPERSTORE_DIR: /sample/superstore
+    volumes:
+      - ../../corpus/derived/superstore:/sample/superstore:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/sample-data.done"]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+      start_period: 120s
+    depends_on:
+      bootstrap:
+        condition: service_healthy
 
 volumes:
   pgdata:

@@ -4,6 +4,8 @@
 #   2. SQS queue tabfree-jobs with a dead-letter queue    (Moto)
 #   3. SES sender domain identity                         (Moto)
 #   4. Iceberg namespace tabfree_dev + sample table       (Trino, sample-data.sql)
+# The example dashboards' tables (iceberg.tabfree_lake) are loaded afterwards by
+# the stack's sample-data service: they are generated in Python, not here.
 # Endpoints come from AWS_ENDPOINT_URL_<SERVICE> variables set in compose.yaml.
 # Afterwards it writes /tmp/bootstrap.done (the healthcheck) and idles.
 set -euo pipefail
