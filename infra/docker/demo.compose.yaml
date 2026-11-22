@@ -21,6 +21,7 @@ x-tabfree-env: &tabfree-env
   TABFREE_BASE_URL: http://localhost:8765
   TABFREE_DATABASE_URL: postgresql+psycopg://tabfree:tabfree-demo-not-a-secret@postgres:5432/tabfree
   TABFREE_SITE_FILE: /demo/apps/api/dev/site.yaml
+  TABFREE_SUPERSTORE_DIR: /demo/corpus/derived/superstore
   TABFREE_MAIL_BACKEND: log
 
 x-tabfree-image: &tabfree-image
@@ -29,11 +30,14 @@ x-tabfree-image: &tabfree-image
     context: ../..
     dockerfile: infra/docker/api/Dockerfile
     args:
-      EXTRAS: ""
+      # The "sample" engine runs on DuckDB, which is the preview extra.
+      EXTRAS: "preview"
   volumes:
     # The dev site and its example dashboards and models, at the same relative paths as in the repository.
     - ../../apps/api/dev:/demo/apps/api/dev:ro
     - ../../packages/schemas/examples:/demo/packages/schemas/examples:ro
+    # Sample - Superstore as parquet: the example dashboards query it on the sample engine.
+    - ../../corpus/derived/superstore:/demo/corpus/derived/superstore:ro
 
 services:
   postgres:

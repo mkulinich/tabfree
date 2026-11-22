@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import random
 from pathlib import Path
 from typing import Any
 
+
+def superstore_dir() -> Path:
+    """The folder with the Superstore parquet files: TABFREE_SUPERSTORE_DIR, else the repository's corpus.
+
+    An installed package (the container image) is not inside a checkout, so the demo sets the variable.
+    """
+    override = os.environ.get("TABFREE_SUPERSTORE_DIR")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[4] / "corpus" / "derived" / "superstore"
+
+
 #: Tableau's Sample - Superstore, converted from the corpus (corpus/derived/superstore/PROVENANCE.md).
-SUPERSTORE = Path(__file__).resolve().parents[4] / "corpus" / "derived" / "superstore"
+SUPERSTORE = superstore_dir()
 
 #: Regional managers, as in the example model's people table (the RLS rule keys on them).
 MANAGERS = {"East": "alice", "West": "bob", "Central": "carol", "South": "dave"}
