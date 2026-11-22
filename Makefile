@@ -4,6 +4,7 @@ SHELL := /bin/bash
 COMPOSE  := docker compose -f infra/docker/compose.yaml
 TOFU     ?= tofu
 TOFU_DIR := infra/terraform/envs/sandbox
+TOFU_PROD := infra/terraform/envs/production
 
 .PHONY: help setup lint format typecheck test check dev-up dev-down dev-logs infra-validate clean
 
@@ -42,10 +43,12 @@ dev-down: ## Stop the local stack
 dev-logs: ## Follow local stack logs
 	$(COMPOSE) logs -f
 
-infra-validate: ## Check formatting and validate the AWS sandbox IaC (no AWS calls)
+infra-validate: ## Check formatting and validate the sandbox and production IaC (no AWS calls)
 	$(TOFU) fmt -check -recursive infra/terraform
 	$(TOFU) -chdir=$(TOFU_DIR) init -backend=false -input=false
 	$(TOFU) -chdir=$(TOFU_DIR) validate
+	$(TOFU) -chdir=$(TOFU_PROD) init -backend=false -input=false
+	$(TOFU) -chdir=$(TOFU_PROD) validate
 
 clean: ## Remove local caches and build output
 	rm -rf .venv node_modules .mypy_cache .ruff_cache .pytest_cache packages/*/dist apps/*/dist

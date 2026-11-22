@@ -37,3 +37,8 @@ output "security_group_id" {
   description = "Database security group."
   value       = aws_security_group.db.id
 }
+
+output "cluster_arn" {
+  description = "Aurora cluster ARN (for AWS Backup)."
+  value       = aws_rds_cluster.this.arn
+}

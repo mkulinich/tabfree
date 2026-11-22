@@ -82,47 +82,63 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# One private route table: with a single NAT gateway there is nothing to
-# gain from one table per AZ.
+# Private route tables: one shared table with a single NAT gateway (sandbox), or one per AZ with a
+# NAT gateway in each (production, P7.1): losing an AZ then never cuts the others off.
+locals {
+  private_tables = var.nat_gateway_per_az ? var.az_count : 1
+  nat_count      = var.enable_nat_gateway ? local.private_tables : 0
+}
+
+moved {
+  from = aws_route_table.private
+  to   = aws_route_table.private[0]
+}
+
+moved {
+  from = aws_route.private_nat
+  to   = aws_route.private_nat[0]
+}
+
 resource "aws_route_table" "private" {
+  count = local.private_tables
+
   vpc_id = aws_vpc.this.id
 
-  tags = { Name = "${var.name}-private" }
+  tags = { Name = var.nat_gateway_per_az ? "${var.name}-private-${local.azs[count.index]}" : "${var.name}-private" }
 }
 
 resource "aws_route_table_association" "private" {
   count = var.az_count
 
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[var.nat_gateway_per_az ? count.index : 0].id
 }
 
 resource "aws_eip" "nat" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.nat_count
 
   domain = "vpc"
 
-  tags = { Name = "${var.name}-nat" }
+  tags = { Name = local.nat_count > 1 ? "${var.name}-nat-${count.index}" : "${var.name}-nat" }
 }
 
-# A single NAT gateway (not one per AZ): cheaper, but not highly available.
 resource "aws_nat_gateway" "this" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.nat_count
 
-  allocation_id = aws_eip.nat[0].id
-  subnet_id     = aws_subnet.public[0].id
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
 
-  tags = { Name = var.name }
+  tags = { Name = local.nat_count > 1 ? "${var.name}-${local.azs[count.index]}" : var.name }
 
   depends_on = [aws_internet_gateway.this]
 }
 
 resource "aws_route" "private_nat" {
-  count = var.enable_nat_gateway ? 1 : 0
+  count = local.nat_count
 
-  route_table_id         = aws_route_table.private.id
+  route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.this[0].id
+  nat_gateway_id         = aws_nat_gateway.this[count.index].id
 }
 
 # Gateway endpoints are free and keep S3 traffic (lake, results, ECR layers)
@@ -131,7 +147,7 @@ resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id, aws_route_table.public.id]
+  route_table_ids   = concat(aws_route_table.private[*].id, [aws_route_table.public.id])
 
   tags = { Name = "${var.name}-s3" }
 }

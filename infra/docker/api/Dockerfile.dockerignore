@@ -1,0 +1,13 @@
+**
+!pyproject.toml
+!uv.lock
+!package.json
+!package-lock.json
+!tsconfig*.json
+!packages/**
+!apps/**
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/dist
+apps/author-agent

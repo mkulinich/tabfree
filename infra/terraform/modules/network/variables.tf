@@ -30,3 +30,9 @@ variable "enable_nat_gateway" {
   type        = bool
   default     = true
 }
+
+variable "nat_gateway_per_az" {
+  description = "One NAT gateway and private route table per AZ (production HA), instead of one shared NAT gateway."
+  type        = bool
+  default     = false
+}

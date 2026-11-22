@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     #: permissions and sessions come from it and ``site_file`` is not read. It carries a password:
     #: inject it (``secret run -e TABFREE_DATABASE_URL=...``), never write it to a file.
     database_url: SecretStr | None = None
+    #: Or the parts (P7.5, ECS): the host from Terraform, the password injected from the Aurora-managed
+    #: secret. Used only when ``database_url`` is unset.
+    db_host: str | None = None
+    db_port: int = 5432
+    db_name: str = "tabfree"
+    db_user: str | None = None
+    db_password: SecretStr | None = None
     #: The site this process serves (multi-site routing arrives with /site/<id> URLs).
     site_id: str = "default"
     #: Apply migrations at start-up (dev and test only; deployments run ``python -m tabfree_api.db upgrade``).
@@ -154,6 +161,17 @@ class Settings(BaseSettings):
     dev_login: bool = False
     #: Mount the local dashboard preview (/preview). Development only: it has no authentication.
     preview: bool = False
+
+    @model_validator(mode="after")
+    def _database_from_parts(self) -> Settings:
+        if self.database_url is None and self.db_host and self.db_user and self.db_password is not None:
+            from urllib.parse import quote
+
+            password = quote(self.db_password.get_secret_value(), safe="")
+            user = quote(self.db_user, safe="")
+            url = f"postgresql+psycopg://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}"
+            self.database_url = SecretStr(url + "?sslmode=require")
+        return self
 
     @property
     def secure_cookies(self) -> bool:
