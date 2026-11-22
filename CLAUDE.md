@@ -28,6 +28,7 @@ TABFREE_DEV_LOGIN=1 TABFREE_PREVIEW=1 uv run uvicorn tabfree_api.main:app_factor
                                              # portal at / (dev sign-in), /preview without sign-in (dev only)
 uv run tabfree-migrate report corpus/workbooks --out report   # P1.6 inventory report
 uv run python -m tabfree_api.probe --engine duckdb            # P1.16 latency probe harness (athena/redshift need AWS)
+uv run python -m tabfree_api.conformance --engine trino --load-local   # TDVT on the local stack's Trino (make dev-up)
 uv run tabfree kit path/to/folder                             # CLAUDE.md, .mcp.json and the dashboard skill for Claude Code
 uv run tabfree-migrate factory factory.yaml --out factory/    # Phase 5: models, manifests, baselines, governance, waves
 uv run python -m tabfree_api.migration import factory/ --by admin   # load a factory folder (then repair/verify)
