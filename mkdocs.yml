@@ -1,0 +1,53 @@
+# Documentation site (BUILD_PLAN P7.6): `make docs` (needs mkdocs-material).
+site_name: TabFree
+site_description: An open-source replacement for Tableau Server and Desktop on AWS.
+docs_dir: docs
+site_dir: site
+strict: true
+theme:
+  name: material
+  features: [navigation.sections, navigation.top, search.highlight, content.code.copy]
+  palette:
+    - scheme: default
+      toggle: { icon: material/brightness-7, name: Dark mode }
+    - scheme: slate
+      toggle: { icon: material/brightness-4, name: Light mode }
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.superfences:
+      custom_fences:
+        - { name: mermaid, class: mermaid, format: !!python/name:pymdownx.superfences.fence_code_format }
+# Working notes link into the source tree, which the site does not include.
+exclude_docs: |
+  research/notes/
+not_in_nav: |
+  migrations/*
+  adr/*
+  rfcs/0000-template.md
+nav:
+  - Home: index.md
+  - Guides:
+      - Administration: guides/admin.md
+      - Migrating from Tableau: guides/migration.md
+      - Authoring dashboards: guides/authoring.md
+      - Architecture: guides/architecture.md
+  - Operations:
+      - Deploy on AWS: operations/deploy.md
+      - Backup and restore: operations/backup-restore.md
+      - Disaster recovery: operations/disaster-recovery.md
+      - Load testing: operations/load-test.md
+      - Cutover: operations/cutover.md
+      - Release checklist: operations/release-checklist.md
+  - Security:
+      - Threat model: security/threat-model.md
+      - Penetration test scope: security/pentest-scope.md
+  - Reference:
+      - API: reference/api.md
+      - Accessibility: reference/accessibility.md
+      - Decisions (ADRs): adr/README.md
+      - RFCs: rfcs/README.md
+      - Build plan: BUILD_PLAN.md
+      - Research report: research/research-report.md

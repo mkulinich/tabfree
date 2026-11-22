@@ -42,6 +42,7 @@ class ImportResult:
     models: int = 0
     items: int = 0
     skipped_approved: list[str] = field(default_factory=list)
+    reopened: list[str] = field(default_factory=list)  # delta: approved, changed in Tableau since
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,7 +70,10 @@ def import_factory(
     by: str,
     site_id: str | None = None,
     create: bool = False,
+    delta: bool = False,
 ) -> ImportResult:
+    """Load a factory folder. With ``delta`` (cutover, P7.7), approved dashboards whose Tableau workbook
+    changed come back for review with the new conversion; the published revision stays until approved."""
     result = ImportResult()
     site = Site(folder / "site.yaml")
     raw = yaml.safe_load((folder / "site.yaml").read_text(encoding="utf-8"))
@@ -166,11 +170,16 @@ def import_factory(
             continue
         item_id = str(report["id"])
         current = store.get(item_id)
+        reopened = False
         if current and current["status"] == "approved":
-            result.skipped_approved.append(item_id)
-            continue
+            if not delta:
+                result.skipped_approved.append(item_id)
+                continue
+            reopened = True
         wave = wave_items.get(item_id, {})
         status = "retired" if wave.get("status") == "retire" else report.get("status", "manual")
+        if reopened and status == "converted":
+            status = "review"  # changed in Tableau after approval: a person looks again
         site_entry = entries.get(item_id, {})
         values: dict[str, Any] = {
             "title": str(report.get("title", item_id))[:255],
@@ -230,8 +239,14 @@ def import_factory(
         values["fidelity"] = score(coverage=coverage, unsupported=report.get("unsupported") or [])
         store.upsert(item_id, values)
         store.event(
-            item_id, "import", by=by, note=f"status {values['status']}", data={"wave": values["wave"]}
+            item_id,
+            "changed_in_tableau" if reopened else "import",
+            by=by,
+            note=f"status {values['status']}",
+            data={"wave": values["wave"], "workbookUpdatedAt": report.get("workbookUpdatedAt")},
         )
+        if reopened:
+            result.reopened.append(item_id)
         result.items += 1
 
     # -- records for Phase 6 and the verification reports -------------------------------------------

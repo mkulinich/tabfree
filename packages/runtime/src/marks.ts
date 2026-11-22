@@ -12,7 +12,7 @@
  * - gantt: `y` the rows (a dimension), `x` the start (a measure or date), `size` the length;
  * - bullet: `y` the rows (a dimension), `x` the value, `target` the target measure.
  */
-import { s } from "./dom.js";
+import { keyboard, s } from "./dom.js";
 import { formatAxis, formatValue } from "./format.js";
 import type { Column, Scalar, Tuple } from "./protocol.js";
 
@@ -67,6 +67,7 @@ function tooltip(data: Data, row: Scalar[]): string {
 
 function interact(el: SVGElement, tuple: Tuple, text: string, options: Options): SVGElement {
   el.append(s("title", {}, text));
+  keyboard(el, text, options.onSelect ? () => options.onSelect?.(tuple) : null);
   const highlight = options.highlight?.length ? options.highlight : null;
   if (highlight && !highlight.some((h) => Object.entries(h).every(([k, v]) => !(k in tuple) || tuple[k] === v))) {
     el.classList.add("tf-dim");

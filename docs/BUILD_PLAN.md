@@ -694,6 +694,19 @@ Still open in Phase 6: P6.2 runs on Athena and Redshift (needs AWS), P6.10 cache
   - decommission Tableau Server
 - [ ] **P7.8** Open-source launch: public repository under the cleared name, maintainers and an RFC process, roadmap, issue templates, v1.0 release.
 
+**Phase 7 status (2026-11-21).** Everything that can be done offline is built and tested (`make check`, `make infra-validate`, a strict docs build). No task is ticked: each one's exit needs AWS, Docker, a cluster, the live Tableau Server, outside testers or the cleared name.
+
+| Task | Status |
+|---|---|
+| P7.1 HA and DR | Prepared: `infra/terraform/envs/production` (multi-AZ ECS services with autoscaling, Aurora with readers and point-in-time recovery, NAT per AZ, AWS Backup daily and monthly with a copy to a second region); logical backup, verify and restore (`python -m tabfree_api.backup`, tested SQLite→SQLite and SQLite→Postgres); Aurora restore-drill script; runbooks in `docs/operations/`. Not applied on AWS; no drill run. |
+| P7.2 load test | Prepared: `python -m tabfree_api.loadtest` (portal-shaped opens, filter changes, a 50-person burst, server cache figures, targets that fail the run), tested in-process; targets and Athena quotas in `docs/operations/load-test.md`. The 1,000-person run on staging is not done. |
+| P7.3 security | Partly: threat model (STRIDE plus AI authoring and the sandbox) and penetration-test scope in `docs/security/`; CI for CodeQL, pip-audit, npm audit, gitleaks, Trivy IaC and image scans, a CycloneDX SBOM, cosign-signed images with provenance; KMS keys, WAF and Secrets Manager in the production environment. The penetration test is not done. |
+| P7.4 accessibility | Partly: keyboard-operable marks, accessible names, hidden data tables, focus outlines and axe-core checks for components; number and date localisation (`locale`, `dates`). No screen-reader audit, portal audit or contrast check in a real browser; portal text is English only (`docs/reference/accessibility.md`). |
+| P7.5 packaging | Prepared: one-command production deploy (OpenTofu), the API image, the signing workflow, a Helm chart (`infra/helm/tabfree`) and a compose demo (`make demo`). The image, chart and demo have not been built, rendered or booted (no Docker or helm here). |
+| P7.6 docs | Done offline: `mkdocs.yml` with admin, migration, authoring (people and Claude) and architecture guides, operations runbooks, and the API reference generated from the app (`make openapi`, `docs/reference/openapi.json`). Not published. |
+| P7.7 cutover | Prepared: delta factory runs (`since:` in `factory.yaml`, `workbookUpdatedAt` in reports) and `import --delta`, which reopens changed approved dashboards for review while the approved revision stays live; the cutover runbook (`docs/operations/cutover.md`). Freeze, DNS, hypercare and decommissioning are for the day. |
+| P7.8 launch | Prepared: GOVERNANCE.md, MAINTAINERS.md (names at launch), the RFC process (`docs/rfcs/`), ROADMAP.md, CHANGELOG.md, issue and pull-request templates, the release checklist. Waits on the public name (P0.7). |
+
 **Milestone M7:** TabFree v1.0 is released, and Tableau Server is decommissioned.
 
 ## 8. Timeline overview

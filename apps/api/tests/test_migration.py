@@ -274,6 +274,27 @@ def test_reviewer_actions_and_approval_publish_with_tableau_permissions(app: Any
     # Re-importing leaves the approved item alone.
     result = import_factory(app.state.context.site.engine, tmp_path / "factory", by="admin")
     assert result.skipped_approved == [ITEM]
+    # A delta import at cutover (P7.7): changed in Tableau since approval, so a person looks again.
+    report_path = tmp_path / "factory" / "dashboards" / ITEM / "report.json"
+    report = json.loads(report_path.read_text())
+    report_path.write_text(json.dumps({**report, "workbookUpdatedAt": "2026-11-20T09:00:00Z"}))
+    html = report_path.parent / "index.html"
+    html.write_text(html.read_text().replace("</body>", "<p>Changed in Tableau.</p></body>"))
+    result = import_factory(app.state.context.site.engine, tmp_path / "factory", by="admin", delta=True)
+    assert result.reopened == [ITEM]
+    assert result.skipped_approved == []
+    store = MigrationStore(app.state.context.site.engine, "dev")
+    item = store.get(ITEM)
+    assert item is not None
+    assert item["status"] == "review"
+    assert item["draft_id"]
+    assert item["draft_id"] != body["draft_id"]
+    detail = admin.get(f"/api/migration/items/{ITEM}").json()
+    changed = [e for e in detail["events"] if e["action"] == "changed_in_tableau"]
+    assert changed
+    assert changed[0]["data"]["workbookUpdatedAt"] == "2026-11-20T09:00:00Z"
+    assert erin.get(f"/api/dashboards/{ITEM}").status_code == 200  # the approved revision stays live
+    assert act("approve", "cutover check").json()["published_revision"] == 2
 
 
 def test_access_parity_explains_differences(app: Any) -> None:

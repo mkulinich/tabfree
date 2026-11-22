@@ -38,6 +38,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("folder", type=Path)
     p.add_argument("--by", required=True, help="the administrator who owns the drafts")
     p.add_argument("--create", action="store_true", help="create the site if it does not exist")
+    p.add_argument(
+        "--delta", action="store_true", help="cutover: reopen approved dashboards changed in Tableau since"
+    )
     for name in ("repair", "verify"):
         p = commands.add_parser(name)
         p.add_argument("--wave", type=int)
@@ -64,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         engine = connect(settings.database_url.get_secret_value())
         imported = import_factory(
-            engine, args.folder, by=args.by, site_id=settings.site_id, create=args.create
+            engine, args.folder, by=args.by, site_id=settings.site_id, create=args.create, delta=args.delta
         )
         print(json.dumps(imported.to_dict(), indent=2))
         return 0 if not imported.errors else 1

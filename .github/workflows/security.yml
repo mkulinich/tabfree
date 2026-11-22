@@ -1,0 +1,101 @@
+name: security
+
+# BUILD_PLAN P7.3: static analysis, dependency and secret scanning, IaC checks and an SBOM, on every
+# pull request and weekly (new advisories appear without code changes). Findings go to the repository's
+# Security tab (SARIF); high-severity dependency advisories fail the build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    strategy:
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Python advisories (pip-audit over the locked versions)
+        run: |
+          uv export --all-packages --all-extras --no-hashes --format requirements-txt > /tmp/requirements.txt
+          uvx pip-audit --strict --requirement /tmp/requirements.txt --vulnerability-service osv
+      - name: npm advisories
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high --omit=dev
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  iac:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Misconfigurations in OpenTofu and Dockerfiles (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-iac.sarif
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-iac.sarif
+          category: trivy-iac
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: CycloneDX SBOM of the source tree (Python and npm, locked versions)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: tabfree-source.cdx.json
+          upload-artifact: true

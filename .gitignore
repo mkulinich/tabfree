@@ -51,3 +51,6 @@ tfplan
 # Claude Code agent worktrees
 .claude/worktrees/
 tabfree-sessions.db
+
+# mkdocs output (make docs)
+site/

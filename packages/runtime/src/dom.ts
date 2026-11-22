@@ -38,3 +38,21 @@ export function s<K extends keyof SVGElementTagNameMap>(
   apply(el, attrs, children);
   return el;
 }
+
+/** Keyboard access to a mark (WCAG 2.1.1): focusable, named, Enter or Space selects it. */
+export function keyboard(el: SVGElement, label: string, onSelect: (() => void) | null): void {
+  el.setAttribute("aria-label", label.replace(/\n/g, ", "));
+  if (!onSelect) {
+    el.setAttribute("role", "img");
+    return;
+  }
+  el.setAttribute("role", "button");
+  el.setAttribute("tabindex", "0");
+  el.addEventListener("keydown", (event) => {
+    const key = (event as KeyboardEvent).key;
+    if (key === "Enter" || key === " ") {
+      event.preventDefault();
+      onSelect();
+    }
+  });
+}

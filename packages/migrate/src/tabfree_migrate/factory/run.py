@@ -65,6 +65,8 @@ class FactoryConfig:
     identity: Identity = field(default_factory=Identity)
     fallback_owner: str = "migration-owner"
     waves: WaveSettings = field(default_factory=WaveSettings)
+    #: Delta migration (P7.7): only workbooks changed in Tableau after this ISO timestamp.
+    since: str | None = None
 
     @classmethod
     def load(cls, path: Path) -> FactoryConfig:
@@ -97,6 +99,7 @@ class FactoryConfig:
             identity=Identity.from_document(doc.get("identity")),
             fallback_owner=str(doc.get("fallbackOwner", "migration-owner")),
             waves=WaveSettings.from_document(doc.get("waves")),
+            since=str(doc["since"]) if doc.get("since") else None,
         )
 
 
@@ -112,7 +115,9 @@ def load_inventory(path: Path | None) -> dict[str, list[dict[str, Any]]]:
     try:
         out: dict[str, list[dict[str, Any]]] = {}
         for item in store.objects():
-            out.setdefault(item.type, []).append({**item.data, "id": item.luid, "name": item.name})
+            out.setdefault(item.type, []).append(
+                {**item.data, "id": item.luid, "name": item.name, "updated_at": item.updated_at}
+            )
         return out
     finally:
         store.close()
@@ -139,6 +144,8 @@ class Sources:
     workbooks: list[SourceDoc] = field(default_factory=list)
     datasources: list[SourceDoc] = field(default_factory=list)
     files: dict[str, Path] = field(default_factory=dict)  # SourceDoc.key → local file
+    #: Workbooks left out of a delta run (unchanged since ``since``).
+    skipped: list[str] = field(default_factory=list)
     errors: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -156,14 +163,33 @@ def _doc(key: str, path: Path, sources: Sources, meta: Mapping[str, Any]) -> Non
         project=meta.get("project_id"),
         owner=meta.get("owner_id"),
         luid=meta.get("luid"),
+        updated_at=meta.get("updated_at"),
     )
     sources.files[key] = path
     (sources.workbooks if path.suffix.lower() in _WORKBOOKS else sources.datasources).append(doc)
 
 
+def _after(value: Any, since: str | None) -> bool:
+    """Changed after ``since`` (both ISO timestamps); unknown times count as changed."""
+    if since is None or not value:
+        return True
+    from datetime import UTC, datetime
+
+    def parse(text: str) -> datetime:
+        when = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+        return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+    return parse(str(value)) > parse(since)
+
+
 def load_sources(
-    location: str | None, inventory: Mapping[str, list[dict[str, Any]]], staging: Path
+    location: str | None,
+    inventory: Mapping[str, list[dict[str, Any]]],
+    staging: Path,
+    *,
+    since: str | None = None,
 ) -> Sources:
+    """Every downloaded file; with ``since`` (the delta migration, P7.7), only workbooks changed after it."""
     sources = Sources()
     if not location:
         return sources
@@ -190,6 +216,10 @@ def load_sources(
         if luid not in chosen or not entry.get("include_extract"):
             chosen[luid] = entry
     for luid, entry in sorted(chosen.items()):
+        updated = (meta.get(luid) or {}).get("updated_at") or entry.get("updated_at")
+        if entry.get("kind") == "workbook" and not _after(updated, since):
+            sources.skipped.append(luid)
+            continue
         key = str(entry["key"])
         suffix = Path(key).suffix
         if isinstance(sink, LocalDirSink):
@@ -204,6 +234,7 @@ def load_sources(
         info = dict(meta.get(luid, {}))
         info.setdefault("name", entry.get("name"))
         info["luid"] = luid
+        info["updated_at"] = updated
         _doc(luid, path, sources, info)
     return sources
 
@@ -311,7 +342,7 @@ def run_factory(config: FactoryConfig, out: Path) -> FactoryResult:
     inventory = load_inventory(config.inventory)
     repository, usage_by_view = load_repository(config.repository)
     with tempfile.TemporaryDirectory(prefix="tabfree-factory-") as tmp:
-        sources = load_sources(config.downloads, inventory, Path(tmp))
+        sources = load_sources(config.downloads, inventory, Path(tmp), since=config.since)
         rules = Rules.from_document(config.remap)
         estate: Estate = generate_estate(
             sources.datasources, sources.workbooks, rules, extracts=load_extracts(config.extracts)
@@ -364,6 +395,7 @@ def run_factory(config: FactoryConfig, out: Path) -> FactoryResult:
                     "title": plan.title,
                     "workbook": plan.workbook,
                     "workbookLuid": source.luid,
+                    "workbookUpdatedAt": source.updated_at,
                     "origin": source.key,
                     "dashboard": plan.dashboard,
                     "views": list(_views_of(plan)),
@@ -445,6 +477,7 @@ def run_factory(config: FactoryConfig, out: Path) -> FactoryResult:
         "governance": {k: len(v) for k, v in governance.report.items()},
         "waves": [{"wave": w["wave"], "dashboards": len(w["dashboards"])} for w in wave_list],
         "retire": len(waves["retire"]),
+        "delta": {"since": config.since, "unchanged": len(sources.skipped)} if config.since else None,
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8")
     return FactoryResult(out, summary)

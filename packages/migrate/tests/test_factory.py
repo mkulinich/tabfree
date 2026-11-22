@@ -496,7 +496,7 @@ def test_factory_run_writes_an_importable_folder(tmp_path: Path) -> None:
             "workbooks",
             "wb-ebikes",
             "eBike Sales Analysis",
-            None,
+            "2026-03-01T10:00:00Z",
             {"project_id": "p1", "owner_id": "u1", "permissions": []},
         ),
         Item(
@@ -533,6 +533,7 @@ def test_factory_run_writes_an_importable_folder(tmp_path: Path) -> None:
     assert report["status"] == "converted"
     assert report["usage"] == 42
     assert report["workbookLuid"] == "wb-ebikes"
+    assert report["workbookUpdatedAt"] == "2026-03-01T10:00:00Z"
     assert (folder / "reference.png").read_bytes() == png
     assert report["references"]["csv"]["sales_ban"]["file"] == "reference/sales_ban.csv"
     assert json.loads((folder / "source.json").read_text())["dashboard"]["name"] == "Sales Analysis"
@@ -549,6 +550,14 @@ def test_factory_run_writes_an_importable_folder(tmp_path: Path) -> None:
     assert json.loads((out / "decisions.json").read_text())["queue"][0]["class"] == "sqlproxy"
     for model in (out / "models").glob("*.model.yaml"):
         assert schema_errors(SchemaKind.SEMANTIC_MODEL, yaml.safe_load(model.read_text())) == []
+    # A delta run (P7.7) converts only workbooks changed since the given time; governance stays whole.
+    for since, converted in (("2026-04-01T00:00:00Z", 0), ("2026-02-01T00:00:00+00:00", 1)):
+        doc = yaml.safe_load(config.read_text())
+        config.write_text(yaml.safe_dump({**doc, "since": since}), encoding="utf-8")
+        delta = run_factory(FactoryConfig.load(config), tmp_path / f"delta-{converted}")
+        assert delta.summary["workbooks"] == converted
+        assert delta.summary["delta"] == {"since": since, "unchanged": 1 - converted}
+        assert (delta.out / "site.yaml").is_file()
 
 
 def test_factory_command_on_a_folder_of_workbooks(tmp_path: Path) -> None:

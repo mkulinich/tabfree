@@ -8,6 +8,38 @@ import type { Column, Scalar } from "./protocol.js";
 
 export const NULL_LABEL = "Null";
 
+export type DateStyle = "iso" | "short" | "medium" | "long";
+
+/** Number and date localisation (P7.4): the viewer's language by default; dashboards may set it. */
+let LOCALE = defaultLocale();
+let DATES: DateStyle = "iso";
+
+function defaultLocale(): string {
+  const language = typeof navigator !== "undefined" ? navigator.language : undefined;
+  try {
+    return language ? (Intl.getCanonicalLocales(language)[0] ?? "en-US") : "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
+/** Set the locale for numbers and how dates read ("iso" keeps 2024-03-01, Tableau-style defaults). */
+export function setLocale(locale: string | null, dates: DateStyle = "iso"): void {
+  try {
+    LOCALE = locale ? (Intl.getCanonicalLocales(locale)[0] ?? defaultLocale()) : defaultLocale();
+  } catch {
+    LOCALE = defaultLocale();
+  }
+  DATES = dates;
+  numberFormats.clear();
+}
+
+export function currentLocale(): string {
+  return LOCALE;
+}
+
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
 interface NumberFormat {
   prefix: string;
   suffix: string;
@@ -47,12 +79,19 @@ function unquote(text: string): string {
 
 export function formatNumber(value: number, format: NumberFormat): string {
   const scaled = format.percent ? value * 100 : value;
-  const text = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: format.decimals,
-    maximumFractionDigits: format.decimals,
-    useGrouping: format.grouping,
-  }).format(Math.abs(scaled));
-  const sign = scaled < 0 && Number(text.replace(/[^0-9.]/g, "")) !== 0 ? "-" : "";
+  const key = `${LOCALE}|${format.decimals}|${format.grouping}`;
+  let formatter = numberFormats.get(key);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(LOCALE, {
+      minimumFractionDigits: format.decimals,
+      maximumFractionDigits: format.decimals,
+      useGrouping: format.grouping,
+    });
+    numberFormats.set(key, formatter);
+  }
+  const text = formatter.format(Math.abs(scaled));
+  // "-0.00" is just "0.00": the sign shows only when the rounded value is not zero.
+  const sign = scaled < 0 && Number(Math.abs(scaled).toFixed(format.decimals)) !== 0 ? "-" : "";
   return `${sign}${format.prefix}${text}${format.suffix}`;
 }
 
@@ -71,9 +110,17 @@ export function formatValue(value: Scalar, column: Pick<Column, "type" | "format
     if (column.type === "integer" || Number.isInteger(value)) return formatNumber(value, DEFAULT_INTEGER);
     return formatNumber(value, DEFAULT_FLOAT);
   }
-  if (column.type === "date") return value.slice(0, 10);
-  if (column.type === "datetime") return formatDatetime(value);
+  if (column.type === "date") return DATES === "iso" ? value.slice(0, 10) : localDate(value.slice(0, 10), false);
+  if (column.type === "datetime") return DATES === "iso" ? formatDatetime(value) : localDate(value, true);
   return value;
+}
+
+function localDate(value: string, withTime: boolean): string {
+  const iso = value.length <= 10 ? `${value}T00:00:00Z` : `${value.replace(" ", "T").slice(0, 19)}Z`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return value;
+  const style = DATES === "iso" ? "medium" : DATES;
+  return new Intl.DateTimeFormat(LOCALE, withTime ? { dateStyle: style, timeStyle: "short", timeZone: "UTC" } : { dateStyle: style, timeZone: "UTC" }).format(date);
 }
 
 function formatDatetime(value: string): string {

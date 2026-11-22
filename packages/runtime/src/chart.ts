@@ -6,7 +6,7 @@
  * both can sit behind {@link renderChart}'s signature.
  */
 
-import { s } from "./dom.js";
+import { keyboard, s } from "./dom.js";
 import { formatAxis, formatValue } from "./format.js";
 import { EXTRA_MARKS, type ExtraMark, MarkError, renderExtra } from "./marks.js";
 import type { Column, Scalar, Tuple } from "./protocol.js";
@@ -153,7 +153,8 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
     viewBox: `0 0 ${width} ${height}`,
     width,
     height,
-    role: "img",
+    // An image when it only shows; a labelled group when its marks are buttons (they stay reachable).
+    role: options.onSelect ? "group" : "img",
     "aria-label": spec.title ?? `${spec.y} by ${spec.x}`,
     class: "tf-svg",
   });
@@ -399,6 +400,7 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
         select(tuple);
       });
     }
+    keyboard(el, tooltip(row), options.onSelect ? () => options.onSelect?.(tuple) : null);
     hoverable(el, tuple, options);
   }
 }
@@ -494,6 +496,7 @@ function renderScatter(
         select(tuple);
       });
     }
+    keyboard(dot, data.columns.map((c, i) => `${c.name}: ${formatValue(row[i] ?? null, c)}`).join(", "), options.onSelect && dims.length ? () => options.onSelect?.(tuple) : null);
     if (dims.length) hoverable(dot, tuple, options);
     marks.append(dot);
   }

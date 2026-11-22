@@ -1,0 +1,28 @@
+{{- if .Values.migrations.enabled }}
+{{- $ctx := dict "root" . "component" "migrate" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tabfree.fullname" . }}-migrate
+  labels:
+    {{- include "tabfree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "tabfree.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- include "tabfree.podSpec" $ctx | nindent 6 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          {{- include "tabfree.container" $ctx | nindent 10 }}
+          command: ["python", "-m", "tabfree_api.db", "upgrade"]
+{{- end }}

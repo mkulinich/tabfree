@@ -16,7 +16,7 @@
 
 import { ChartError, MARK_NAMES, renderChart, type Mark } from "./chart.js";
 import { h } from "./dom.js";
-import { formatValue } from "./format.js";
+import { currentLocale, formatValue, setLocale } from "./format.js";
 import { LAYOUT_ELEMENTS } from "./layout.js";
 import { MapError, renderStateMap } from "./map.js";
 import type { FilterSpec, FilterValue, Period, Scalar, Tuple } from "./protocol.js";
@@ -124,11 +124,16 @@ export class TfDashboard extends TfElement {
     this.#observer?.disconnect();
   }
 
-  static observedAttributes = ["size", "width", "height", "phone", "phone-width"];
+  static observedAttributes = ["size", "width", "height", "phone", "phone-width", "locale", "dates"];
 
   protected async render(): Promise<void> {
     if (!this.tf) return;
     document.documentElement.dataset.theme = this.tf.theme.mode;
+    // Localisation (P7.4): numbers follow the viewer's language unless the dashboard sets `locale`;
+    // `dates="medium"` (or short, long) shows localised dates instead of ISO ones.
+    const dates = this.getAttribute("dates");
+    setLocale(this.getAttribute("locale"), dates === "short" || dates === "medium" || dates === "long" ? dates : "iso");
+    document.documentElement.lang = currentLocale();
     // Tableau's dashboard size: "automatic" fills the frame; "fixed" keeps the authored width and height
     // (and scrolls). Floating objects are positioned relative to the dashboard either way.
     this.style.position = "relative";
@@ -265,10 +270,20 @@ export class TfChart extends TfElement {
         .join(", ");
       parts.push(h("div", { class: "tf-drill" }, back, h("span", { class: "tf-note" }, where)));
     }
-    parts.push(svg);
+    parts.push(svg, dataTable(result, this.getAttribute("title") ?? `${y} by ${x}`));
     this.replaceChildren(...parts.filter((n): n is HTMLElement | SVGSVGElement => n !== null));
     if (result.truncated) this.append(h("div", { class: "tf-note" }, "Showing the first rows only."));
   }
+}
+
+/** The chart's data as a table for screen readers (WCAG 1.1.1): visually hidden, first 200 rows. */
+export function dataTable(result: QueryResult, caption: string): HTMLElement {
+  const table = h("table", { class: "tf-sr-only" }, h("caption", {}, caption));
+  table.append(h("tr", {}, ...result.columns.map((c) => h("th", { scope: "col" }, c.name))));
+  for (const row of result.rows.slice(0, 200)) {
+    table.append(h("tr", {}, ...result.columns.map((c, i) => h("td", {}, formatValue(row[i] ?? null, c)))));
+  }
+  return table;
 }
 
 /** Order rows by a measure for `sort="asc|desc"` (the first measure among the named columns). */

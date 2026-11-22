@@ -1,0 +1,30 @@
+{{- if .Values.worker.enabled }}
+{{- $ctx := dict "root" . "component" "worker" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tabfree.fullname" . }}-worker
+  labels:
+    {{- include "tabfree.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "tabfree.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tabfree.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- include "tabfree.podSpec" $ctx | nindent 6 }}
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          {{- include "tabfree.container" $ctx | nindent 10 }}
+          command:
+            {{- toYaml .Values.worker.args | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+{{- end }}

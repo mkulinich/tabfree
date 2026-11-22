@@ -102,4 +102,9 @@ tf-when[hidden], [hidden] { display: none !important; }
 .tf-phone tf-float { position: static !important; width: auto !important; height: auto !important; }
 .tf-viz-tooltip { position: fixed; z-index: 10; background: var(--tf-surface); border: 1px solid var(--tf-border);
   border-radius: 6px; padding: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
+/* P7.4: accessibility */
+.tf-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.tf-mark:focus-visible { outline: 3px solid var(--tf-text); outline-offset: 2px; }
+.tf-button:focus-visible, .tf-chip:focus-visible, .tf-input:focus-visible { outline: 3px solid var(--tf-text); outline-offset: 2px; }
 `;

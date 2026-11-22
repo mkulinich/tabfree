@@ -28,6 +28,7 @@ class SourceDoc:
     project: str | None = None
     owner: str | None = None
     luid: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass

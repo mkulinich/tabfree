@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tabfree
+description: TabFree on Kubernetes (EKS) - the portal and API, the job worker, and the database migration job.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+keywords: [analytics, dashboards, tableau-migration]

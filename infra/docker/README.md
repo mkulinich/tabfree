@@ -127,3 +127,18 @@ docker run --rm --read-only -v "$PWD/scratch:/scratch" tabfree/converter:dev \
 ```
 
 Neither image has been built yet (no Docker on the authoring machine).
+
+## Demo with sample data (P7.5)
+
+[`demo.compose.yaml`](demo.compose.yaml) runs TabFree itself (the API image from `api/Dockerfile`, a job
+worker and Postgres) on the generated sample data, with no AWS account:
+
+```sh
+docker compose -f infra/docker/demo.compose.yaml up --build -d --wait
+open http://localhost:8765     # dev sign-in: admin, erin (a manager), casey (a contractor)
+docker compose -f infra/docker/demo.compose.yaml down -v
+```
+
+It is a development configuration (passwordless dev sign-in, the DuckDB sample engine), bound to
+`127.0.0.1`, and the server refuses it when `TABFREE_ENVIRONMENT` is not `dev`. Like the stack above, it
+**has not been booted yet**.
