@@ -564,16 +564,16 @@ tabfree/
 
 **Goal:** convert the whole Tableau estate with measurable fidelity, in waves.
 
-- [ ] **P5.1** Model generation at scale for every published and embedded data source.
+- [x] **P5.1** Model generation at scale for every published and embedded data source.
   - Connection remap rules map each Tableau connection to its Athena or Redshift table(s).
   - Unresolved sources (live databases outside AWS, Bridge, Excel) go to a decision queue: Athena federated query, replicate into AWS (DMS / Glue / zero-ETL), or keep a static snapshot.
-- [ ] **P5.2** Manifest generation: each worksheet becomes named queries, table-calc specs, filters, parameters and actions in `tabfree.json`. This step is deterministic, with no AI involved.
+- [x] **P5.2** Manifest generation: each worksheet becomes named queries, table-calc specs, filters, parameters and actions in `tabfree.json`. This step is deterministic, with no AI involved.
 - [ ] **P5.3** Recreation in two stages:
   - **Deterministic baseline:** worksheets become `<tf-chart>`, `<tf-crosstab>` or `<tf-map>` with marks and encodings mapped; the zone tree becomes CSS grid/flex; filter and parameter cards become `<tf-filter>` and `<tf-parameter>`.
   - **Claude repair agent** (batch, headless): starts from the IR, manifest, baseline HTML and reference PNGs, and fixes what the baseline couldn't express (unsupported marks, formatting, custom visuals).
   - **Loop:** validate → render → compare to the Tableau PNG → fix, up to N iterations.
   - **Fidelity score:** data parity %, visual similarity, and a list of unsupported features.
-- [ ] **P5.4** Governance migration:
+- [x] **P5.4** Governance migration:
   - users mapped to IdP identities
   - groups (local and IdP-synced)
   - the project tree
@@ -588,15 +588,29 @@ tabfree/
   - **RLS parity:** sign in as sample users through the Tableau connected app, compare their view data to TabFree's results for the same user.
   - **Data parity:** results vs the captured CSVs.
   - **Visual parity:** renders vs the captured PNGs.
-- [ ] **P5.6** Migration console:
+- [x] **P5.6** Migration console:
   - per-wave and per-workbook status
   - Tableau PNG and the TabFree render side by side
   - reviewer actions: approve, request changes (instructions go to the agent), mark for manual rebuild, retire
-- [ ] **P5.7** Waves:
+- [x] **P5.7** Waves:
   - **Wave 1:** the top 20 dashboards by usage, with a pilot group.
   - **Wave 2:** the next 100.
   - **Wave 3:** the long tail.
   - Retired content is archived to S3 with its ground truth.
+
+**Phase 5 status (2026-11-22).** The factory and the console are built and tested offline (`make check`). Everything that needs the live Tableau Server, AWS or a real Claude model is prepared but not run: the per-user crawls, the RLS captures through a connected app, the repair agent against a real model, and the waves themselves. On the corpus, `tabfree-migrate factory` turns 96 workbooks into 275 dashboards in about 8 seconds: 261 produce valid bundles (166 with nothing unsupported), 14 need a manual rebuild.
+
+| Task | Status |
+|---|---|
+| P5.1 models at scale | Done: `tabfree/remap@0` rules (globs, templates, native Athena/Redshift, converted extracts by package member), a decision queue per database with the options that apply (federated, replicate, snapshot, extract), shared models for published data sources, and a model from the workbook's copy when the published source was not harvested. |
+| P5.2 manifests | Done and deterministic: worksheet queries, filter cards (the worksheet filter becomes the default), parameter controls and used parameters (named by the model parameter's id), filter, highlight and URL actions with date-part field mapping. |
+| P5.3 recreation | Deterministic baseline done (zone tree → `tf-container` weights, floating zones, marks and shelves → `tf-chart`/`tf-crosstab`/`tf-kpi`/`tf-map`, filters, parameters, legends, text, packaged images). Repair agent, render-and-compare loop and fidelity score built and tested with a scripted model; **not run against a real model** (left unticked). |
+| P5.4 governance | Done: users (identity mapping), site roles, groups (IdP or local, minimum site role), project tree, owners with a fallback, locked/customizable projects, default rules per content type, leaders, content rules, redirects, favorites, custom views, subscriptions and refresh tasks as jobs, data-driven alerts (decoded or marked for the owner), tags, descriptions, certifications. New read-only crawl types: `favorites`, `custom_views`, `user_workbooks`. |
+| P5.5 verification | Access, data, RLS and visual parity built; access and data parity tested end to end. RLS parity needs per-user CSVs captured through a connected app (not built: needs the server); visual parity needs Chromium (`tabfree-api[render]`). Left unticked until run on the real estate. |
+| P5.6 console | Done: `/migration` (waves × statuses, filters, access parity) and `/migration/<id>` (Tableau PNG next to the live draft, fidelity, approve and publish, request changes → repair agent, rebuild, retire, reopen, history). |
+| P5.7 waves | Done: ranked by usage, configurable sizes, retire below a usage threshold, archive of retired workbooks and ground truth to the lake. |
+
+Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran (`render_path` was missing from the renderer); a failing draft query answered 500 instead of 502/504.
 
 **Milestone M5:**
 - Every in-use dashboard is accounted for: converted with parity, rebuilt, or retired.

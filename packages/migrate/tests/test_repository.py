@@ -51,6 +51,8 @@ CREATE TABLE datasources (id INTEGER, luid TEXT, name TEXT, site_id INTEGER,
 CREATE TABLE views (id INTEGER, luid TEXT, name TEXT, repository_url TEXT, workbook_id INTEGER,
   site_id INTEGER);
 CREATE TABLE extracts (id INTEGER, workbook_id INTEGER, datasource_id INTEGER, descriptor TEXT);
+CREATE TABLE users (id INTEGER, luid TEXT, site_id INTEGER, system_user_id INTEGER);
+CREATE TABLE system_users (id INTEGER, name TEXT);
 """
 
 
@@ -182,8 +184,8 @@ def test_missing_table_is_recorded_and_harvest_continues(tmp_path: Path) -> None
 
 def test_bad_arguments(tmp_path: Path) -> None:
     store = RepositoryStore(tmp_path / "r.db")
-    with pytest.raises(ValueError, match="unknown repository sources: users"):
-        harvest_repository(SqliteRepository(_fixture()), store, ["users"])
+    with pytest.raises(ValueError, match="unknown repository sources: passwords"):
+        harvest_repository(SqliteRepository(_fixture()), store, ["passwords"])
     with pytest.raises(ValueError, match="positive"):
         harvest_repository(SqliteRepository(_fixture()), store, page_size=0)
 

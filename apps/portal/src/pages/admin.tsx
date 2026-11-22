@@ -25,6 +25,7 @@ function AdminShell({ title, children }: { title: string; children: ReactNode })
         <Link to="/admin/groups">Groups</Link>
         <Link to="/admin/site">Settings</Link>
         <Link to="/admin/audit">Audit log</Link>
+        <Link to="/migration">Migration</Link>
       </nav>
       <h1>{title}</h1>
       {children}

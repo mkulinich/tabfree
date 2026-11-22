@@ -133,6 +133,19 @@ class PlaywrightRenderer:
     def render(
         self, info: SessionInfo, dashboard: str, state: Mapping[str, Any], fmt: Literal["png", "pdf"]
     ) -> bytes:
+        return self._render(info, print_url(self.base_url, dashboard, state), fmt)
+
+    def render_path(
+        self, info: SessionInfo, path: str, state: Mapping[str, Any], fmt: Literal["png", "pdf"]
+    ) -> bytes:
+        """A portal page in print mode, e.g. ``/drafts/<id>`` (validation and migration repair)."""
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("render_path takes a path on this server")
+        if path.startswith("/dashboards/"):
+            return self.render(info, urllib.parse.unquote(path.removeprefix("/dashboards/")), state, fmt)
+        return self._render(info, f"{self.base_url}{path}?print=1", fmt)
+
+    def _render(self, info: SessionInfo, url: str, fmt: Literal["png", "pdf"]) -> bytes:
         from playwright.sync_api import sync_playwright
 
         # A two-minute session with exactly the requester's identity: RLS and permissions apply.
@@ -157,7 +170,7 @@ class PlaywrightRenderer:
                     )
                     page = context.new_page()
                     page.set_default_timeout(self.timeout_s * 1000)
-                    page.goto(print_url(self.base_url, dashboard, state), wait_until="networkidle")
+                    page.goto(url, wait_until="networkidle")
                     page.wait_for_timeout(self.settle_ms)
                     if fmt == "pdf":
                         return bytes(page.pdf(print_background=True, landscape=True, format="A4"))

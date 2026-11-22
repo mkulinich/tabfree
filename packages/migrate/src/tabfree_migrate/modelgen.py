@@ -228,7 +228,8 @@ def generate_model(
     model_id: str | None = None,
     engine: str = "athena",
     database: str = "tabfree_lake",
-    table_map: Mapping[str, str] | None = None,
+    table_map: Mapping[str, str | Mapping[str, str]] | None = None,
+    connection: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], GenerationReport]:
     """Generate a semantic model for one data source of a workbook or data source IR."""
     report = GenerationReport()
@@ -264,7 +265,12 @@ def generate_model(
         else:
             physical = unbracket(str(leaf.get("table", name)).split("].[")[-1])
             mapped = (table_map or {}).get(name) or (table_map or {}).get(physical)
-            source = {"table": mapped or _identifier(physical).lower()}
+            # A mapping value is a full table source ({"table", "schema", "database"}) from remap rules.
+            source = (
+                dict(mapped)
+                if isinstance(mapped, Mapping)
+                else {"table": mapped or _identifier(physical).lower()}
+            )
             if not mapped:
                 report.assumptions.append(
                     f"table {name!r} is expected as {database}.{source['table']} (pass table_map to change)"
@@ -554,7 +560,7 @@ def generate_model(
         "schema": "tabfree/model@0",
         "id": model_id or snake(title, "m"),
         "title": title,
-        "connection": {"engine": engine, "database": database},
+        "connection": dict(connection) if connection else {"engine": engine, "database": database},
         "tables": [t for t in tables.values() if t["columns"] or "sql" in t["source"]],
         "fields": fields,
     }

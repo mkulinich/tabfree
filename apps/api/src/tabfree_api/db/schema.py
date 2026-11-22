@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -407,4 +408,83 @@ agent_sessions = Table(
     Column("updated_at", Timestamp, nullable=False),
     CheckConstraint(_in("mode", ("quick", "sandbox")), name="mode"),
     CheckConstraint(_in("status", ("running", "done", "failed", "cancelled")), name="status"),
+)
+
+# ---- Phase 5: the migration factory -----------------------------------------------------------------
+
+#: converted: a baseline bundle awaits repair or review; manual: needs a person to rebuild it;
+#: review: repaired (or not needed) and waiting for a reviewer; changes_requested: the reviewer sent
+#: instructions to the repair agent; approved: published; rebuild: marked for a manual rebuild;
+#: retired: not migrated (archived with its ground truth).
+MIGRATION_STATUSES = (
+    "converted",
+    "manual",
+    "repairing",
+    "review",
+    "changes_requested",
+    "approved",
+    "rebuild",
+    "retired",
+)
+
+#: One Tableau dashboard (or view published on its own) on its way to TabFree.
+migration_items = Table(
+    "migration_items",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(100), primary_key=True),  # the TabFree dashboard id
+    Column("title", String(255), nullable=False),
+    Column("workbook", String(255), nullable=False, server_default=""),
+    Column("project_id", String(100)),
+    Column("owner", String(255)),
+    Column("wave", Integer),
+    Column("usage", BigInteger, nullable=False, server_default="0"),
+    Column("status", String(24), nullable=False),
+    #: The draft holding the converted bundle (repairs and reviews happen on it).
+    Column("draft_id", String(36)),
+    #: The factory's report.json: coverage, unsupported features, notes, references.
+    Column("report", Document, nullable=False, default=dict),
+    #: Latest fidelity: {score, grade, components: {coverage, data, visual, validation}}.
+    Column("fidelity", Document),
+    #: Tableau's PNG of the view (ground truth) and the latest TabFree render.
+    Column("reference_png", LargeBinary),
+    Column("render_png", LargeBinary),
+    #: Captured summary-data CSVs per query: {query: csv text}.
+    Column("reference_csv", Document, nullable=False, default=dict),
+    Column("repair_iterations", Integer, nullable=False, server_default="0"),
+    Column("reviewer", String(255)),
+    Column("note", Text, nullable=False, server_default=""),
+    Column("published_revision", Integer),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+    CheckConstraint(_in("status", MIGRATION_STATUSES), name="status"),
+    Index("ix_migration_items_wave", "site_id", "wave", "status"),
+)
+
+#: Everything that happened to an item: imports, repairs, verification, reviewer actions.
+migration_events = Table(
+    "migration_events",
+    metadata,
+    Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    Column("item_id", String(100), nullable=False),
+    Column("action", String(40), nullable=False),
+    Column("by", String(255)),
+    Column("note", Text, nullable=False, server_default=""),
+    Column("data", Document),
+    Column("created_at", Timestamp, nullable=False),
+    Index("ix_migration_events_item", "site_id", "item_id"),
+)
+
+#: Governance that waits for Phase 6 features (subscriptions, refresh jobs, alerts, custom views),
+#: the decision queue and verification reports, kept as documents from the factory and the checks.
+migration_records = Table(
+    "migration_records",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("kind", String(32), primary_key=True),  # job | alert | custom_view | decision | verification
+    Column("key", String(200), primary_key=True),
+    Column("data", Document, nullable=False),
+    Column("status", String(32), nullable=False, server_default="pending"),
+    Column("updated_at", Timestamp, nullable=False),
 )

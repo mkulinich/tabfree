@@ -31,6 +31,7 @@ from tabfree_api.authoring.fence import fence
 from tabfree_api.authoring.validation import ValidationReport, validate
 from tabfree_api.authz import Capability, ContentEntry, Project, SiteRole, ancestry, evaluate
 from tabfree_api.content import ContentError
+from tabfree_api.engines import EngineError, EngineTimeoutError
 from tabfree_compiler import CompileError, Session
 
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
@@ -288,6 +289,10 @@ class AuthoringService:
             result = self.ctx.service.explore(model, query, self.session(info))
         except (CompileError, ContentError) as exc:
             raise AuthoringError(422, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise AuthoringError(504, str(exc)) from None
+        except EngineError as exc:
+            raise AuthoringError(502, str(exc)) from None
         self.audit(info, "agent_query", resource_kind="model", resource_id=model, rows=len(result["rows"]))
         rows = result["rows"][:AGENT_ROWS]
         return {
@@ -523,6 +528,10 @@ class AuthoringService:
             return self._run_draft_query(info, draft, manifest, name, state, selections)
         except (CompileError, ContentError) as exc:
             raise AuthoringError(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise AuthoringError(504, str(exc)) from None
+        except EngineError as exc:
+            raise AuthoringError(502, str(exc)) from None
 
     def draft_domain(
         self, info: SessionInfo, draft_id: str, name: str, state: Mapping[str, Any]
@@ -543,6 +552,10 @@ class AuthoringService:
             )
         except (CompileError, ContentError) as exc:
             raise AuthoringError(400, str(exc)) from None
+        except EngineTimeoutError as exc:
+            raise AuthoringError(504, str(exc)) from None
+        except EngineError as exc:
+            raise AuthoringError(502, str(exc)) from None
         return result
 
     # ---- history -----------------------------------------------------------------------------------

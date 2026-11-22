@@ -102,6 +102,7 @@ class QuickEditor:
         max_turns: int = 12,
         timeout_s: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        system: str | None = None,
     ) -> None:
         self.service = service
         self.provider = provider
@@ -109,7 +110,7 @@ class QuickEditor:
         self.max_turns = max_turns
         self.timeout_s = timeout_s
         self.clock = clock
-        self._system = [{"type": "text", "text": system_prompt()}]
+        self._system = [{"type": "text", "text": system or system_prompt()}]
         self._tools = [t.anthropic() for t in authoring_tools.AGENT_TOOLS]
 
     def run(
@@ -117,21 +118,26 @@ class QuickEditor:
         info: SessionInfo,
         agent_session: str,
         draft_id: str,
-        request: str,
+        request: str | Sequence[dict[str, Any]],
         *,
         history: Sequence[dict[str, Any]] = (),
         emit: Emit = lambda _e: None,
         cancelled: Callable[[], bool] = lambda: False,
         task: Task = "quick",
+        first: Sequence[dict[str, Any]] | None = None,
     ) -> QuickResult:
+        """``first`` replaces the default first message (content blocks, e.g. text and a reference image)."""
         agent = replace(info, agent_session=agent_session, scopes=frozenset(authoring_tools.SCOPES))
         messages: list[dict[str, Any]] = list(history)
-        if messages:
-            messages.append({"role": "user", "content": request})
-        else:
+        if first is not None and not messages:
+            messages.append({"role": "user", "content": list(first)})
+        elif messages:
             messages.append(
-                {"role": "user", "content": first_message(self.service, agent, draft_id, request)}
+                {"role": "user", "content": request if isinstance(request, str) else list(request)}
             )
+        else:
+            text = request if isinstance(request, str) else "\n".join(str(b.get("text", "")) for b in request)
+            messages.append({"role": "user", "content": first_message(self.service, agent, draft_id, text)})
         result = QuickResult("done", "", messages)
         started = self.clock()
         final_text: list[str] = []

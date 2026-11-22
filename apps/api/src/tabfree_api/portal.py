@@ -349,6 +349,10 @@ def create_router(ctx: Context) -> APIRouter:
 
     authoring_routes.add_routes(router, ctx, current, csrf)
 
+    from tabfree_api.migration import routes as migration_routes
+
+    migration_routes.add_routes(router, ctx, current, csrf)
+
     # ---- personal access tokens (P3.2) -------------------------------------------------------------
 
     def pat_store() -> Any:
@@ -631,6 +635,8 @@ def create_router(ctx: Context) -> APIRouter:
         "/drafts/{_id}",
         "/models/{_id}",
         "/admin/{_page}",
+        "/migration",
+        "/migration/{_id}",
     ):
         router.add_api_route(route, lambda: spa() or RedirectResponse("/"), include_in_schema=False)
 

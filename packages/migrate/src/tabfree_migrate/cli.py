@@ -683,3 +683,35 @@ def worksheet_query_command(
                 typer.echo(f"  - {item}")
     if not report.ok:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def factory(
+    config: Annotated[Path, typer.Argument(help="A tabfree/factory@0 file (inputs, remap rules, waves).")],
+    out: Annotated[Path, typer.Option(help="The factory folder to write.")] = Path("factory"),
+    as_json: Annotated[bool, typer.Option("--json", help="Print the summary as JSON.")] = False,
+) -> None:
+    """Convert the harvested estate: models, manifests, HTML baselines, governance and waves (Phase 5).
+
+    Reads only local or raw-zone files written by the read-only harvest; never contacts Tableau.
+    """
+    from tabfree_migrate.factory.run import FactoryConfig, FactoryError, run_factory
+
+    try:
+        result = run_factory(FactoryConfig.load(config), out)
+    except (FactoryError, OSError, ValueError) as exc:
+        _fail(exc)
+    summary = result.summary
+    if as_json:
+        typer.echo(json.dumps(summary, indent=2, default=str))
+        return
+    typer.echo(f"workbooks {summary['workbooks']}, data sources {summary['datasources']}")
+    typer.echo(
+        f"dashboards {summary['dashboards']}: {summary['converted']} converted "
+        f"({summary['fullyConverted']} with nothing unsupported), {summary['manual']} need a manual rebuild"
+    )
+    typer.echo(f"models {summary['models']}, decisions waiting {summary['decisions']}")
+    for wave in summary["waves"]:
+        typer.echo(f"wave {wave['wave']}: {wave['dashboards']} dashboards")
+    typer.echo(f"retire: {summary['retire']}; errors: {len(summary['errors'])}")
+    typer.echo(f"wrote {out}/ (site.yaml, governance.json, waves.json, decisions.json, dashboards/, models/)")

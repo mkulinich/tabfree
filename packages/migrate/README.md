@@ -145,3 +145,22 @@ One query per table computes the statistics in Hyper, in Athena and in DuckDB (t
 | min, max | WKT | normalised: upper case, whitespace collapsed |
 
 **Where it runs.** Mapping, settings, `.tde` detection, the batch runner (with a fake converter) and parity (DuckDB over Parquet) are unit-tested on any platform. Real Hyper conversion and Hyper-vs-Parquet parity on corpus extracts run only in CI's `hyper` job. Athena DDL, Glue parameters, the Athena parity run, S3 and the Fargate task need AWS and have not been run yet.
+
+## The migration factory (Phase 5)
+
+`tabfree-migrate factory factory.yaml --out factory/` converts the harvested estate offline. The
+config (`tabfree/factory@0`) names the inputs: the download sink or a folder of workbooks, the
+inventory and repository harvests, the ground-truth sink, a local copy of convert-batch output, the
+remap rules (`tabfree/remap@0`), identity mapping, the fallback owner and wave sizes. It writes:
+
+| Path | What |
+|---|---|
+| `models/*.model.yaml`, `models/report.json` | one model per data source, connections remapped (P5.1) |
+| `decisions.json` | sources no rule covers, grouped by database, with the choices that apply |
+| `dashboards/<id>/` | `tabfree.json` (P5.2), `index.html` baseline (P5.3), `README.md`, `report.json` (coverage, unsupported, references), `reference.png`, `reference/*.csv`, `source.json` (IR excerpt for the repair agent) |
+| `site.yaml`, `governance.json` | users, groups, projects, rules, redirects; favorites, jobs, alerts, custom views, tags, access reference (P5.4) |
+| `waves.json`, `summary.json` | waves by usage and retirements (P5.7); counts and top unsupported features |
+
+`crawl --type favorites --type custom_views --type user_workbooks` adds what governance and access
+parity need (read-only REST calls per user). The folder is then imported into the server with
+`python -m tabfree_api.migration import` (see the API README).

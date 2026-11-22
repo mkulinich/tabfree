@@ -29,6 +29,8 @@ TABFREE_DEV_LOGIN=1 TABFREE_PREVIEW=1 uv run uvicorn tabfree_api.main:app_factor
 uv run tabfree-migrate report corpus/workbooks --out report   # P1.6 inventory report
 uv run python -m tabfree_api.probe --engine duckdb            # P1.16 latency probe harness (athena/redshift need AWS)
 uv run tabfree kit path/to/folder                             # CLAUDE.md, .mcp.json and the dashboard skill for Claude Code
+uv run tabfree-migrate factory factory.yaml --out factory/    # Phase 5: models, manifests, baselines, governance, waves
+uv run python -m tabfree_api.migration import factory/ --by admin   # load a factory folder (then repair/verify)
 ```
 
 ## Layout
@@ -36,9 +38,10 @@ uv run tabfree kit path/to/folder                             # CLAUDE.md, .mcp.
 - `apps/api`: FastAPI service (`tabfree_api`).
 - `packages/schemas`: the JSON Schemas (`src/tabfree_schemas/json/*.schema.json`), plus validators and the `tabfree-validate` CLI. These are the contracts between components.
 - `packages/compiler`: `tabfree_compiler`, the Tableau-semantics compiler: calc parser, semantic queries → Athena/Redshift/Trino SQL with LODs, filters and RLS, and the TDVT runner (`tabfree-compile`).
-- `packages/migrate`: `tabfree-migrate` CLI (`tabfree_migrate`), covering the Tableau Server crawler and converters.
+- `packages/migrate`: `tabfree-migrate` CLI (`tabfree_migrate`), covering the Tableau Server crawler and converters; `factory/` is the Phase 5 migration factory.
 - `packages/cli`: the `tabfree` CLI (`tabfree_cli`, stdlib only): login, pull/push/validate/preview/publish drafts, and `tabfree kit` for Claude Code.
 - `apps/api/src/tabfree_api/authoring`: Phase 4: drafts, validation, the MCP server (`/mcp`) and OAuth, "Edit with Claude".
+- `apps/api/src/tabfree_api/migration`: Phase 5 in the server: import, the repair agent, verification and the migration console API.
 - `apps/author-agent`: the Agent SDK sandbox image for larger "Edit with Claude" sessions (not a uv workspace member).
 - `packages/runtime`: `@tabfree/runtime` in TypeScript: the sandbox protocol, host bridge, dashboard SDK, `<tf-*>` components and table calcs. Components build DOM with `textContent` only; data never goes through `innerHTML`.
 - `infra/docker`, `infra/terraform`: local stack and AWS sandbox.

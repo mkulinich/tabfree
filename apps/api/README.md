@@ -138,3 +138,21 @@ Never put the client secret in a file. Inject it from the secret store at start-
 secret run -e TABFREE_OIDC_CLIENT_SECRET="Cognito - Client Secret - TabFree" -- \
   uv run uvicorn tabfree_api.main:app_factory --factory
 ```
+
+## Migration factory (Phase 5)
+
+```bash
+python -m tabfree_api.migration import factory/ --by admin       # governance + one item per dashboard
+python -m tabfree_api.migration repair --wave 1 --by admin       # Claude repair agent (needs AI on)
+python -m tabfree_api.migration verify --wave 1 --by admin       # data + visual parity, fidelity
+python -m tabfree_api.migration access --by admin                # access parity against Tableau
+python -m tabfree_api.migration rls ITEM samples/                # samples/<user>/<query>.csv
+```
+
+Imported dashboards are not published: each is a migration item whose bundle sits in a draft owned by
+the importing administrator. The console at `/migration` (site administrators) shows Tableau's PNG
+next to the live draft with its fidelity score, and the reviewer approves (publishes with the Tableau
+owner, project, rules, old-URL redirects and favorites), requests changes (the note goes to the repair
+agent), marks it for a manual rebuild, or retires it. Subscriptions, refresh jobs, alerts and custom
+views are kept as records for Phase 6. Tables: `migration_items`, `migration_events`,
+`migration_records` (migration 0006).

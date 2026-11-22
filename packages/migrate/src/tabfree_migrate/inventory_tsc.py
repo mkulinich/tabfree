@@ -91,7 +91,40 @@ class TscInventorySource:
             return (self._item("tasks", t) for t in tasks)
         if object_type == "subscriptions":
             return (self._item("subscriptions", s) for s in self._pager(srv.subscriptions))
+        if object_type == "favorites":
+            return self._favorites()
+        if object_type == "custom_views":
+            return (self._item("custom_views", v) for v in self._pager(srv.custom_views))
+        if object_type == "user_workbooks":
+            return self._user_workbooks()
         raise ValueError(f"unknown object type {object_type!r}")
+
+    def _favorites(self) -> Iterator[Item]:
+        """Each user's favorites (GET /users/{id}/favorites), as LUIDs by content type."""
+        for user in self._pager(self._srv.users):
+            self._srv.favorites.get(user)
+            favorites = getattr(user, "favorites", None) or {}
+            data = {
+                "user_id": user.id,
+                **{
+                    kind: [str(getattr(obj, "id", obj)) for obj in favorites.get(kind, []) or []]
+                    for kind in ("workbooks", "views", "datasources", "projects", "flows")
+                },
+            }
+            yield Item("favorites", str(user.id), str(user.name or ""), None, data)
+
+    def _user_workbooks(self) -> Iterator[Item]:
+        """Workbooks each user can read: Tableau's "Query Workbooks for User" (access parity)."""
+        for user in self._pager(self._srv.users):
+            self._srv.users.populate_workbooks(user)
+            ids = sorted(str(w.id) for w in user.workbooks)
+            yield Item(
+                "user_workbooks",
+                str(user.id),
+                str(user.name or ""),
+                None,
+                {"user_id": user.id, "workbook_ids": ids},
+            )
 
     def _groups(self) -> Iterator[Item]:
         for group in self._pager(self._srv.groups):

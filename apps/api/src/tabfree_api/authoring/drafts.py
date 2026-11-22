@@ -137,7 +137,9 @@ class DraftStore:
         base_revision: int | None,
         project: str | None = None,
         agent_session: str | None = None,
+        max_open: int | None = MAX_OPEN_DRAFTS,
     ) -> Draft:
+        """A new open draft. ``max_open=None`` lifts the per-person cap (the migration importer)."""
         bundle_files.check_limits(files)
         when = _now()
         draft_id = str(uuid.uuid4())
@@ -152,7 +154,7 @@ class DraftStore:
                     )
                 ).all()
             )
-            if open_count >= MAX_OPEN_DRAFTS:
+            if max_open is not None and open_count >= max_open:
                 raise DraftError(f"you have {open_count} open drafts; publish or discard some first")
             conn.execute(
                 insert(t.drafts).values(

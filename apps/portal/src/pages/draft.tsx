@@ -65,7 +65,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
-function Preview({ id, version }: { id: string; version: string }) {
+export function Preview({ id, version }: { id: string; version: string }) {
   const container = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -302,6 +302,7 @@ function PublishPanel({ draft, onDone }: { draft: Draft; onDone: (revision: numb
 
 export function DraftPage() {
   const { id } = draftRoute.useParams();
+  const search = draftRoute.useSearch();
   const client = useQueryClient();
   const [tab, setTab] = useState<"preview" | "changes" | "files">("preview");
   const [published, setPublished] = useState<number | null>(null);
@@ -314,6 +315,7 @@ export function DraftPage() {
   if (draft.error) return <Problem error={draft.error} />;
   if (!draft.data) return <p className="page muted">Loading…</p>;
   const d = draft.data;
+  if (search.print === "1") return <Preview id={id} version={d.updatedAt} />;
   const refresh = () => void client.invalidateQueries({ queryKey: ["draft", id] });
   if (published !== null || d.status === "published") {
     return (

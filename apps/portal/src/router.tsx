@@ -7,6 +7,7 @@ import { DashboardPage } from "./pages/dashboard.js";
 import { DraftPage } from "./pages/draft.js";
 import { ExplorePage } from "./pages/explore.js";
 import { HomePage } from "./pages/home.js";
+import { MigrationItemPage, MigrationPage } from "./pages/migration.js";
 import { ModelPage } from "./pages/model.js";
 
 const text = (value: unknown): string | undefined => (typeof value === "string" && value ? value : undefined);
@@ -42,7 +43,30 @@ export const dashboard = createRoute({
   },
   component: DashboardPage,
 });
-export const draftRoute = createRoute({ getParentRoute: () => root, path: "/drafts/$id", component: DraftPage });
+export const draftRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/drafts/$id",
+  // print=1: only the live preview, for the renderer (validation screenshots, migration repair).
+  validateSearch: (s: Record<string, unknown>): { print?: string } => {
+    const print = text(s["print"] === 1 ? "1" : s["print"]);
+    return print ? { print } : {};
+  },
+  component: DraftPage,
+});
+export const migrationRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/migration",
+  validateSearch: (s: Record<string, unknown>): { wave?: string } => {
+    const wave = text(typeof s["wave"] === "number" ? String(s["wave"]) : s["wave"]);
+    return wave ? { wave } : {};
+  },
+  component: MigrationPage,
+});
+export const migrationItemRoute = createRoute({
+  getParentRoute: () => root,
+  path: "/migration/$id",
+  component: MigrationItemPage,
+});
 export const model = createRoute({ getParentRoute: () => root, path: "/models/$id", component: ModelPage });
 const account = createRoute({ getParentRoute: () => root, path: "/account", component: AccountPage });
 const adminUsers = createRoute({ getParentRoute: () => root, path: "/admin/users", component: AdminUsers });
@@ -61,6 +85,8 @@ const tree = root.addChildren([
   adminGroups,
   adminSite,
   adminAudit,
+  migrationRoute,
+  migrationItemRoute,
 ]);
 
 export const router = createRouter({ routeTree: tree, defaultPreload: "intent" });

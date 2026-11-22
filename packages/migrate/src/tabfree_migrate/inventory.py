@@ -30,6 +30,9 @@ OBJECT_TYPES = (
     "tasks",
     "subscriptions",
 )
+#: Asked for by name (``crawl --type favorites``...): one or more REST calls per user, read-only.
+#: ``user_workbooks`` is Tableau's "Query Workbooks for User", the reference for access parity (P5.5).
+OPTIONAL_TYPES = ("favorites", "custom_views", "user_workbooks")
 
 
 @dataclass(frozen=True)

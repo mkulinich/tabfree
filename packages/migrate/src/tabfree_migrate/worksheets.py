@@ -102,6 +102,8 @@ _INSTANCE = re.compile(
 class WorksheetReport:
     unsupported: list[str] = field(default_factory=list)  # parts of the view not converted
     notes: list[str] = field(default_factory=list)  # assumptions the reviewer should check
+    #: Output names by shelf or encoding ("rows", "cols", "color", "text"...), for laying out the view.
+    shelves: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -212,6 +214,7 @@ class _Converter:
             if alias not in self.outputs.values():
                 self.measures.append({"expr": "COUNT(1)", "as": alias})
                 self.outputs[pill] = alias
+                self.report.shelves.setdefault(where, []).append(alias)
                 self.report.notes.append(f"{where}: table count converted to COUNT(1) over the joined rows")
             return
         if pill.local in ("[Latitude (generated)]", "[Longitude (generated)]", "[Geometry (generated)]"):
@@ -255,6 +258,7 @@ class _Converter:
         if alias in self.outputs.values():  # e.g. the same field on two shelves
             (self.measures if d in AGGREGATIONS or d == "usr" else self.dimensions).pop()
         self.outputs[pill] = alias
+        self.report.shelves.setdefault(where, []).append(alias)
 
     def shelves(self) -> None:
         for shelf in ("rows", "cols"):

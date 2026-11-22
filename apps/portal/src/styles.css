@@ -520,3 +520,17 @@ pre.diff {
 .check-pass {
   color: var(--allow);
 }
+
+/* Migration console (P5.6) */
+.fidelity { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fidelity-pass { font-weight: 600; }
+.fidelity-fail { text-decoration: underline dotted; }
+.fidelity-components { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.fidelity-components dd { margin: 0; }
+.side-by-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+.side-by-side figure { margin: 0; min-width: 0; }
+.side-by-side img { max-width: 100%; height: auto; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); }
+.migration-item textarea { width: 100%; }
+.waves td, .migration-items td { font-variant-numeric: tabular-nums; }
+button.link { background: none; border: none; padding: 0; color: LinkText; text-decoration: underline; cursor: pointer; }
+.history { padding-left: 1.2em; }

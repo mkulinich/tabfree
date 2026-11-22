@@ -178,6 +178,13 @@ QUERIES: tuple[RepoQuery, ...] = (
         "FROM views v WHERE v.id > %(after_id)s ORDER BY v.id LIMIT %(limit)s",
     ),
     RepoQuery(
+        "users",
+        # Repository user ids → REST LUIDs and names, to resolve alert and subscription owners.
+        "SELECT u.id, u.luid, su.name, u.site_id FROM users u "
+        "JOIN system_users su ON su.id = u.system_user_id "
+        "WHERE u.id > %(after_id)s ORDER BY u.id LIMIT %(limit)s",
+    ),
+    RepoQuery(
         "extracts",
         "SELECT e.* FROM extracts e WHERE e.id > %(after_id)s ORDER BY e.id LIMIT %(limit)s",
     ),
