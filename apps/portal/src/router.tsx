@@ -7,6 +7,7 @@ import {
   AdminGroups,
   AdminRecycleBin,
   AdminSite,
+  AdminUsage,
   AdminUsers,
   AdminWebhooks,
 } from "./pages/admin.js";
@@ -82,6 +83,7 @@ const adminUsers = createRoute({ getParentRoute: () => root, path: "/admin/users
 const adminGroups = createRoute({ getParentRoute: () => root, path: "/admin/groups", component: AdminGroups });
 const adminSite = createRoute({ getParentRoute: () => root, path: "/admin/site", component: AdminSite });
 const adminAudit = createRoute({ getParentRoute: () => root, path: "/admin/audit", component: AdminAudit });
+const adminUsage = createRoute({ getParentRoute: () => root, path: "/admin/usage", component: AdminUsage });
 const adminBin = createRoute({ getParentRoute: () => root, path: "/admin/recycle-bin", component: AdminRecycleBin });
 const adminHooks = createRoute({ getParentRoute: () => root, path: "/admin/webhooks", component: AdminWebhooks });
 
@@ -96,6 +98,7 @@ const tree = root.addChildren([
   adminGroups,
   adminSite,
   adminAudit,
+  adminUsage,
   adminBin,
   adminHooks,
   migrationRoute,

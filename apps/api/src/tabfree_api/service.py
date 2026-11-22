@@ -66,6 +66,7 @@ class QueryStats:
     cache: CacheStats = field(default_factory=CacheStats)
     engine_queries: int = 0
     refused: int = 0
+    rollup_hits: int = 0
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,11 @@ class QueryService:
         self._data_version = data_version or (lambda _model: "")
         self._clock = clock
         self.stats = QueryStats()
+        #: P6.10: route queries that fit a model's rollups to them (see rollups.py).
+        self.rollups = True
+        #: P6.7: called with each query's metrics (never values), for the usage and performance pages.
+        self.recorder: Callable[[dict[str, Any]], None] | None = None
+        self._derived: dict[str, Mapping[str, Any]] = {}
 
     # ---- entry points ---------------------------------------------------------------------------
 
@@ -172,7 +178,7 @@ class QueryService:
     # ---- pipeline -------------------------------------------------------------------------------
 
     def _model(self, model_id: str) -> tuple[SemanticModel, Mapping[str, Any]]:
-        doc = self._models.get(model_id)
+        doc = self._models.get(model_id) or self._derived.get(model_id)
         if doc is None:
             raise CompileError(f"unknown model {model_id!r}")
         if model_id not in self._compiled:
@@ -191,6 +197,21 @@ class QueryService:
         started = time.perf_counter()
         _model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
+        version = self._data_version(bound.model)
+        if self.rollups and doc.get("rollups") and not bound.query.get("blend"):
+            from tabfree_api.rollups import choose
+
+            derived = choose(doc, bound.query, bound.filters)
+            if derived is not None:
+                # Same connection and data version; the derived model carries the RLS policies.
+                # Keyed by content, so a changed model never reuses an old compiled rollup.
+                digest = hashlib.sha256(
+                    json.dumps(derived, sort_keys=True, default=str).encode()
+                ).hexdigest()[:16]
+                key_id = f"{derived['id']}@{digest}"
+                self._derived[key_id] = derived
+                bound = replace(bound, model=key_id)
+                self.stats.rollup_hits += 1
         limits = limits or self.limits
         query = dict(bound.query)
         cap = min(int(query.get("limit", limits.row_limit)), limits.row_limit)
@@ -198,7 +219,6 @@ class QueryService:
         compiled = self._compile(replace(bound, query=query), session, engine.dialect, table_calcs)
         deferred = tuple(compiled.deferred_table_calcs)
         columns = _columns(compiled, doc, bound.query)
-        version = self._data_version(bound.model)
         today = session.today or dt.datetime.fromtimestamp(self._clock(), dt.UTC).date()
         key = cache_key(
             compiled,
@@ -299,6 +319,15 @@ class QueryService:
         self, session: Session, what: str, result: CachedResult, cache: str, scanned: int, started: float
     ) -> None:
         # Who ran what; never the values (they may be sensitive).
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        if self.recorder is not None:
+            try:
+                self.recorder(
+                    {"user": session.username, "what": what, "rows": len(result.rows), "cache": cache,
+                     "scanned": scanned, "duration_ms": duration_ms}
+                )  # fmt: skip
+            except Exception:  # metrics never break a query
+                audit.warning("could not record query metrics", exc_info=True)
         audit.info(
             "query user=%s %s rows=%d truncated=%s cache=%s scanned_bytes=%d duration_ms=%d",
             session.username,

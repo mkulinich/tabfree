@@ -28,7 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
 
@@ -37,7 +37,7 @@ from tabfree_api.jobs.queue import Job, JobQueue
 from tabfree_api.jobs.worker import Permanent, Retryable
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-MODES = ("full", "incremental", "materialized_view")
+MODES = ("full", "incremental", "materialized_view", "rollup")
 
 
 def ident(value: Any, what: str) -> str:
@@ -132,6 +132,41 @@ def materialized_view(table: Mapping[str, Any]) -> list[str]:
     return [f"REFRESH MATERIALIZED VIEW {schema}.{ident(table.get('target'), 'target')}"]
 
 
+def rollup_tables(
+    model: Mapping[str, Any], settings: Mapping[str, Any], dialect: str
+) -> list[dict[str, Any]]:
+    """Each declared rollup as a full-refresh table whose source is its compiled semantic query (P6.10)."""
+    from tabfree_api.rollups import build_query, without_rls
+    from tabfree_compiler import compile_query
+    from tabfree_compiler.sql import Dialect, Session
+
+    wanted = set(settings.get("rollups") or [])
+    out = []
+    for rollup in model.get("rollups", []) or []:
+        if wanted and rollup["id"] not in wanted:
+            continue
+        compiled = compile_query(
+            without_rls(model), build_query(model, rollup), dialect=cast(Dialect, dialect), session=Session()
+        )
+        if compiled.parameters or compiled.named_parameters:
+            raise Permanent(f"rollup {rollup['id']!r} needs parameters; rollups are built from plain fields")
+        database = rollup.get("database") or (model.get("connection") or {}).get("database")
+        location = str(settings.get("location") or "").rstrip("/")
+        out.append(
+            {
+                "target": rollup["table"],
+                "database": database,
+                "schema": (model.get("connection") or {}).get("schema") or database,
+                "source": compiled.sql,
+                **({"location": f"{location}/{rollup['table']}"} if location else {}),
+                "keep": int(settings.get("keep", 1)),
+            }
+        )
+    if not out:
+        raise Permanent("the model declares no rollups to build")
+    return out
+
+
 def handle(ctx: Any, job: Job) -> Mapping[str, Any]:
     from tabfree_api.engines import EngineError, EngineTimeoutError
 
@@ -161,7 +196,11 @@ def handle(ctx: Any, job: Job) -> Mapping[str, Any]:
     statements: list[str] = []
     versions: dict[str, list[str]] = dict(settings.get("versions") or {})
     created = set(settings.get("created") or [])
-    for table in settings.get("tables") or []:
+    tables = list(settings.get("tables") or [])
+    if mode == "rollup":
+        tables = rollup_tables(model, settings, dialect)
+        mode = "full"
+    for table in tables:
         target = ident(table.get("target"), "target")
         if mode == "full" and dialect == "redshift":
             statements += full_redshift(table, exists=target in created)

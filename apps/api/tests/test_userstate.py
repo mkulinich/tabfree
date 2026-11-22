@@ -250,3 +250,22 @@ def test_recycle_bin_move_copy_owner_and_certification(app: Any) -> None:
     assert erin.delete("/api/recycle-bin/dashboard/sales-overview-copy", headers=CSRF).status_code == 403
     assert purge_expired(app.state.context.site, days=0) == 1
     assert admin.get("/api/recycle-bin").json() == []
+
+
+def test_usage_report_counts_views_and_query_latency(app: Any) -> None:
+    erin, admin = as_user(app, "erin"), as_user(app, "admin")
+    assert erin.get("/api/dashboards/sales-overview").status_code == 200
+    ran = erin.post(
+        "/api/dashboards/sales-overview/query", json={"query": "by_region", "state": {}}, headers=CSRF
+    )
+    assert ran.status_code == 200
+    assert erin.get("/api/admin/usage").status_code == 403
+    report = admin.get("/api/admin/usage", params={"days": 7}).json()
+    top = report["topDashboards"][0]
+    assert top["dashboard"] == "sales-overview"
+    assert top["views"] == 1
+    assert top["viewers"] == 1
+    assert top["p50Ms"] is not None
+    assert report["queries"]["count"] >= 1
+    assert report["activeUsers"] >= 1
+    assert report["storage"]["dashboards"] >= 3

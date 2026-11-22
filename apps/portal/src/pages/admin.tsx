@@ -25,6 +25,7 @@ function AdminShell({ title, children }: { title: string; children: ReactNode })
         <Link to="/admin/groups">Groups</Link>
         <Link to="/admin/site">Settings</Link>
         <Link to="/admin/audit">Audit log</Link>
+        <Link to="/admin/usage">Usage</Link>
         <Link to="/admin/recycle-bin">Recycle bin</Link>
         <Link to="/admin/webhooks">Webhooks</Link>
         <Link to="/migration">Migration</Link>
@@ -513,6 +514,147 @@ export function AdminWebhooks() {
           Add webhook
         </button>
       </form>
+    </AdminShell>
+  );
+}
+
+interface Usage {
+  days: number;
+  viewsPerDay: { day: string; views: number; viewers: number }[];
+  topDashboards: { dashboard: string; title: string; views: number; viewers: number; p50Ms: number | null; p95Ms: number | null }[];
+  activeUsers: number;
+  exports: number;
+  queries: {
+    count: number;
+    p50Ms: number | null;
+    p95Ms: number | null;
+    cacheHitRate: number | null;
+    scannedBytes: number;
+    slowest: { resource: string; p95Ms: number; queries: number }[];
+  };
+  jobs: { kind: string; status: string; count: number }[];
+  jobFailures: { id: number; kind: string; error: string; at: string | null }[];
+  storage: Record<string, number>;
+}
+
+const ms = (v: number | null) => (v === null ? "–" : `${Math.round(v)} ms`);
+
+/** Usage and performance (P6.7): views, people, query latency, cache, jobs and storage. */
+export function AdminUsage() {
+  const [days, setDays] = useState(30);
+  const usage = useQuery({ queryKey: ["usage", days], queryFn: () => get<Usage>("/api/admin/usage", { days: String(days) }) });
+  const u = usage.data;
+  const peak = Math.max(1, ...(u?.viewsPerDay ?? []).map((d) => d.views));
+  return (
+    <AdminShell title="Usage">
+      <label>
+        Period{" "}
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+          <option value={7}>Last 7 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+        </select>
+      </label>
+      {usage.error ? <Problem error={usage.error} /> : null}
+      {u ? (
+        <>
+          <dl className="stats">
+            <div>
+              <dt>Active people</dt>
+              <dd>{u.activeUsers}</dd>
+            </div>
+            <div>
+              <dt>Queries</dt>
+              <dd>{u.queries.count}</dd>
+            </div>
+            <div>
+              <dt>Median / 95th percentile</dt>
+              <dd>
+                {ms(u.queries.p50Ms)} / {ms(u.queries.p95Ms)}
+              </dd>
+            </div>
+            <div>
+              <dt>Cache hit rate</dt>
+              <dd>{u.queries.cacheHitRate === null ? "–" : `${Math.round(u.queries.cacheHitRate * 100)}%`}</dd>
+            </div>
+            <div>
+              <dt>Data scanned</dt>
+              <dd>{(u.queries.scannedBytes / 1e9).toFixed(2)} GB</dd>
+            </div>
+            <div>
+              <dt>Exports</dt>
+              <dd>{u.exports}</dd>
+            </div>
+          </dl>
+          <h2>Views per day</h2>
+          <table className="items bars">
+            <tbody>
+              {u.viewsPerDay.map((d) => (
+                <tr key={d.day}>
+                  <th scope="row">{d.day}</th>
+                  <td>
+                    <span className="bar" style={{ width: `${(100 * d.views) / peak}%` }} aria-hidden="true" />
+                    {d.views} views, {d.viewers} people
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <h2>Most used dashboards</h2>
+          <table className="items">
+            <thead>
+              <tr>
+                <th scope="col">Dashboard</th>
+                <th scope="col">Views</th>
+                <th scope="col">People</th>
+                <th scope="col">Median query</th>
+                <th scope="col">95th percentile</th>
+              </tr>
+            </thead>
+            <tbody>
+              {u.topDashboards.map((d) => (
+                <tr key={d.dashboard}>
+                  <td>
+                    <Link to="/dashboards/$id" params={{ id: d.dashboard }}>
+                      {d.title}
+                    </Link>
+                  </td>
+                  <td>{d.views}</td>
+                  <td>{d.viewers}</td>
+                  <td>{ms(d.p50Ms)}</td>
+                  <td>{ms(d.p95Ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <h2>Jobs</h2>
+          <table className="items">
+            <tbody>
+              {u.jobs.map((j) => (
+                <tr key={`${j.kind}:${j.status}`}>
+                  <td>{j.kind}</td>
+                  <td>{j.status}</td>
+                  <td>{j.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {u.jobFailures.length ? (
+            <ul className="plain">
+              {u.jobFailures.map((f) => (
+                <li key={f.id} className="small">
+                  #{f.id} {f.kind}: {f.error}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <h2>Storage</h2>
+          <p className="muted">
+            {u.storage["dashboards"]} dashboards, {u.storage["models"]} models, {u.storage["revisions"]} revisions,{" "}
+            {u.storage["openDrafts"]} open drafts, {u.storage["recycleBin"]} in the recycle bin
+          </p>
+        </>
+      ) : null}
     </AdminShell>
   );
 }

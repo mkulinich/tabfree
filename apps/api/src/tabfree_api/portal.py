@@ -388,6 +388,10 @@ def create_router(ctx: Context) -> APIRouter:
 
     scim.add_routes(router, ctx, current)
 
+    from tabfree_api import usage
+
+    usage.add_routes(router, ctx, current)
+
     lifecycle.add_routes(router, ctx, current, csrf)
     userstate.add_routes(router, ctx, current, csrf)
 

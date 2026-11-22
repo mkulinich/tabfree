@@ -47,7 +47,7 @@ class SchedulePatch(BaseModel):
 
 class RefreshBody(BaseModel):
     model: str = Field(max_length=100)
-    mode: Literal["full", "incremental", "materialized_view"]
+    mode: Literal["full", "incremental", "materialized_view", "rollup"]
     schedule: str | None = None
     settings: dict[str, Any]
     enabled: bool = True

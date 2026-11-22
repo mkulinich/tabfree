@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -214,6 +215,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from tabfree_api.authoring.author import AuthorRunner, sandbox_from_settings
 
         ctx.author = AuthorRunner(ctx, sandbox=sandbox_from_settings(config))
+    if audit is not None:
+
+        def record_query(metrics: dict[str, Any]) -> None:
+            what = str(metrics.pop("what", ""))
+            match = re.match(r"dashboard=(\S+) (\w+):(\S+)", what)
+            kind, resource = (
+                ("dashboard", match.group(1))
+                if match
+                else ("model", what.split(" ")[0].removeprefix("model="))
+            )
+            audit.record(
+                "query_metrics", actor=metrics.pop("user", None), resource_kind=kind, resource_id=resource[:100],
+                **({"query": match.group(3), "op": match.group(2)} if match else {}), **metrics,
+            )  # fmt: skip
+
+        service.recorder = record_query
     from tabfree_api.jobs import mail
 
     ctx.mailer = mail.from_settings(config)
