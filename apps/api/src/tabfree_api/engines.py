@@ -1,4 +1,5 @@
-"""Where compiled SQL runs: DuckDB locally, Athena and Redshift (Data API) on AWS (ADR-007).
+"""Where compiled SQL runs: DuckDB locally, Athena and Redshift (Data API) on AWS (ADR-007), and Trino
+in the local stack, where it stands in for Athena (P0.3).
 
 Every engine takes the compiler's SQL and bind values and returns rows. Viewer identity and filter
 values arrive as bind parameters, never as SQL text. The AWS engines import boto3 lazily
@@ -14,9 +15,12 @@ the engine knows them (Athena), which feed the per-site cost guardrails.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import threading
 import time
-from collections.abc import Mapping, Sequence
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -271,6 +275,130 @@ def _athena_value(text: str | None, type_: str) -> Any:
     return text
 
 
+# ---- Trino ------------------------------------------------------------------------------------
+
+#: ``(method, url, body, headers) -> decoded JSON`` (None for an empty response). Injected in tests.
+TrinoTransport = Callable[[str, str, bytes | None, Mapping[str, str]], Any]
+
+
+def _trino_http(method: str, url: str, body: bytes | None, headers: Mapping[str, str]) -> Any:
+    if not url.startswith(("http://", "https://")):
+        raise EngineError("the Trino URL must be http or https")
+    request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))  # noqa: S310
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+                payload = response.read()
+                return json.loads(payload) if payload else None
+        except urllib.error.HTTPError as exc:
+            # 503 means "busy, ask again" in Trino's client protocol.
+            if exc.code != 503 or attempt == 4:
+                raise EngineError(f"Trino returned HTTP {exc.code}") from None
+            time.sleep(0.2 * (attempt + 1))
+        except (urllib.error.URLError, TimeoutError):
+            raise EngineError("Trino is unreachable") from None
+    raise EngineError("Trino is unreachable")
+
+
+def _trino_value(value: Any, type_: str) -> Any:
+    if value is None:
+        return None
+    t = type_.lower()
+    if t in ("tinyint", "smallint", "integer", "bigint"):
+        return int(value)
+    if t in ("double", "real") or t.startswith("decimal"):
+        return float(value)  # NaN and Infinity arrive as strings
+    if t.startswith("timestamp"):
+        return dt.datetime.fromisoformat(str(value).removesuffix(" UTC"))
+    if t == "date":
+        return dt.date.fromisoformat(str(value))
+    return value
+
+
+class TrinoEngine:
+    """Trino over its HTTP client protocol (standard library only).
+
+    The local stack's Trino stands in for Athena, whose engine v3 is Trino: the same models run on
+    it, with a model's ``database`` used as the schema of one catalog. There is no authentication,
+    so the API accepts this engine only in development and test (see ``create_app``).
+
+    Bind values travel as SQL literals in ``EXECUTE IMMEDIATE … USING``, the way Athena takes its
+    ExecutionParameters; they are never spliced into the query text.
+    """
+
+    dialect: Dialect = "trino"
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        catalog: str = "iceberg",
+        schema: str | None = None,
+        user: str = "tabfree",
+        transport: TrinoTransport | None = None,
+        timeout_s: float = 120.0,
+    ) -> None:
+        self.url, self.catalog, self.schema, self.user = url.rstrip("/"), catalog, schema, user
+        self._send = transport or _trino_http
+        self.timeout_s = timeout_s
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "X-Trino-User": self.user,
+            "X-Trino-Catalog": self.catalog,
+            "X-Trino-Source": "tabfree",
+            "X-Trino-Time-Zone": "UTC",
+        }
+        if self.schema:
+            headers["X-Trino-Schema"] = self.schema
+        return headers
+
+    def execute(
+        self, query: CompiledQuery, max_rows: int, options: ExecuteOptions | None = None
+    ) -> EngineResult:
+        options = options or ExecuteOptions()
+        sql = query.sql
+        if query.parameters:
+            using = ", ".join(athena_literal(v) for v in query.parameters)
+            sql = "EXECUTE IMMEDIATE '" + sql.replace("'", "''") + "' USING " + using
+        timeout = options.timeout_s if options.timeout_s is not None else self.timeout_s
+        deadline = time.monotonic() + timeout
+        headers = self._headers()
+        page = self._send("POST", f"{self.url}/v1/statement", sql.encode(), headers)
+        types: list[str] = []
+        rows: list[list[Any]] = []
+        scanned: int | None = None
+        while True:
+            stats = page.get("stats") or {}
+            if stats.get("processedBytes") is not None:
+                scanned = int(stats["processedBytes"])
+            if "error" in page:
+                message = str(page["error"].get("message", "")).splitlines()[0:1]
+                raise EngineError(f"Trino query failed: {''.join(message)}", scanned_bytes=scanned)
+            if page.get("columns"):
+                types = [str(c["type"]) for c in page["columns"]]
+            for row in page.get("data") or []:
+                rows.append([_trino_value(v, t) for v, t in zip(row, types, strict=True)])
+            next_uri = page.get("nextUri")
+            if not next_uri:
+                break
+            if len(rows) > max_rows:
+                self._send("DELETE", next_uri, None, headers)  # enough rows: stop the query
+                break
+            if time.monotonic() > deadline:
+                self._send("DELETE", next_uri, None, headers)
+                raise EngineTimeoutError("Trino query timed out and was cancelled", scanned_bytes=scanned)
+            page = self._send("GET", next_uri, None, headers)
+        return EngineResult(rows[: max_rows + 1], scanned_bytes=scanned)
+
+    def statements(self, sqls: list[str], *, timeout_s: float | None = None) -> list[list[list[Any]]]:
+        """Statements run one after another, each in its own transaction (as on Athena)."""
+        options = ExecuteOptions(timeout_s=timeout_s)
+        return [
+            list(self.execute(CompiledQuery(sql, "trino", (), {}, ()), 10_000, options).rows) for sql in sqls
+        ]
+
+
 # ---- Redshift Data API ------------------------------------------------------------------------
 
 
@@ -416,6 +544,7 @@ __all__: Sequence[str] = [
     "EngineTimeoutError",
     "ExecuteOptions",
     "RedshiftDataEngine",
+    "TrinoEngine",
     "athena_literal",
     "engine_from_connection",
 ]

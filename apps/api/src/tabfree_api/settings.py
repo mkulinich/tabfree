@@ -39,8 +39,12 @@ class Settings(BaseSettings):
     #: Seconds a process may serve a cached view of permissions after a change made elsewhere.
     permission_cache_s: float = Field(default=2.0, ge=0)
     session_hours: float = 8.0
-    #: Where queries run: "sample" is DuckDB with generated data; "aws" uses each model's connection.
-    engine: Literal["sample", "aws"] = "sample"
+    #: Where queries run: "sample" is DuckDB with generated data; "aws" uses each model's connection;
+    #: "trino" is the local stack's Trino standing in for Athena (development and test only).
+    engine: Literal["sample", "aws", "trino"] = "sample"
+    #: The Trino coordinator and catalog for ``engine = "trino"``; a model's database is the schema.
+    trino_url: str = "http://localhost:8080"
+    trino_catalog: str = "iceberg"
 
     # ---- query service (P2.7) -------------------------------------------------------------------
     #: Most rows any query returns; more are cut off and the result is flagged ``truncated``.

@@ -9,18 +9,31 @@ Redshift, through the same engines the query service uses.
 ``--load`` creates the Calcs table first (upload ``corpus/tdvt/datasets/TestV1/Calcs.csv`` there).
 The run fails when the pass rate is below ``--min-pass`` (M2 requires 95%). ``--engine duckdb``
 exercises the same path locally. Needs AWS credentials in the environment for the AWS engines.
+
+``--engine trino`` runs on the local stack's Trino (``--trino-url``); ``--load-local`` first creates
+``<catalog>.<database>.calcs`` from the corpus's Calcs.csv:
+
+    uv run python -m tabfree_api.conformance --engine trino --trino-url http://localhost:8080 --load-local
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from tabfree_api.engines import AthenaEngine, DuckDBEngine, Engine, RedshiftDataEngine
+from tabfree_api.engines import (
+    AthenaEngine,
+    DuckDBEngine,
+    Engine,
+    RedshiftDataEngine,
+    TrinoEngine,
+    athena_literal,
+)
 from tabfree_api.settings import REPO_ROOT
 from tabfree_compiler import tdvt
 from tabfree_compiler.sql import CompiledQuery, Dialect
@@ -72,9 +85,56 @@ def run(
     }
 
 
+_TRINO_TYPES = {
+    "string": "varchar",
+    "float": "double",
+    "integer": "integer",
+    "boolean": "boolean",
+    "date": "date",
+    "datetime": "timestamp(6)",
+}
+
+
+def _trino_typed_literal(value: Any, type_: str) -> str:
+    target = _TRINO_TYPES[type_]
+    if value is None:
+        return f"CAST(NULL AS {target})"
+    if type_ in ("date", "datetime"):
+        return f"CAST('{value}' AS {target})"  # a date or datetime object: digits and punctuation only
+    return f"CAST({athena_literal(value)} AS {target})"
+
+
+def load_trino_calcs(engine: TrinoEngine, database: str, root: Path = TDVT_ROOT) -> None:
+    """Create ``calcs`` in the Trino catalog from Calcs.csv, read with the same rules as DuckDB's loader."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", database):
+        raise ValueError(f"invalid database name {database!r}")
+    local = DuckDBEngine.in_memory()
+    tdvt.load_calcs(local.connection, root / "datasets" / "TestV1" / "Calcs.csv")
+    rows = local.connection.execute("SELECT * FROM calcs").fetchall()
+    columns = ", ".join(f'"{n}" {_TRINO_TYPES[t]}' for n, t in tdvt.CALCS_COLUMNS)
+    values = ", ".join(
+        "("
+        + ", ".join(_trino_typed_literal(v, t) for v, (_, t) in zip(row, tdvt.CALCS_COLUMNS, strict=True))
+        + ")"
+        for row in rows
+    )
+    # Identifiers are validated or constants; the values are TDVT's own test data, quoted as literals.
+    engine.statements(
+        [
+            f"CREATE SCHEMA IF NOT EXISTS {database}",
+            f"DROP TABLE IF EXISTS {database}.calcs",
+            f"CREATE TABLE {database}.calcs ({columns})",
+            f"INSERT INTO {database}.calcs VALUES {values}",  # noqa: S608
+        ]
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tabfree-conformance", description=__doc__.split("\n\n")[0])
-    parser.add_argument("--engine", choices=["duckdb", "athena", "redshift"], required=True)
+    parser.add_argument("--engine", choices=["duckdb", "athena", "redshift", "trino"], required=True)
+    parser.add_argument("--trino-url", default="http://localhost:8080")
+    parser.add_argument("--trino-catalog", default="iceberg")
+    parser.add_argument("--load-local", action="store_true", help="Trino: create Calcs from the corpus")
     parser.add_argument("--database", default="tdvt", help="Athena database, or Redshift schema for Calcs")
     parser.add_argument("--redshift-database", default="dev")
     parser.add_argument("--workgroup", default="primary")
@@ -95,6 +155,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine, database = local, "main"
     elif args.engine == "athena":
         engine = AthenaEngine(database=database, workgroup=args.workgroup, region=args.region)
+    elif args.engine == "trino":
+        trino = TrinoEngine(url=args.trino_url, catalog=args.trino_catalog, schema=database)
+        if args.load_local:
+            load_trino_calcs(trino, database)
+        engine = trino
     else:
         engine = RedshiftDataEngine(
             database=args.redshift_database,

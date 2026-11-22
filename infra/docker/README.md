@@ -11,7 +11,7 @@ A `docker compose` stack that stands in for the AWS services TabFree uses (ADR-0
 | `aws-emulator` | SQS and SES | `motoserver/moto:5.2.5` | `http://localhost:4566` (dashboard at `/moto-api/`) |
 | `bootstrap` | (setup job) | `amazon/aws-cli:2.41.2` | none |
 
-> **Status:** the stack was written without Docker available, so it **has not been booted yet**. The YAML parses, and the image tags, entrypoints, health endpoints and config property names were checked against the registries and upstream sources. The first person to run it should treat it as untested and fix anything that breaks.
+> **Status:** booted once, on Linux x86-64 with Docker 29.6 and Compose 5.1 (2026-11-22): every service came up healthy and the bootstrap finished without changes to this folder. Trino ran with `mem_limit: 2g` there. Not yet tried on Docker Desktop for macOS or Windows.
 
 ## Start and stop
 
@@ -71,6 +71,19 @@ ORDER BY sales DESC;
 ```
 
 From the host, use any Trino client against `http://localhost:8080`, for example `trino --server http://localhost:8080 --catalog iceberg --schema tabfree_dev`, or the Python `trino` package.
+
+**The TabFree API.** With `TABFREE_ENGINE=trino` the API runs every model's queries on this Trino instead of Athena (Athena engine v3 is Trino). A model's `connection.database` is the schema in the `iceberg` catalog, so the tables it names must exist there. It is a development setting: Trino here has no authentication, and the API refuses it outside `dev` and `test`.
+
+```sh
+TABFREE_ENGINE=trino TABFREE_TRINO_URL=http://localhost:8080 TABFREE_DEV_LOGIN=1 \
+  uv run uvicorn tabfree_api.main:app_factory --factory --port 8765
+```
+
+Tableau's TDVT expression suites run on it too (1173 of 1190 pass; the rest are listed by the run):
+
+```sh
+uv run python -m tabfree_api.conformance --engine trino --trino-url http://localhost:8080 --load-local
+```
 
 **AWS SDKs (boto3 1.28+, AWS CLI 2.13+).** Point each service at the emulators with the standard service-specific endpoint variables, and the app code needs no local-only branches. With a custom S3 endpoint, botocore uses path-style addressing automatically.
 

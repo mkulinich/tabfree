@@ -16,7 +16,7 @@ from tabfree_api import __version__
 from tabfree_api.auth import OidcClient, SessionStore
 from tabfree_api.cache import MemoryResultCache, NoCache, ResultCache
 from tabfree_api.content import Site, SiteContent
-from tabfree_api.engines import DuckDBEngine, Engine, engine_from_connection
+from tabfree_api.engines import DuckDBEngine, Engine, TrinoEngine, engine_from_connection
 from tabfree_api.guardrails import GuardrailError, Guardrails, SiteLimits
 from tabfree_api.service import QueryLimits, QueryService
 from tabfree_api.settings import Settings
@@ -40,6 +40,19 @@ def _engines(settings: Settings, site: SiteContent) -> tuple[Any, dt.date | None
     if settings.engine == "sample":
         engine = _sample_engine()
         return (lambda _model: engine), SAMPLE_TODAY
+    if settings.engine == "trino":
+        # The local stack: one Trino catalog, with each model's database as the schema.
+        trino: dict[str, Engine] = {}
+
+        def for_trino(model: Mapping[str, Any]) -> Engine:
+            schema = str(model["connection"]["database"])
+            if schema not in trino:
+                trino[schema] = TrinoEngine(
+                    url=settings.trino_url, catalog=settings.trino_catalog, schema=schema
+                )
+            return trino[schema]
+
+        return for_trino, None
     # One Athena workgroup per site (ADR-007): the site file's, else the settings' mapping.
     workgroup = site.query.athena_workgroup or settings.athena_workgroups.get(site.id)
     cache: dict[str, Engine] = {}
@@ -96,6 +109,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise RuntimeError(f"{flag} has no authentication; enable it only in dev or test")
     if config.engine == "sample" and not dev:
         raise RuntimeError("the sample engine is for development; set TABFREE_ENGINE=aws")
+    if config.engine == "trino" and not dev:
+        raise RuntimeError("the trino engine has no authentication; it is for development only")
 
     app = FastAPI(
         title="TabFree API",

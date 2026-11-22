@@ -118,7 +118,9 @@ tools, the portal's draft pages and the agents can do exactly what the signed-in
 | `TABFREE_EXPORT_ROW_LIMIT`, `TABFREE_EXPORT_MAX_BYTES` | 1,000,000, 256 MiB | Caps for CSV and Excel exports. |
 | `TABFREE_EXPORT_RENDERER`, `TABFREE_EXPORT_BASE_URL` | `none`, base URL | `playwright` turns on PNG/PDF exports; the URL the renderer opens. |
 | `TABFREE_OIDC_ATTRIBUTE_CLAIMS` | `[]` | ID-token claims copied into user attributes for RLS (`USERATTRIBUTE`). |
-| `TABFREE_ENGINE` | `sample` | `sample` (DuckDB with generated data) or `aws` (each model's Athena/Redshift connection; needs `tabfree-api[aws]`). |
+| `TABFREE_ENGINE` | `sample` | `sample` (DuckDB with generated data), `aws` (each model's Athena/Redshift connection; needs `tabfree-api[aws]`) or `trino` (the local stack's Trino standing in for Athena; development and test only, it has no authentication). |
+| `TABFREE_TRINO_URL` | `http://localhost:8080` | The Trino coordinator for `TABFREE_ENGINE=trino`. |
+| `TABFREE_TRINO_CATALOG` | `iceberg` | The Trino catalog; a model's `connection.database` is the schema in it. |
 | `TABFREE_OIDC_ISSUER`, `TABFREE_OIDC_CLIENT_ID`, `TABFREE_OIDC_CLIENT_SECRET` | — | Identity provider (Cognito, Okta, Entra ID, Keycloak…). |
 | `TABFREE_OIDC_USERNAME_CLAIM`, `TABFREE_OIDC_GROUPS_CLAIM` | `preferred_username`, `groups` | Claims for the username (RLS `USERNAME()`) and groups (permissions, `ISMEMBEROF()`). |
 | `TABFREE_DEV_LOGIN`, `TABFREE_PREVIEW` | off | Development helpers with no authentication. |
