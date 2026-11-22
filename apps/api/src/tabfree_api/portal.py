@@ -154,17 +154,21 @@ def create_router(ctx: Context) -> APIRouter:
         return None
 
     def current(
+        request: Request,
         tabfree_session: Annotated[str | None, Cookie()] = None,
         authorization: Annotated[str | None, Header()] = None,
     ) -> SessionInfo:
         # Scripts and the CLI send a personal access token or an OAuth access token; browsers send the
-        # session cookie.
+        # session cookie; embedded dashboards send a limited session token (P6.8).
+        from tabfree_api.auth import allowed_by_scopes
         from tabfree_api.authoring.oauth import resolve_bearer
 
         token = bearer(authorization)
         info = resolve_bearer(ctx, token) if token else ctx.sessions.get(tabfree_session)
         if info is None:
             raise HTTPException(401, "sign in first")
+        if info.scopes is not None and not allowed_by_scopes(info.scopes, request.method, request.url.path):
+            raise HTTPException(403, "this token's scope does not allow that")
         return info
 
     def csrf(
@@ -376,7 +380,13 @@ def create_router(ctx: Context) -> APIRouter:
 
     jobs_routes.add_routes(router, ctx, current, csrf)
 
-    from tabfree_api import lifecycle, userstate
+    from tabfree_api import embed, lifecycle, userstate
+
+    embed.add_routes(router, ctx, current, csrf)
+
+    from tabfree_api import scim
+
+    scim.add_routes(router, ctx, current)
 
     lifecycle.add_routes(router, ctx, current, csrf)
     userstate.add_routes(router, ctx, current, csrf)

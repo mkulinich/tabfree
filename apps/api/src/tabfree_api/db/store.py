@@ -1026,6 +1026,7 @@ class DbSessionStore:
         *,
         email: str = "",
         attributes: Mapping[str, str] | None = None,
+        scopes: frozenset[str] | None = None,
     ) -> str:
         token = secrets.token_urlsafe(32)
         when = now()
@@ -1041,6 +1042,7 @@ class DbSessionStore:
                     site_role=role.value,
                     email=email,
                     attributes=dict(attributes or {}),
+                    scopes=sorted(scopes) if scopes is not None else None,
                     created_at=when,
                     expires_at=when + dt.timedelta(seconds=ttl_s),
                 )
@@ -1072,6 +1074,7 @@ class DbSessionStore:
             _aware(row["expires_at"]).timestamp(),
             row["email"] or "",
             dict(row["attributes"] or {}),
+            scopes=frozenset(row["scopes"]) if row["scopes"] is not None else None,
         )
 
     def delete(self, token: str | None) -> None:

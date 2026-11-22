@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -348,3 +349,40 @@ def safe_return_to(value: str | None) -> str:
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
         return "/"
     return value
+
+
+_READS = re.compile(r"^/api/dashboards/(?P<d>[^/]+)/(query|domain|export)$")
+_EMBED_GET = re.compile(r"^/api/dashboards/(?P<d>[^/]+)(/info)?$")
+_NEVER = ("/api/tokens", "/api/admin", "/api/webhooks", "/api/migration")
+
+
+def allowed_by_scopes(scopes: frozenset[str], method: str, path: str) -> bool:
+    """What a limited token may call in the portal API (full sessions have no scopes).
+
+    - ``tabfree.embed:<dashboard>`` (P6.8): read that one dashboard and run its queries;
+    - ``tabfree.read``: read anything the person can see, and run dashboard queries;
+    - ``tabfree.author``: also change content, but never tokens, administration, webhooks or the
+      migration console, which need the person's own session.
+    """
+    method = method.upper()
+    if any(path == p or path.startswith(p + "/") for p in _NEVER):
+        return False
+    for scope in scopes:
+        if scope.startswith("tabfree.embed:"):
+            dashboard = scope.split(":", 1)[1]
+            if path == "/api/me" and method == "GET":
+                return True
+            match = (
+                _EMBED_GET.match(path)
+                if method == "GET"
+                else _READS.match(path)
+                if method == "POST"
+                else None
+            )
+            if match is not None and match.group("d") == dashboard:
+                return True
+    if "tabfree.author" in scopes:
+        return True
+    if "tabfree.read" in scopes:
+        return method in ("GET", "HEAD") or (method == "POST" and _READS.match(path) is not None)
+    return False

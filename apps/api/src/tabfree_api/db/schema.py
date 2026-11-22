@@ -226,6 +226,8 @@ sessions = Table(
     Column("groups", Document, nullable=False),
     Column("site_role", String(32), nullable=False),
     Column("email", String(320), nullable=False, server_default=""),
+    #: Limited sessions (P6.8 embedding): what the token may call; None is a full session.
+    Column("scopes", Document),
     #: User attributes at sign-in (RLS ``USERATTRIBUTE``).
     Column("attributes", Document, nullable=False, default=dict),
     Column("created_at", Timestamp, nullable=False),

@@ -233,6 +233,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 name="tabfree-jobs",
             ).start()  # fmt: skip
     app.include_router(create_router(ctx))
+    from tabfree_api import scim
+
+    async def scim_error(_request: Any, exc: Exception) -> Any:
+        return scim.error_response(exc)  # type: ignore[arg-type]
+
+    app.add_exception_handler(scim.ScimError, scim_error)
     if signer is not None:
         app.include_router(
             usercontent.create_router(app.state.context, signer, config.runtime_dir, portal_origin)
