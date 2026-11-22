@@ -22,7 +22,15 @@ from tabfree_schemas.validate import SchemaKind, check_manifest_references, sche
 #: outputs of the element's query; "filter"/"parameter" name declarations.
 COMPONENTS: dict[str, dict[str, str]] = {
     "tf-dashboard": {},
-    "tf-chart": {"query": "query", "x": "column", "y": "column", "color": "column", "drill": "query"},
+    "tf-chart": {
+        "query": "query",
+        "x": "column",
+        "y": "column",
+        "color": "column",
+        "drill": "query",
+        "size": "column",
+        "target": "column",
+    },
     "tf-crosstab": {"query": "query", "columns": "column"},
     "tf-kpi": {"query": "query", "measure": "column", "change": "column"},
     "tf-map": {"query": "query", "geo": "column", "color": "column"},
@@ -35,6 +43,10 @@ COMPONENTS: dict[str, dict[str, str]] = {
     "tf-text": {"query": "query"},
     "tf-image": {},
     "tf-export": {"query": "query"},
+    # P6.11: dynamic zones, show/hide and navigation buttons.
+    "tf-when": {"parameter": "parameter"},
+    "tf-toggle": {},
+    "tf-nav": {},
 }
 REQUIRED: dict[str, tuple[str, ...]] = {
     "tf-chart": ("query", "x", "y"),
@@ -45,9 +57,26 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "tf-parameter": ("name",),
     "tf-legend": ("query", "field"),
     "tf-image": ("src",),
+    "tf-when": ("parameter",),
+    "tf-toggle": ("target",),
+    "tf-nav": ("dashboard",),
 }
 ENUMS = {
-    ("tf-chart", "mark"): {"bar", "line", "area", "point"},
+    ("tf-chart", "mark"): {
+        "bar",
+        "line",
+        "area",
+        "point",
+        "pie",
+        "heatmap",
+        "histogram",
+        "treemap",
+        "boxplot",
+        "gantt",
+        "bullet",
+    },
+    ("tf-chart", "trend"): {"linear"},
+    ("tf-dashboard", "phone"): {"stack"},
     ("tf-filter", "control"): {
         "dropdown",
         "radio",

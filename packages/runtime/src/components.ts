@@ -14,7 +14,7 @@
  * `tf-export`) are in layout.ts.
  */
 
-import { ChartError, renderChart, type Mark } from "./chart.js";
+import { ChartError, MARK_NAMES, renderChart, type Mark } from "./chart.js";
 import { h } from "./dom.js";
 import { formatValue } from "./format.js";
 import { LAYOUT_ELEMENTS } from "./layout.js";
@@ -103,9 +103,20 @@ export class TfDashboard extends TfElement {
   override connectedCallback(): void {
     super.connectedCallback();
     if (typeof ResizeObserver !== "undefined") {
-      this.#observer = new ResizeObserver(() => this.tf?.resize(document.documentElement.scrollHeight));
+      this.#observer = new ResizeObserver(() => {
+        this.#device();
+        this.tf?.resize(document.documentElement.scrollHeight);
+      });
       this.#observer.observe(document.documentElement);
     }
+    this.#device();
+  }
+
+  /** Device layouts (P6.11): below ``phone-width`` (default 600 px), `phone="stack"` stacks the layout. */
+  #device(): void {
+    const limit = Number(this.getAttribute("phone-width")) || 600;
+    const narrow = this.getAttribute("phone") === "stack" && document.documentElement.clientWidth < limit;
+    this.classList.toggle("tf-phone", narrow);
   }
 
   override disconnectedCallback(): void {
@@ -113,7 +124,7 @@ export class TfDashboard extends TfElement {
     this.#observer?.disconnect();
   }
 
-  static observedAttributes = ["size", "width", "height"];
+  static observedAttributes = ["size", "width", "height", "phone", "phone-width"];
 
   protected async render(): Promise<void> {
     if (!this.tf) return;
@@ -137,10 +148,12 @@ export class TfDashboard extends TfElement {
 
 // ---- tf-chart ----------------------------------------------------------------------------------
 
-const MARKS: readonly string[] = ["bar", "line", "area", "point"];
+const MARKS = MARK_NAMES;
 
 export class TfChart extends TfElement {
-  static observedAttributes = ["query", "mark", "x", "y", "color", "height", "sort", "drill"];
+  static observedAttributes = [
+    "query", "mark", "x", "y", "color", "height", "sort", "drill", "size", "target", "bins", "reference", "band", "trend",
+  ];
   #selected: Tuple | null = null;
   /** In-place drill (P3.6): the detail query shown after a mark was clicked. */
   #drilled: { query: string; from: Tuple } | null = null;
@@ -190,6 +203,12 @@ export class TfChart extends TfElement {
         y,
         color: this.getAttribute("color") ?? undefined,
         title: this.getAttribute("title") ?? undefined,
+        size: this.getAttribute("size") ?? undefined,
+        target: this.getAttribute("target") ?? undefined,
+        bins: this.hasAttribute("bins") ? Number(this.getAttribute("bins")) : undefined,
+        reference: this.getAttribute("reference") ?? undefined,
+        band: this.getAttribute("band") ?? undefined,
+        trend: this.getAttribute("trend") ?? undefined,
       },
       result,
       {
@@ -736,7 +755,71 @@ export class TfParameter extends TfElement {
   }
 }
 
+// ---- dynamic zones, show/hide and navigation (P6.11) ---------------------------------------------------
+
+/**
+ * `<tf-when parameter="show_details" equals="true">…</tf-when>`: its children show only while the
+ * parameter has that value (Tableau's dynamic zone visibility). Without `equals`, any truthy value.
+ */
+export class TfWhen extends TfElement {
+  static observedAttributes = ["parameter", "equals"];
+
+  protected async render(): Promise<void> {
+    if (!this.tf) return;
+    const name = required(this, "parameter");
+    const value = this.tf.state.parameters[name];
+    const equals = this.getAttribute("equals");
+    const visible = equals === null ? Boolean(value) && value !== "false" : String(value) === equals;
+    this.hidden = !visible;
+    this.tf.resize(document.documentElement.scrollHeight);
+  }
+
+  protected override showError(error: unknown): void {
+    this.hidden = false;
+    super.showError(error);
+  }
+}
+
+/** `<tf-toggle target="element-id" label="Filters">`: a show/hide button for another element. */
+export class TfToggle extends HTMLElement {
+  connectedCallback(): void {
+    const target = this.getAttribute("target") ?? "";
+    const label = this.getAttribute("label") ?? "Show/hide";
+    const button = h("button", { type: "button", class: "tf-button", "aria-controls": target }, label);
+    const sync = () => {
+      const el = document.getElementById(target);
+      button.setAttribute("aria-expanded", String(Boolean(el && !el.hidden)));
+    };
+    button.addEventListener("click", () => {
+      const el = document.getElementById(target);
+      if (!el) return;
+      el.hidden = !el.hidden;
+      sync();
+      void client().then((c) => c.resize(document.documentElement.scrollHeight));
+    });
+    if (this.getAttribute("start") === "hidden") {
+      const el = document.getElementById(target);
+      if (el) el.hidden = true;
+    }
+    this.replaceChildren(button);
+    sync();
+  }
+}
+
+/** `<tf-nav dashboard="other-id" label="Details">`: a navigation button (the host checks access). */
+export class TfNav extends HTMLElement {
+  connectedCallback(): void {
+    const dashboard = this.getAttribute("dashboard") ?? "";
+    const button = h("button", { type: "button", class: "tf-button" }, this.getAttribute("label") ?? "Open");
+    button.addEventListener("click", () => void client().then((c) => c.navigate(dashboard)));
+    this.replaceChildren(button);
+  }
+}
+
 export const ELEMENTS: Record<string, CustomElementConstructor> = {
+  "tf-when": TfWhen,
+  "tf-toggle": TfToggle,
+  "tf-nav": TfNav,
   "tf-dashboard": TfDashboard,
   "tf-chart": TfChart,
   "tf-crosstab": TfCrosstab,

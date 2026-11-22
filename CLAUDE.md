@@ -31,6 +31,7 @@ uv run python -m tabfree_api.probe --engine duckdb            # P1.16 latency pr
 uv run tabfree kit path/to/folder                             # CLAUDE.md, .mcp.json and the dashboard skill for Claude Code
 uv run tabfree-migrate factory factory.yaml --out factory/    # Phase 5: models, manifests, baselines, governance, waves
 uv run python -m tabfree_api.migration import factory/ --by admin   # load a factory folder (then repair/verify)
+uv run python -m tabfree_api.jobs worker --scheduler         # Phase 6: schedules, refreshes, subscriptions, alerts
 ```
 
 ## Layout

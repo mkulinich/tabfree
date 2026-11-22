@@ -162,7 +162,15 @@ export interface ExportMessage {
   query?: string;
 }
 
+/** Go to another dashboard (navigation buttons, P6.11); the host checks the viewer may open it. */
+export interface NavigateMessage {
+  v: 0;
+  type: "navigate";
+  dashboard: string;
+}
+
 export type DashboardMessage =
+  | NavigateMessage
   | HelloMessage
   | QueryMessage
   | DomainMessage
@@ -445,6 +453,11 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
       if (!hasExactKeys(data, ["v", "type", "format"], ["query"]) || !EXPORT_FORMATS.includes(format)) return null;
       if (query === undefined) return { v: 0, type: "export", format: format as ExportFormat };
       return isName(query) ? { v: 0, type: "export", format: format as ExportFormat, query } : null;
+    }
+    case "navigate": {
+      const { dashboard } = data;
+      if (!hasExactKeys(data, ["v", "type", "dashboard"]) || typeof dashboard !== "string") return null;
+      return /^[a-z0-9][a-z0-9-]{0,99}$/.test(dashboard) ? { v: 0, type: "navigate", dashboard } : null;
     }
     default:
       return null;

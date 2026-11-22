@@ -140,6 +140,11 @@ export class TabfreeClient extends EventTarget {
   }
 
   /** Report a mark selection; the host runs the manifest's filter and highlight actions. */
+  /** Ask the host to open another dashboard (navigation buttons). */
+  navigate(dashboard: string): void {
+    this.#send({ v: 0, type: "navigate", dashboard });
+  }
+
   select(source: string, tuples: Tuple[]): void {
     this.#send({ v: 0, type: "select", source, tuples });
   }

@@ -1,3 +1,4 @@
+/* global URL, document, location, window */
 (function () {
   "use strict";
   function embed(element, options) {

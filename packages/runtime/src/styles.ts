@@ -89,4 +89,15 @@ ${Array.from({ length: 8 }, (_, i) => `.tf-bg-c${i} { background: var(--tf-c${i}
 .tf-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .tf-chip { font: inherit; font-size: 12px; border: 1px solid var(--tf-border); border-radius: 10px;
   background: var(--tf-surface); color: var(--tf-text); padding: 1px 8px; cursor: pointer; }
+/* P6.11: overlays, extra marks, device layouts */
+.tf-reference { stroke: var(--tf-text); stroke-dasharray: 4 3; stroke-width: 1; opacity: 0.7; }
+.tf-reference-label { font-size: 11px; fill: var(--tf-text); opacity: 0.8; }
+.tf-band { fill: var(--tf-text); opacity: 0.08; }
+.tf-trend { stroke: var(--tf-text); stroke-width: 1.5; stroke-dasharray: 6 3; opacity: 0.6; }
+.tf-whisker, .tf-median, .tf-target { stroke: var(--tf-text); stroke-width: 2; }
+.tf-label { font-size: 11px; fill: var(--tf-text); pointer-events: none; }
+tf-when[hidden], [hidden] { display: none !important; }
+.tf-phone tf-container { flex-direction: column !important; }
+.tf-phone tf-container > * { flex: 1 1 auto !important; width: 100% !important; }
+.tf-phone tf-float { position: static !important; width: auto !important; height: auto !important; }
 `;

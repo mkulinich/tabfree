@@ -60,6 +60,25 @@ export interface ManifestAction {
   targets?: "all" | string[];
   fields?: (string | { source: string; target: string })[];
   clear?: "keep_filter" | "show_all" | "exclude_all";
+  /** Parameter actions: the parameter to set from the selected mark's ``field``. */
+  parameter?: string;
+  field?: string;
+  /** URL actions: a template with <Field Name> placeholders. */
+  url?: string;
+  openIn?: "new_tab" | "same_tab";
+}
+
+/** A URL action's link for a selected mark; null when the template is not http(s) (P6.11). */
+export function actionUrl(template: string, tuple: Tuple): string | null {
+  const url = template.replace(/<([^<>]+)>/g, (_m, name: string) =>
+    encodeURIComponent(tuple[name] === null || tuple[name] === undefined ? "" : String(tuple[name])),
+  );
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The parts of a manifest query the host needs for table calculations (computed in the browser). */
@@ -148,6 +167,10 @@ export interface MountOptions {
   onDashboardError?: (message: string) => void;
   /** The dashboard asked for an export; the portal checks capabilities and downloads it. */
   onExport?: (request: ExportRequest) => void;
+  /** A navigation button asked for another dashboard; the portal checks the viewer may open it. */
+  onNavigate?: (dashboard: string) => void;
+  /** A URL action fired (http and https only); the portal opens it, without an opener. */
+  onOpenUrl?: (url: string, target: "new_tab" | "same_tab") => void;
   /**
    * Load the dashboard from this URL on the separate usercontent origin (P3.6) instead of an inline
    * srcdoc. The server sends the bundle with its own CSP there, so the portal page can keep a strict
@@ -388,11 +411,26 @@ export function mountDashboard(options: MountOptions): DashboardHost {
           } else if (action.type === "highlight") {
             state = { ...state, highlight: message.tuples.length ? { source: message.source, tuples: message.tuples } : null };
             changed = true;
+          } else if (action.type === "parameter" && action.parameter && action.field) {
+            // Parameter action (P6.11): the selected mark's value becomes the parameter's value.
+            const spec = parameters[action.parameter];
+            const first = message.tuples[0];
+            if (!spec || !first || !(action.field in first)) continue;
+            const value = coerceParameter(spec, first[action.field] ?? null);
+            if (value === undefined || state.parameters[action.parameter] === value) continue;
+            state = { ...state, parameters: { ...state.parameters, [action.parameter]: value } };
+            changed = true;
+          } else if (action.type === "url" && action.url && message.tuples[0]) {
+            const url = actionUrl(action.url, message.tuples[0]);
+            if (url) options.onOpenUrl?.(url, action.openIn ?? "new_tab");
           }
         }
         if (changed) broadcast();
         return;
       }
+      case "navigate":
+        options.onNavigate?.(message.dashboard);
+        return;
       case "resize":
         iframe.style.height = `${Math.max(200, message.height)}px`;
         return;

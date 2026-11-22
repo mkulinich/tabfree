@@ -156,3 +156,23 @@ owner, project, rules, old-URL redirects and favorites), requests changes (the n
 agent), marks it for a manual rebuild, or retires it. Subscriptions, refresh jobs, alerts and custom
 views are kept as records for Phase 6. Tables: `migration_items`, `migration_events`,
 `migration_records` (migration 0006).
+
+## Server parity (Phase 6)
+
+```bash
+python -m tabfree_api.jobs worker --scheduler   # jobs and schedules (run as its own service)
+python -m tabfree_api.jobs drain                # run what is due once, then exit
+python -m tabfree_api.jobs prune                # old job history and the expired recycle bin
+TABFREE_JOBS_INLINE=1 ...                       # development: the worker inside the API process
+```
+
+- **Jobs** ([ADR-013](../../docs/adr/0013-jobs-in-the-metadata-database.md)): schedules, refresh tasks,
+  subscriptions, alerts, cache warming and webhook deliveries all run from the `jobs` queue.
+- **Mail**: `TABFREE_MAIL_BACKEND=ses` with `TABFREE_SES_REGION` and `TABFREE_MAIL_FROM`; internal domains
+  in `TABFREE_MAIL_INTERNAL_DOMAINS`. Unsubscribe links are signed with `TABFREE_LINK_SIGNING_KEY`.
+- **Embedding**: register a connected app (site administration API `/api/connected-apps`), sign
+  HS256 tokens (`aud: tabfree`, `scp: ["tabfree:views:embed"]`, at most 10 minutes, unique `jti`), and
+  call `TabFree.embed(element, {server, dashboard, token})` from `/embed.js`.
+- **SCIM 2.0** at `/scim/v2` with a site administrator's personal access token.
+- **Webhooks** signed with `X-TabFree-Signature: sha256=…`; **OpenAPI** at `/api/openapi.json`.
+- **Rollups**: declare `rollups` in a model and add a refresh task with mode `rollup`.

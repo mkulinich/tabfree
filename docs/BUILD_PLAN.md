@@ -622,14 +622,14 @@ Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran 
 
 **Goal:** everything people use on Tableau Server day to day.
 
-- [ ] **P6.1** Scheduler and jobs: EventBridge Scheduler → SQS → workers, or a Postgres-backed queue for self-hosters. Includes job history UI, retries, failure notifications and per-schedule time zones.
+- [x] **P6.1** Scheduler and jobs: EventBridge Scheduler → SQS → workers, or a Postgres-backed queue for self-hosters. Includes job history UI, retries, failure notifications and per-schedule time zones.
 - [ ] **P6.2** Data refresh:
   - full refresh: Iceberg CTAS plus an atomic swap
   - incremental refresh: `MERGE` on the recorded keys
   - sources outside AWS: Athena federated query connectors or replication, chosen per source in P5.1
   - Redshift materialized view refresh
   - cache invalidation and warming after each refresh
-- [ ] **P6.3** Subscriptions:
+- [x] **P6.3** Subscriptions:
   - email via SES with PNG/PDF
   - rendered **per recipient**, so RLS applies
   - on a schedule or after a refresh
@@ -637,11 +637,11 @@ Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran 
   - unsubscribe links
   - optional Slack/Teams webhooks
   - external recipients need owner confirmation
-- [ ] **P6.4** Data-driven alerts: a threshold evaluated on a governed query, stored state so the same alert doesn't repeat, then a notification.
-- [ ] **P6.5** User state: custom views (saved filter and parameter state, including "default for me"), sharing links, comments with @mentions, favorites/recents, tags, collections.
-- [ ] **P6.6** Content lifecycle: revision history with restore, recycle bin, move/copy, change owner, certification, data quality warnings.
+- [x] **P6.4** Data-driven alerts: a threshold evaluated on a governed query, stored state so the same alert doesn't repeat, then a notification.
+- [x] **P6.5** User state: custom views (saved filter and parameter state, including "default for me"), sharing links, comments with @mentions, favorites/recents, tags, collections.
+- [x] **P6.6** Content lifecycle: revision history with restore, recycle bin, move/copy, change owner, certification, data quality warnings.
 - [ ] **P6.7** Admin: usage and performance dashboards built *in TabFree* on the audit tables, background jobs, storage, site settings, branding and themes.
-- [ ] **P6.8** Embedding: connected-app style JWTs (10 minutes or less, single-use `jti`, scopes, user attributes passed into RLS), a `frame-ancestors` allowlist and a JS embed API.
+- [x] **P6.8** Embedding: connected-app style JWTs (10 minutes or less, single-use `jti`, scopes, user attributes passed into RLS), a `frame-ancestors` allowlist and a JS embed API.
 - [ ] **P6.9** APIs: public REST API (OpenAPI) and webhooks; SCIM 2.0 provisioning; multi-site.
 - [ ] **P6.10** Acceleration:
   - result cache tuning
@@ -649,6 +649,24 @@ Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran 
   - pre-warming the top dashboards
   - optional Cube Core backend if the benchmarks call for it
 - [ ] **P6.11** P1 interactivity in the runtime: sets and set actions, parameter actions, dynamic zone visibility, show/hide and navigation buttons, viz in tooltip, URL and go-to-sheet actions, device layouts, reference/trend lines and bands, and more chart types (scatter, area, pie, heatmap, histogram, treemap, box plot, Gantt, bullet).
+
+**Phase 6 status (2026-11-22).** Built and tested offline (`make check`); nothing has run on AWS, against Amazon SES, or with a real headless browser for subscriptions.
+
+| Task | Status |
+|---|---|
+| P6.1 scheduler and jobs | Done ([ADR-013](adr/0013-jobs-in-the-metadata-database.md), proposed): schedules in a time zone, a scheduler that fires each run once, workers with leases, retries with backoff and failure emails, job history in the portal, `python -m tabfree_api.jobs worker`, an inline mode for development. The EventBridge/SQS path is not built. |
+| P6.2 data refresh | Built: Iceberg CTAS + view swap, Redshift rename swap, incremental `MERGE`, materialized views, data-version bump, follow-on subscriptions, alerts, warming and webhook. The SQL is unit-tested and the incremental path ran on DuckDB; **Athena and Redshift runs need AWS** (left unticked). |
+| P6.3 subscriptions | Done: per-recipient renders with their own access, schedule or after a refresh, only-if-data, unsubscribe links, Slack/Teams webhooks, owner confirmation for external addresses. SES and Chromium untested live. |
+| P6.4 alerts | Done: thresholds on governed queries as the owner, firing state so alerts do not repeat. |
+| P6.5 user state | Done: custom views (shared, default for me), sharing links, comments with @mentions, tags, collections (favorites and recents were P3.5). |
+| P6.6 lifecycle | Done: revision restore (P3), recycle bin with retention, move, copy, change owner, certification, data quality warnings. |
+| P6.7 admin | Partly: a Usage page (views, people, latency, cache, jobs, storage) from the audit log, plus site settings from P3. Not yet built *as TabFree dashboards* (needs the audit log exported to the lake). |
+| P6.8 embedding | Done: connected apps, 10-minute single-use JWTs with scopes and RLS attributes, limited embed sessions, `frame-ancestors`, `/embed.js`. |
+| P6.9 APIs | Partly: OpenAPI at `/api/openapi.json`, signed webhooks, SCIM 2.0. Multi-site in one process is not built (one site per service today). |
+| P6.10 acceleration | Partly: rollups declared in models (built by refresh, routed safely with RLS) and cache warming after refreshes. Cache tuning and the Cube option wait for the P2.10 benchmarks. |
+| P6.11 interactivity | Partly: parameter and URL actions, navigation and show/hide buttons, dynamic zones (`tf-when`), phone layouts, reference lines, bands and trends, and pie, heatmap, histogram, treemap, box plot, Gantt and bullet charts. Sets and set actions, viz in tooltip and scatter colour series are not built. |
+
+Also: sessions now carry scopes, enforced on every portal API call, so read-only OAuth tokens can no longer call write endpoints (a Phase 4 gap).
 
 **Milestone M6:** the P0 and P1 checklist in §9 is green, and Tableau Server is switched to read-only.
 

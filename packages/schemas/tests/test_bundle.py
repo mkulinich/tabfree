@@ -30,7 +30,7 @@ def test_example_bundles_are_consistent(bundle: str) -> None:
     [
         ('<tf-chart query="nope" x="a" y="b"></tf-chart>', 'query="nope" is not a query'),
         ('<tf-chart query="by_region" x="Profit" y="Region"></tf-chart>', 'x="Profit" is not an output'),
-        ('<tf-chart query="by_region" mark="pie" x="Sales" y="Region"></tf-chart>', "mark='pie'"),
+        ('<tf-chart query="by_region" mark="radar" x="Sales" y="Region"></tf-chart>', "mark='radar'"),
         ('<tf-chart query="by_region" x="Sales"></tf-chart>', 'missing the "y" attribute'),
         ('<tf-filter name="country"></tf-filter>', 'name="country" is not a filter'),
         ('<tf-parameter name="region"></tf-parameter>', 'name="region" is not a parameter'),

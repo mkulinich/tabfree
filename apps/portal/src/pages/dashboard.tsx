@@ -103,6 +103,7 @@ function Viewer({
   initial?: Partial<DashboardState> | undefined;
   onState?: (state: DashboardState) => void;
 }) {
+  const go = useNavigate();
   const container = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -123,6 +124,10 @@ function Viewer({
         ...(bundle.frameUrl ? { frameUrl: bundle.frameUrl } : {}),
         ...(initial ? { initialState: initial } : {}),
         ...(onState ? { onStateChange: (state: DashboardState) => onState(state) } : {}),
+        // Navigation buttons and URL actions (P6.11): the target dashboard checks access itself.
+        onNavigate: (target: string) => void go({ to: "/dashboards/$id", params: { id: target } }),
+        onOpenUrl: (url: string, target: "new_tab" | "same_tab") =>
+          void window.open(url, target === "same_tab" ? "_self" : "_blank", "noopener,noreferrer"),
         onExport: (request) => void startExport(id, request),
         theme: { mode: dark ? "dark" : "light" },
         runQuery: (request) => post(`/api/dashboards/${enc(id)}/query`, request),

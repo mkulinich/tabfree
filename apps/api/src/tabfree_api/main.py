@@ -226,7 +226,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else ("model", what.split(" ")[0].removeprefix("model="))
             )
             audit.record(
-                "query_metrics", actor=metrics.pop("user", None), resource_kind=kind, resource_id=resource[:100],
+                "query_metrics", actor=metrics.pop("user", None), resource_kind=kind,
+                resource_id=resource[:100],
                 **({"query": match.group(3), "op": match.group(2)} if match else {}), **metrics,
             )  # fmt: skip
 

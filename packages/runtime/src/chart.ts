@@ -8,9 +8,11 @@
 
 import { s } from "./dom.js";
 import { formatAxis, formatValue } from "./format.js";
+import { EXTRA_MARKS, type ExtraMark, MarkError, renderExtra } from "./marks.js";
 import type { Column, Scalar, Tuple } from "./protocol.js";
 
-export type Mark = "bar" | "line" | "area" | "point";
+export type Mark = "bar" | "line" | "area" | "point" | ExtraMark;
+export const MARK_NAMES: readonly string[] = ["bar", "line", "area", "point", ...EXTRA_MARKS];
 
 export interface ChartSpec {
   mark: Mark;
@@ -18,6 +20,50 @@ export interface ChartSpec {
   y: string;
   color?: string | undefined;
   title?: string | undefined;
+  /** P6.11 extras: gantt length, bullet target, histogram bins. */
+  size?: string | undefined;
+  target?: string | undefined;
+  bins?: number | undefined;
+  /** A reference line: average, median, min, max or a number (bar, line, area and point charts). */
+  reference?: string | undefined;
+  /** A reference band: "quartiles", or two numbers "lo,hi". */
+  band?: string | undefined;
+  /** A trend line: "linear" (least squares over the categories in order). */
+  trend?: string | undefined;
+}
+
+/** Reference statistics of a measure. */
+export function referenceValue(kind: string, values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  switch (kind) {
+    case "average":
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    case "median":
+      return sorted.length % 2 ? (sorted[mid] ?? null) : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+    case "min":
+      return sorted[0] ?? null;
+    case "max":
+      return sorted.at(-1) ?? null;
+    default: {
+      const n = Number(kind);
+      return Number.isFinite(n) ? n : null;
+    }
+  }
+}
+
+/** Least-squares line through (i, value): [intercept, slope]. */
+export function linearTrend(values: (number | null)[]): [number, number] | null {
+  const points = values.map((v, i) => [i, v] as const).filter((p): p is readonly [number, number] => p[1] !== null);
+  if (points.length < 2) return null;
+  const n = points.length;
+  const sx = points.reduce((a, [x]) => a + x, 0);
+  const sy = points.reduce((a, [, y]) => a + y, 0);
+  const sxx = points.reduce((a, [x]) => a + x * x, 0);
+  const sxy = points.reduce((a, [x, y]) => a + x * y, 0);
+  const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1);
+  return [(sy - slope * sx) / n, slope];
 }
 
 export interface ChartData {
@@ -34,6 +80,7 @@ export interface ChartOptions {
 }
 
 export class ChartError extends Error {}
+export { MarkError };
 
 /** A neutral categorical palette (colour-blind-safe order), defined as CSS variables in styles.ts. */
 export const PALETTE_SIZE = 8;
@@ -99,11 +146,6 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
     if (i === undefined || column === undefined) throw new ChartError(`the query has no column "${name}"`);
     return [column, i];
   };
-  const xc = col(spec.x);
-  const yc = col(spec.y);
-  if (!xc || !yc) throw new ChartError("a chart needs x and y");
-  const colorc = col(spec.color);
-
   const { width, height } = options;
   const svg = s("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -113,6 +155,18 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
     "aria-label": spec.title ?? `${spec.y} by ${spec.x}`,
     class: "tf-svg",
   });
+  if ((EXTRA_MARKS as readonly string[]).includes(spec.mark)) {
+    try {
+      return renderExtra({ ...spec, mark: spec.mark as ExtraMark }, data, options, svg);
+    } catch (error) {
+      if (error instanceof MarkError) throw new ChartError(error.message);
+      throw error;
+    }
+  }
+  const xc = col(spec.x);
+  const yc = col(spec.y);
+  if (!xc || !yc) throw new ChartError("a chart needs x and y");
+  const colorc = col(spec.color);
 
   const xIsMeasure = isMeasure(xc[0]);
   const yIsMeasure = isMeasure(yc[0]);
@@ -266,6 +320,55 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
     });
   }
   svg.append(marks);
+
+  // Reference lines, bands and trend lines (P6.11), over the value axis.
+  const overlay = s("g", { class: "tf-overlay" });
+  const inRange = (v: number) => v >= lo && v <= hi;
+  const rule = (v: number, label: string) => {
+    const p = valPos(v);
+    overlay.append(
+      horizontal
+        ? s("line", { x1: p, x2: p, y1: plot.y, y2: plot.y + plot.h, class: "tf-reference" })
+        : s("line", { x1: plot.x, x2: plot.x + plot.w, y1: p, y2: p, class: "tf-reference" }),
+      horizontal
+        ? s("text", { x: p + 4, y: plot.y + 10, class: "tf-reference-label" }, label)
+        : s("text", { x: plot.x + plot.w - 4, y: p - 4, "text-anchor": "end", class: "tf-reference-label" }, label),
+    );
+  };
+  if (spec.band) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const quart = (q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))] ?? 0;
+    const parts = spec.band === "quartiles" ? [quart(0.25), quart(0.75)] : spec.band.split(",").map(Number);
+    const [b0, b1] = [Math.max(lo, Math.min(...parts)), Math.min(hi, Math.max(...parts))];
+    if (parts.length === 2 && parts.every(Number.isFinite) && b1 > b0) {
+      const [p0, p1] = [valPos(b0), valPos(b1)];
+      overlay.append(
+        horizontal
+          ? s("rect", { x: Math.min(p0, p1), y: plot.y, width: Math.abs(p1 - p0), height: plot.h, class: "tf-band" })
+          : s("rect", { x: plot.x, y: Math.min(p0, p1), width: plot.w, height: Math.abs(p1 - p0), class: "tf-band" }),
+      );
+    }
+  }
+  if (spec.reference) {
+    const v = referenceValue(spec.reference, values);
+    if (v !== null && inRange(v)) rule(v, `${spec.reference === String(v) ? "" : `${spec.reference}: `}${formatAxis(v, valCol)}`);
+  }
+  if (spec.trend === "linear" && seriesIdx === null && !horizontal) {
+    const byCategory = categories.map((c) => {
+      const row = data.rows.find((r) => key(r[catIdx] ?? null) === key(c));
+      return row ? numeric(row[valIdx] ?? null) : null;
+    });
+    const fit = linearTrend(byCategory);
+    if (fit && categories.length > 1) {
+      const [a, b] = fit;
+      const last = categories.length - 1;
+      const clamp = (v: number) => Math.max(lo, Math.min(hi, v));
+      overlay.append(
+        s("line", { x1: catPos(0), y1: valPos(clamp(a)), x2: catPos(last), y2: valPos(clamp(a + b * last)), class: "tf-trend" }),
+      );
+    }
+  }
+  if (overlay.childNodes.length) svg.append(overlay);
 
   if (series.length > 1 && colorc) {
     const legend = s("g", { class: "tf-legend" });
