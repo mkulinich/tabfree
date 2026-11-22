@@ -100,8 +100,8 @@ resource "aws_rds_cluster" "this" {
   depends_on = [aws_cloudwatch_log_group.postgresql]
 }
 
-# A single writer: this is a sandbox, not production HA. Add a second
-# instance in another AZ for failover.
+# The writer, plus var.reader_count readers. Aurora spreads instances across the subnet group's AZs;
+# with a reader, a failed writer fails over in about 30 seconds (P7.1). Sandbox: no readers.
 resource "aws_rds_cluster_instance" "writer" {
   identifier                 = "${local.identifier}-1"
   cluster_identifier         = aws_rds_cluster.this.id
@@ -112,6 +112,32 @@ resource "aws_rds_cluster_instance" "writer" {
   publicly_accessible        = false
   auto_minor_version_upgrade = true
   apply_immediately          = var.apply_immediately
+  promotion_tier             = 0
+
+  performance_insights_enabled    = var.performance_insights
+  performance_insights_kms_key_id = var.performance_insights ? var.kms_key_arn : null
+
+  lifecycle {
+    ignore_changes = [engine_version]
+  }
+}
+
+resource "aws_rds_cluster_instance" "reader" {
+  count = var.reader_count
+
+  identifier                 = "${local.identifier}-${count.index + 2}"
+  cluster_identifier         = aws_rds_cluster.this.id
+  instance_class             = "db.serverless"
+  engine                     = aws_rds_cluster.this.engine
+  engine_version             = aws_rds_cluster.this.engine_version
+  db_subnet_group_name       = aws_db_subnet_group.this.name
+  publicly_accessible        = false
+  auto_minor_version_upgrade = true
+  apply_immediately          = var.apply_immediately
+  promotion_tier             = 1
+
+  performance_insights_enabled    = var.performance_insights
+  performance_insights_kms_key_id = var.performance_insights ? var.kms_key_arn : null
 
   lifecycle {
     ignore_changes = [engine_version]

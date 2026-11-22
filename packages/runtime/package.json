@@ -1,21 +1,37 @@
 {
   "name": "@tabfree/runtime",
   "version": "0.0.1",
-  "description": "TabFree dashboard runtime: the sandbox message protocol now; SDK and <tf-*> components in Phase 1.",
+  "description": "TabFree dashboard runtime: sandbox protocol, host bridge, dashboard SDK and the <tf-*> components.",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./host": {
+      "source": "./src/host.ts",
+      "types": "./dist/host.d.ts",
+      "import": "./dist/host.js"
+    },
+    "./bundle/frame.js": "./dist/bundle/frame.js",
+    "./bundle/host.js": "./dist/bundle/host.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build -w @tabfree/tablecalc && tsc -p tsconfig.build.json && vite build && TABFREE_BUNDLE=host vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@tabfree/tablecalc": "0.0.1"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.3",
+    "happy-dom": "^21.0.4",
+    "vite": "^8.3.6"
   }
 }

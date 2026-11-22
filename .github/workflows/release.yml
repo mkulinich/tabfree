@@ -1,0 +1,85 @@
+name: release
+
+# Publishes the standalone packages (BUILD_PLAN P2.12): the Tableau-semantics compiler with its TDVT
+# conformance runner (PyPI: tabfree-schemas, tabfree-compiler) and the table-calculation engine
+# (npm: @tabfree/tablecalc). "TabFree" is a codename: nothing is published until the public name has
+# cleared trademark review (P0.7) and the repository variable PUBLIC_NAME_CLEARED is "true". Each
+# publish job also waits for approval in its GitHub environment.
+
+on:
+  push:
+    tags: ["compiler-v*", "tablecalc-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    if: startsWith(github.ref, 'refs/tags/compiler-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --all-packages --locked
+      - run: uv run pytest packages/schemas packages/compiler
+      - name: TDVT conformance (DuckDB)
+        run: uv run tabfree-compile tdvt
+      - run: uv build --package tabfree-schemas --out-dir dist
+      - run: uv build --package tabfree-compiler --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  publish-pypi:
+    needs: python
+    if: vars.PUBLIC_NAME_CLEARED == 'true' && startsWith(github.ref, 'refs/tags/compiler-v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # PyPI trusted publishing; no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  npm:
+    if: startsWith(github.ref, 'refs/tags/tablecalc-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm test -w @tabfree/tablecalc
+      - run: npm run build -w @tabfree/tablecalc
+      - run: npm pack -w @tabfree/tablecalc --pack-destination dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-dist
+          path: dist/
+
+  publish-npm:
+    needs: npm
+    if: vars.PUBLIC_NAME_CLEARED == 'true' && startsWith(github.ref, 'refs/tags/tablecalc-v')
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write # npm provenance and trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run build -w @tabfree/tablecalc
+      - run: npm publish -w @tabfree/tablecalc --provenance --access public

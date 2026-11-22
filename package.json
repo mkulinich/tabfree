@@ -2,10 +2,12 @@
   "name": "tabfree-monorepo",
   "private": true,
   "type": "module",
-  "description": "TabFree TypeScript workspaces (dashboard runtime; the portal arrives in Phase 3).",
+  "description": "TabFree TypeScript workspaces: the dashboard runtime, table calcs and the portal.",
   "license": "Apache-2.0",
   "workspaces": [
-    "packages/runtime"
+    "packages/tablecalc",
+    "packages/runtime",
+    "apps/portal"
   ],
   "engines": {
     "node": ">=24"

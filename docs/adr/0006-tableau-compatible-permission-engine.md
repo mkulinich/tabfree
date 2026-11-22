@@ -2,9 +2,7 @@
 
 ## Status
 
-Accepted — pending validation (P3.3), 2026-11-20.
-
-The permission model is decided. P3.3 chooses the backend that evaluates it, using the Tableau effective-permission matrix.
+Accepted, 2026-11-20. The P3.3 backend is a plain evaluator in the API (`tabfree_api.authz`) over rules in Postgres; Cedar and OpenFGA stay candidates if list filtering at P7.2 scale needs them.
 
 ## Context
 
@@ -50,6 +48,24 @@ Callers see one interface: check a capability, list permitted objects. P3.3 pick
 - **P3.3:** a table-driven matrix covering user versus group rules, allow/deny/unspecified, nested and locked projects, site-role ceilings, owners, project leaders (including inherited ones) and views of hidden-tab workbooks. A backend must pass all of it; list-filtering latency at the P7.2 scale breaks ties.
 - **P5.5 / M5:** for each user, Tableau's "Query Workbooks for User" matches TabFree's View results, with zero unexplained differences.
 - **Revisit if:** Tableau's documentation or Server behaviour contradicts the precedence above.
+- **2026-11-20, P1.7 desk research:** Tableau's [Effective permissions](https://docs.salesforce.com/tableau/current/en-us/server/permission_effective.md) article gives this order:
+  1. site role ceiling
+  2. administrators, owners and project leaders
+  3. user rules: a user Allow beats a group Deny
+  4. group rules: Deny wins among groups
+  5. group sets
+  6. anything unspecified is denied
+
+  This is the precedence above, plus a level for **group sets**, which the P3.3 matrix must add. The P1.13 evaluator (`apps/api/src/tabfree_api/authz.py`) implements every level except group sets. Mapping each Deny to a Cedar `forbid`, as unshackle does, would get this order wrong: a `forbid` also overrides user Allows. See [p1-7-reuse-evaluation.md](../research/notes/p1-7-reuse-evaluation.md).
+
+- **2026-11-20, P3.3:** the order was re-checked against Tableau's current docs ([effective permissions](https://help.tableau.com/current/server/en-us/permission_effective.htm), [capabilities](https://help.tableau.com/current/server/en-us/permissions_capabilities.htm), [projects](https://help.tableau.com/current/server/en-us/permissions_projects.htm), [licenses and site roles](https://help.tableau.com/current/server/en-us/permission_license_siterole.htm)). What the evaluator now does, each level covered by `apps/api/tests/test_authz.py`:
+  - **Site role first, for everyone.** Owners and project leaders get every capability only within their site role. An Explorer owner has no Overwrite, Delete, Move or Set Permissions.
+  - **Ceilings** follow Tableau's per-content-type tables. Viewers get View, Filter, comments, Download Image/PDF and Download Summary Data. Explorers add Share Customized, Download Full Data, Web Edit and Download Workbook. Explorer (can publish), Creator and Site Administrator get everything. Projects have View and Publish; Publish needs Explorer (can publish).
+  - **Project owners and leaders** have every capability on content in their project and in every project nested below it. Leadership is a status, stored as a `project_leader` rule on the project.
+  - **Content owners** have every capability, except Set Permissions when the project is locked.
+  - **Asset permissions** take Tableau's three values: customizable, locked (including nested projects) and locked (not including nested projects). Locked content uses the controlling project's default rules for its content type and ignores its own. New content and new nested projects copy the defaults when they are created.
+  - **Deviation:** Tableau lets Viewers Connect to data sources, which they need to render views. In TabFree, Connect means ad-hoc semantic queries through the explore API, and dashboards render without it, so Connect needs Explorer.
+  - **Not yet implemented:** group sets, which deny or allow only when the user is in every group of the set. Their rules need a table of their own. Views with their own permissions (hidden-tab workbooks) are not modelled either, because TabFree has no separate view object.
 
 ## References
 

@@ -7,6 +7,9 @@ Thanks for helping build an open replacement for Tableau Server. This guide cove
 - [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) is the roadmap. Every task has an ID such as `P1.4`. Reference it in your branch name (`p1.4-ground-truth-capture`), in commit messages and in the PR title.
 - Significant technical decisions are recorded as ADRs in [docs/adr/](docs/adr/). If a change contradicts an ADR, propose a new or superseding ADR in the same PR.
 - Phases advance on their exit criteria, not on dates.
+- Larger changes (a public API or schema version, the security model, a new external service) start as an
+  RFC: see [docs/rfcs/](docs/rfcs/README.md). Who reviews and decides is in [GOVERNANCE.md](GOVERNANCE.md);
+  the short roadmap is [ROADMAP.md](ROADMAP.md) and changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Development setup
 

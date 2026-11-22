@@ -48,6 +48,16 @@ P2.11 picks the execution and caching layer: Cube Core runs the compiled SQL and
 - **M2:** ≥ 95% of TDVT tests pass on both dialects, and ≥ 90% of corpus worksheets match Tableau's CSV exports.
 - **P2.11:** adopt Cube only if it runs the staged LOD SQL unchanged while providing pre-aggregations, caching and access policies.
 - **Revisit if:** a dialect's TDVT pass rate stalls below target, or Ossie stabilises with LOD and table-calc coverage.
+- **2026-11-20, P2.11 desk phase (preliminary):** Cube Core (v1.8.31 source) fails the adoption test above, for five reasons:
+  - Its SQL API runs only over its own cubes, and pushdown rewrites queries into Cube SQL, so the staged LOD SQL cannot run unchanged.
+  - Rollups match only queries built from its model.
+  - Its Athena driver turns bind parameters into literals.
+  - Its cache keys on Cube's own generated SQL and refresh-key polling, and on Athena each poll is a billed query.
+  - A production deployment needs about six more Fargate tasks.
+
+  The execution and caching layer is therefore TabFree's own query service and result cache, built in P2.7 (`apps/api/src/tabfree_api/service.py`, `cache.py`, `guardrails.py`). The hands-on spike (1–2 days) can still overturn this; [p2-11-cube-spike.md](../research/notes/p2-11-cube-spike.md) lists what it must check.
+- **2026-11-20, P2.3:** TDVT on DuckDB is 1,135 of 1,146 (99.0%) across `standard`, `lodcalcs`, `regexcalcs`, `dateparse`, `percentile`, `median`, `pretest` and `iso8601week`. The nightly `conformance` workflow runs the same suites on Athena and Redshift once AWS is configured.
+- **2026-11-20, P1.10:** `packages/compiler` passes 771 of 779 TDVT expression tests (`standard`, `lodcalcs`, `median`, `pretest`) executed on DuckDB, including every LOD test. The 8 known deviations are listed with reasons in `tabfree_compiler.tdvt`. The generated SQL for every test parses as Athena, Redshift and Trino, but has not yet run on those engines; that is a P2.3/P2.10 gate. The parser is hand-written, following the vendored grammar: see [ADR-012](0012-hand-written-calc-parser.md) (Proposed).
 
 ## References
 

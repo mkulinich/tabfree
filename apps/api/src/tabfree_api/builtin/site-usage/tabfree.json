@@ -1,0 +1,97 @@
+{
+  "schema": "tabfree/dashboard@0",
+  "id": "site-usage",
+  "title": "Site usage",
+  "description": "Who uses this site, how fast queries are, and what is most viewed (from the usage lake).",
+  "models": {
+    "usage": "tabfree_usage"
+  },
+  "filters": {
+    "day": {
+      "label": "Period",
+      "field": "Day",
+      "kind": "relative_date",
+      "appliesTo": "all",
+      "default": {
+        "relative": {
+          "period": "day",
+          "from": -29,
+          "to": 0
+        }
+      }
+    }
+  },
+  "queries": {
+    "kpis": {
+      "measures": [
+        "Views",
+        "People",
+        "Queries",
+        "95th Percentile (ms)",
+        "Cache Hit Rate",
+        "Scanned GB"
+      ]
+    },
+    "per_day": {
+      "dimensions": [
+        "Day"
+      ],
+      "measures": [
+        "Views",
+        "People",
+        "95th Percentile (ms)"
+      ],
+      "sort": [
+        {
+          "by": "Day",
+          "dir": "asc"
+        }
+      ]
+    },
+    "top_content": {
+      "dimensions": [
+        "Content"
+      ],
+      "measures": [
+        "Views",
+        "People",
+        "95th Percentile (ms)"
+      ],
+      "where": [
+        {
+          "field": "Content Kind",
+          "kind": "categorical",
+          "members": [
+            "dashboard"
+          ]
+        }
+      ],
+      "sort": [
+        {
+          "by": "Views",
+          "dir": "desc"
+        }
+      ],
+      "limit": 25
+    },
+    "people": {
+      "dimensions": [
+        "Person"
+      ],
+      "measures": [
+        "Views",
+        "Queries"
+      ],
+      "sort": [
+        {
+          "by": "Views",
+          "dir": "desc"
+        }
+      ],
+      "limit": 50
+    }
+  },
+  "tags": [
+    "administration"
+  ]
+}

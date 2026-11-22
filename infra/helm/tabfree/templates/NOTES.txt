@@ -1,0 +1,11 @@
+TabFree {{ .Chart.AppVersion }} is installed as {{ include "tabfree.fullname" . }}.
+
+{{- if .Values.ingress.enabled }}
+Open: https://{{ first .Values.ingress.hosts }}
+{{- end }}
+
+The migration job ran `python -m tabfree_api.db upgrade` before the services started.
+Create the first site and administrator from a worker pod:
+
+  kubectl exec -it deploy/{{ include "tabfree.fullname" . }}-worker -- python -m tabfree_api.db create-site default --name "TabFree"
+  kubectl exec -it deploy/{{ include "tabfree.fullname" . }}-worker -- python -m tabfree_api.db create-admin default admin

@@ -51,6 +51,8 @@ export interface DashboardState {
   filters: Record<string, FilterValue>;
   parameters: Record<string, Scalar>;
   highlight: Highlight | null;
+  /** Set members chosen by set actions (P6.11); absent means the model's own definitions. */
+  sets?: Record<string, Scalar[]>;
 }
 
 export type ColumnType =
@@ -66,6 +68,31 @@ export type ColumnType =
 export interface Column {
   name: string;
   type: ColumnType;
+  role?: "dimension" | "measure";
+  /** Tableau/Excel-style number format from the model, e.g. "$#,##0" or "0.0%". */
+  format?: string;
+}
+
+export type FilterKind = "categorical" | "range" | "relative_date" | "wildcard";
+
+/** What a dashboard needs to render a filter control; mirrors `filter` in the manifest. */
+export interface FilterSpec {
+  label: string;
+  kind: FilterKind;
+  multi: boolean;
+  default: FilterValue | null;
+}
+
+export type ParameterType = "string" | "integer" | "float" | "boolean" | "date" | "datetime";
+
+export interface ParameterSpec {
+  label: string;
+  type: ParameterType;
+  default: Scalar;
+  list?: Scalar[];
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 export interface Theme {
@@ -92,6 +119,15 @@ export interface QueryMessage {
   type: "query";
   id: string;
   query: string;
+  /** Viz in tooltip (P6.11): run as if this mark were selected, without changing the dashboard. */
+  hover?: { source: string; tuples: Tuple[] };
+}
+/** Ask for the members a filter control can offer; answered with a ResultMessage (query = filter). */
+export interface DomainMessage {
+  v: 0;
+  type: "domain";
+  id: string;
+  filter: string;
 }
 export interface SetFilterMessage {
   v: 0;
@@ -121,15 +157,33 @@ export interface DashboardErrorMessage {
   type: "error";
   message: string;
 }
+export type ExportFormat = "csv" | "crosstab" | "png" | "pdf";
+/** Ask the host to export: summary data or a crosstab of one query, or an image/PDF of the view. */
+export interface ExportMessage {
+  v: 0;
+  type: "export";
+  format: ExportFormat;
+  query?: string;
+}
+
+/** Go to another dashboard (navigation buttons, P6.11); the host checks the viewer may open it. */
+export interface NavigateMessage {
+  v: 0;
+  type: "navigate";
+  dashboard: string;
+}
 
 export type DashboardMessage =
+  | NavigateMessage
   | HelloMessage
   | QueryMessage
+  | DomainMessage
   | SetFilterMessage
   | SetParameterMessage
   | SelectMessage
   | ResizeMessage
-  | DashboardErrorMessage;
+  | DashboardErrorMessage
+  | ExportMessage;
 
 // ---- Host → dashboard ---------------------------------------------------------------------------
 
@@ -143,6 +197,8 @@ export interface InitMessage {
   dashboard: { id: string; title: string };
   state: DashboardState;
   theme: Theme;
+  filters: Record<string, FilterSpec>;
+  parameters: Record<string, ParameterSpec>;
 }
 export interface ResultMessage {
   v: 0;
@@ -197,6 +253,9 @@ const COLUMN_TYPES: readonly unknown[] = [
   "datetime",
   "geography",
 ];
+const FILTER_KINDS: readonly unknown[] = ["categorical", "range", "relative_date", "wildcard"];
+const EXPORT_FORMATS: readonly unknown[] = ["csv", "crosstab", "png", "pdf"];
+const PARAMETER_TYPES: readonly unknown[] = ["string", "integer", "float", "boolean", "date", "datetime"];
 const ERROR_CODES: readonly unknown[] = [
   "forbidden",
   "not_found",
@@ -291,10 +350,17 @@ function isRecordOf<T>(value: unknown, isValue: (v: unknown) => v is T): value i
   return isObject(value) && Object.entries(value).every(([k, v]) => NAME.test(k) && isValue(v));
 }
 
+function isMemberList(value: unknown): value is Scalar[] {
+  return Array.isArray(value) && value.length <= 10_000 && value.every(isScalar);
+}
+
 export function isDashboardState(value: unknown): value is DashboardState {
-  if (!isObject(value) || !hasExactKeys(value, ["filters", "parameters", "highlight"])) return false;
-  const { filters, parameters, highlight } = value;
+  if (!isObject(value) || !hasExactKeys(value, ["filters", "parameters", "highlight"], ["sets"])) return false;
+  const { filters, parameters, highlight, sets } = value;
   if (!isRecordOf(filters, isFilterValue) || !isRecordOf(parameters, isScalar)) return false;
+  if (sets !== undefined && !isRecordOf(sets, isMemberList)) {
+    return false;
+  }
   if (highlight === null) return true;
   return (
     isObject(highlight) &&
@@ -307,10 +373,45 @@ export function isDashboardState(value: unknown): value is DashboardState {
 function isColumn(value: unknown): value is Column {
   return (
     isObject(value) &&
-    hasExactKeys(value, ["name", "type"]) &&
+    hasExactKeys(value, ["name", "type"], ["role", "format"]) &&
     typeof value.name === "string" &&
     isFieldKey(value.name) &&
-    COLUMN_TYPES.includes(value.type)
+    COLUMN_TYPES.includes(value.type) &&
+    (!Object.hasOwn(value, "role") || value.role === "dimension" || value.role === "measure") &&
+    (!Object.hasOwn(value, "format") || (typeof value.format === "string" && value.format.length <= 128))
+  );
+}
+
+function isLabel(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 200;
+}
+
+function isFilterSpec(value: unknown): value is FilterSpec {
+  return (
+    isObject(value) &&
+    hasExactKeys(value, ["label", "kind", "multi", "default"]) &&
+    isLabel(value.label) &&
+    FILTER_KINDS.includes(value.kind) &&
+    typeof value.multi === "boolean" &&
+    (value.default === null || isFilterValue(value.default))
+  );
+}
+
+function isOptionalNumber(obj: Obj, key: string): boolean {
+  return !Object.hasOwn(obj, key) || (typeof obj[key] === "number" && Number.isFinite(obj[key]));
+}
+
+function isParameterSpec(value: unknown): value is ParameterSpec {
+  if (!isObject(value) || !hasExactKeys(value, ["label", "type", "default"], ["list", "min", "max", "step"])) {
+    return false;
+  }
+  const { list } = value;
+  return (
+    isLabel(value.label) &&
+    PARAMETER_TYPES.includes(value.type) &&
+    isScalar(value.default) &&
+    (list === undefined || (Array.isArray(list) && list.length <= LIMITS.members && list.every(isScalar))) &&
+    ["min", "max", "step"].every((k) => isOptionalNumber(value, k))
   );
 }
 
@@ -321,9 +422,17 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
     case "hello":
       return hasExactKeys(data, ["v", "type"]) ? { v: 0, type: "hello" } : null;
     case "query": {
-      const { id, query } = data;
-      if (!hasExactKeys(data, ["v", "type", "id", "query"]) || !isId(id) || !isName(query)) return null;
-      return { v: 0, type: "query", id, query };
+      const { id, query, hover } = data;
+      if (!hasExactKeys(data, ["v", "type", "id", "query"], ["hover"]) || !isId(id) || !isName(query)) return null;
+      if (hover === undefined) return { v: 0, type: "query", id, query };
+      if (!isObject(hover) || !hasExactKeys(hover, ["source", "tuples"]) || !isName(hover.source)) return null;
+      if (!isTupleList(hover.tuples) || hover.tuples.length > 1) return null;
+      return { v: 0, type: "query", id, query, hover: { source: hover.source, tuples: hover.tuples } };
+    }
+    case "domain": {
+      const { id, filter } = data;
+      if (!hasExactKeys(data, ["v", "type", "id", "filter"]) || !isId(id) || !isName(filter)) return null;
+      return { v: 0, type: "domain", id, filter };
     }
     case "setFilter": {
       const { filter, value } = data;
@@ -353,6 +462,17 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
       if (!hasExactKeys(data, ["v", "type", "message"]) || typeof message !== "string") return null;
       return { v: 0, type: "error", message: message.slice(0, LIMITS.messageLength) };
     }
+    case "export": {
+      const { format, query } = data;
+      if (!hasExactKeys(data, ["v", "type", "format"], ["query"]) || !EXPORT_FORMATS.includes(format)) return null;
+      if (query === undefined) return { v: 0, type: "export", format: format as ExportFormat };
+      return isName(query) ? { v: 0, type: "export", format: format as ExportFormat, query } : null;
+    }
+    case "navigate": {
+      const { dashboard } = data;
+      if (!hasExactKeys(data, ["v", "type", "dashboard"]) || typeof dashboard !== "string") return null;
+      return /^[a-z0-9][a-z0-9-]{0,99}$/.test(dashboard) ? { v: 0, type: "navigate", dashboard } : null;
+    }
     default:
       return null;
   }
@@ -365,15 +485,16 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     case "connect":
       return hasExactKeys(data, ["v", "type"]) ? { v: 0, type: "connect" } : null;
     case "init": {
-      const { dashboard, state, theme } = data;
-      if (!hasExactKeys(data, ["v", "type", "dashboard", "state", "theme"])) return null;
+      const { dashboard, state, theme, filters, parameters } = data;
+      if (!hasExactKeys(data, ["v", "type", "dashboard", "state", "theme", "filters", "parameters"])) return null;
+      if (!isRecordOf(filters, isFilterSpec) || !isRecordOf(parameters, isParameterSpec)) return null;
       if (!isObject(dashboard) || !hasExactKeys(dashboard, ["id", "title"])) return null;
       const { id, title } = dashboard;
       if (typeof id !== "string" || !SLUG.test(id) || typeof title !== "string") return null;
       if (!isDashboardState(state) || !isObject(theme) || !hasExactKeys(theme, ["mode"])) return null;
       const { mode } = theme;
       if (mode !== "light" && mode !== "dark") return null;
-      return { v: 0, type: "init", dashboard: { id, title }, state, theme: { mode } };
+      return { v: 0, type: "init", dashboard: { id, title }, state, theme: { mode }, filters, parameters };
     }
     case "result": {
       const { id, query, columns, rows, truncated } = data;

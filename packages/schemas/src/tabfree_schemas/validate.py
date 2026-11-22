@@ -26,7 +26,7 @@ class SchemaKind(StrEnum):
 
 #: Value of each document's top-level ``schema`` property.
 SCHEMA_IDS: dict[SchemaKind, str] = {
-    SchemaKind.TABLEAU_IR: "tabfree/tableau-ir@0",
+    SchemaKind.TABLEAU_IR: "tabfree/tableau-ir@1",
     SchemaKind.SEMANTIC_MODEL: "tabfree/model@0",
     SchemaKind.DASHBOARD_MANIFEST: "tabfree/dashboard@0",
 }
@@ -54,9 +54,7 @@ def load_schema(kind: SchemaKind) -> dict[str, Any]:
 
 @cache
 def _validator(kind: SchemaKind) -> Draft202012Validator:
-    return Draft202012Validator(
-        load_schema(kind), format_checker=Draft202012Validator.FORMAT_CHECKER
-    )
+    return Draft202012Validator(load_schema(kind), format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
 def _location(error: ValidationError) -> str:
@@ -145,6 +143,16 @@ def _query_outputs(where: str, query: Mapping[str, Any], errors: list[str]) -> s
             if name in outputs:
                 errors.append(f'{where}: duplicate output name {name!r}; give one of them "as"')
             outputs.add(name)
+    for i, blend in enumerate(query.get("blend", [])):
+        for item in blend.get("measures", []):
+            name = _output_name(item)
+            if name in outputs:
+                errors.append(f'{where}.blend[{i}]: duplicate output name {name!r}; give one of them "as"')
+            outputs.add(name)
+        dimension_names = {_output_name(d) for d in query.get("dimensions", [])}
+        for link in blend.get("links", []):
+            if link["primary"] not in dimension_names:
+                errors.append(f"{where}.blend[{i}]: link {link['primary']!r} is not a dimension of the query")
     return outputs
 
 
@@ -168,9 +176,7 @@ def check_manifest_references(manifest: Mapping[str, Any]) -> list[str]:
     def check_model(where: str, alias: str | None) -> None:
         if alias is None:
             if len(models) > 1:
-                errors.append(
-                    f'{where}: "model" is required when the dashboard uses several models'
-                )
+                errors.append(f'{where}: "model" is required when the dashboard uses several models')
         elif alias not in models:
             errors.append(f"{where}: unknown model alias {alias!r}")
 

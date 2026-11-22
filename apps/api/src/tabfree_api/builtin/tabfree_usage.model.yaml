@@ -1,0 +1,80 @@
+# Built-in model over the usage lake (P6.7): the audit log exported daily by the usage_export job.
+# Installed by `python -m tabfree_api.sites install-usage`; only site administrators can see it.
+schema: tabfree/model@0
+id: tabfree_usage
+title: TabFree usage
+description: Views, queries, exports and sign-ins on this site, one row per event (no data values).
+
+connection:
+  engine: athena
+  database: tabfree_usage
+
+tables:
+  - id: events
+    source: { table: events }
+    columns:
+      - { name: at, type: string }
+      - { name: day, type: date }
+      - { name: actor, type: string }
+      - { name: action, type: string }
+      - { name: resource_kind, type: string }
+      - { name: resource_id, type: string }
+      - { name: outcome, type: string }
+      - { name: duration_ms, type: integer }
+      - { name: cache, type: string }
+      - { name: scanned_bytes, type: integer }
+      - { name: row_count, type: integer }
+      - { name: query, type: string }
+
+fields:
+  - { id: day, name: Day, role: dimension, type: date, table: events, column: day }
+  - { id: person, name: Person, role: dimension, type: string, table: events, column: actor }
+  - { id: action, name: Action, role: dimension, type: string, table: events, column: action }
+  - { id: content_kind, name: Content Kind, role: dimension, type: string, table: events, column: resource_kind }
+  - { id: content, name: Content, role: dimension, type: string, table: events, column: resource_id }
+  - { id: outcome, name: Outcome, role: dimension, type: string, table: events, column: outcome }
+  - { id: cache, name: Cache, role: dimension, type: string, table: events, column: cache }
+  - { id: duration_ms, name: Duration (ms), role: measure, type: integer, table: events, column: duration_ms, defaultAggregation: avg, format: "#,##0" }
+  - { id: scanned_bytes, name: Scanned Bytes, role: measure, type: integer, table: events, column: scanned_bytes, defaultAggregation: sum }
+  - id: events
+    name: Events
+    role: measure
+    type: integer
+    formula: COUNT([Action])
+    format: "#,##0"
+  - id: views
+    name: Views
+    role: measure
+    type: integer
+    formula: "SUM(IIF([Action] = 'view' AND [Outcome] = 'ok', 1, 0))"
+    format: "#,##0"
+  - id: people
+    name: People
+    role: measure
+    type: integer
+    formula: "COUNTD(IIF([Action] = 'view', [Person], NULL))"
+    format: "#,##0"
+  - id: queries
+    name: Queries
+    role: measure
+    type: integer
+    formula: "SUM(IIF([Action] = 'query_metrics', 1, 0))"
+    format: "#,##0"
+  - id: p95_ms
+    name: 95th Percentile (ms)
+    role: measure
+    type: float
+    formula: "PERCENTILE(IIF([Action] = 'query_metrics', [Duration (ms)], NULL), 0.95)"
+    format: "#,##0"
+  - id: cache_hit_rate
+    name: Cache Hit Rate
+    role: measure
+    type: float
+    formula: "SUM(IIF([Cache] = 'hit', 1, 0)) / SUM(IIF([Action] = 'query_metrics', 1, 0))"
+    format: "0.0%"
+  - id: scanned_gb
+    name: Scanned GB
+    role: measure
+    type: float
+    formula: "SUM([Scanned Bytes]) / 1000000000"
+    format: "#,##0.00"

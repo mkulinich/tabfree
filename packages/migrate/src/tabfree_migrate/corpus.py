@@ -42,9 +42,7 @@ def sha256_of(path: Path) -> str:
 
 def xml_root_tag(data: bytes) -> str:
     """Return the root element name of untrusted XML (entities and external refs forbidden)."""
-    root = SafeElementTree.fromstring(
-        data, forbid_dtd=False, forbid_entities=True, forbid_external=True
-    )
+    root = SafeElementTree.fromstring(data, forbid_dtd=False, forbid_entities=True, forbid_external=True)
     return str(root.tag)
 
 

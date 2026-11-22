@@ -1,0 +1,64 @@
+name: conformance
+
+# BUILD_PLAN P2.9 / M2: Tableau's TDVT expression suites on the real engines (Athena and Redshift
+# Serverless), nightly and on demand. It stays dormant until the AWS sandbox exists and these
+# repository variables are set (no secrets are stored: GitHub OIDC assumes the role):
+#   AWS_CONFORMANCE_ROLE_ARN   IAM role trusted for this repository's OIDC tokens (read/write on the
+#                              bucket prefix, Athena + Glue on the tdvt database, Redshift Data API)
+#   AWS_REGION                 e.g. us-east-1
+#   CONFORMANCE_BUCKET         bucket for Calcs.csv (s3://BUCKET/tdvt/calcs/)
+#   ATHENA_WORKGROUP           workgroup with an output location
+#   REDSHIFT_WORKGROUP         Redshift Serverless workgroup
+#   REDSHIFT_COPY_ROLE_ARN     role Redshift assumes for COPY from the bucket
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: conformance
+  cancel-in-progress: false
+
+jobs:
+  tdvt:
+    if: vars.AWS_CONFORMANCE_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [athena, redshift]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --all-packages --extra aws --locked
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CONFORMANCE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Upload Calcs.csv
+        run: aws s3 cp corpus/tdvt/datasets/TestV1/Calcs.csv "s3://${{ vars.CONFORMANCE_BUCKET }}/tdvt/calcs/Calcs.csv"
+      - name: TDVT on Athena
+        if: matrix.engine == 'athena'
+        run: >
+          uv run python -m tabfree_api.conformance --engine athena
+          --workgroup "${{ vars.ATHENA_WORKGROUP }}" --database tdvt
+          --load "s3://${{ vars.CONFORMANCE_BUCKET }}/tdvt/calcs/" --out tdvt-athena.json
+      - name: TDVT on Redshift
+        if: matrix.engine == 'redshift'
+        run: >
+          uv run python -m tabfree_api.conformance --engine redshift
+          --workgroup "${{ vars.REDSHIFT_WORKGROUP }}" --redshift-database dev --database tdvt
+          --load "s3://${{ vars.CONFORMANCE_BUCKET }}/tdvt/calcs/Calcs.csv"
+          --iam-role "${{ vars.REDSHIFT_COPY_ROLE_ARN }}" --out tdvt-redshift.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tdvt-${{ matrix.engine }}
+          path: tdvt-${{ matrix.engine }}.json

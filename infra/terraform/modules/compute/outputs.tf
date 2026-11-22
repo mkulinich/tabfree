@@ -22,3 +22,13 @@ output "log_group_name" {
   description = "CloudWatch log group for ECS tasks."
   value       = aws_cloudwatch_log_group.app.name
 }
+
+output "ecr_repository_arns" {
+  description = "ECR repository ARNs keyed by image name."
+  value       = { for k, r in aws_ecr_repository.this : k => r.arn }
+}
+
+output "log_group_arn" {
+  description = "ARN of the CloudWatch log group for ECS tasks."
+  value       = aws_cloudwatch_log_group.app.arn
+}

@@ -1,0 +1,36 @@
+{{- if .Values.networkPolicy.enabled }}
+# The API takes traffic on its port only; the worker and the migration job take none.
+# Egress stays open: Athena, Redshift, Aurora, S3, SES and Bedrock are reached over HTTPS or Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tabfree.fullname" . }}-api
+  labels:
+    {{- include "tabfree.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tabfree.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8000
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tabfree.fullname" . }}-no-ingress
+  labels:
+    {{- include "tabfree.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [worker, migrate]
+  policyTypes: [Ingress]
+{{- end }}

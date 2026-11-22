@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sales Analysis</title>
+    <style>
+      tf-dashboard { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .controls { grid-column: 1 / -1; display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+      .half { grid-column: span 2; }
+      .full { grid-column: 1 / -1; }
+      h1 { font-size: 18px; margin: 0 auto 0 0; }
+    </style>
+  </head>
+  <body>
+    <tf-dashboard>
+      <div class="controls">
+        <h1>Sales Analysis</h1>
+        <tf-parameter name="anchor_date"></tf-parameter>
+        <tf-parameter name="view_by"></tf-parameter>
+        <tf-filter name="category"></tf-filter>
+      </div>
+      <tf-kpi query="bans" measure="Sales (Current)" change="Sales (% Change)" label="Sales"></tf-kpi>
+      <tf-kpi query="bans" measure="Orders (Current)" change="Orders (% Change)" label="Orders"></tf-kpi>
+      <tf-kpi query="bans" measure="Returns (Current)" change="Returns (% Change)" label="Returned units"></tf-kpi>
+      <tf-kpi query="bans" measure="Discount (Current)" change="Discount (% Change)" label="Discounts"></tf-kpi>
+      <tf-chart class="half" title="Sales, last 12 months" query="trend" mark="area" x="Month" y="Sales"></tf-chart>
+      <tf-chart class="half" title="3-month moving average" query="trend" mark="line" x="Month" y="3-Month Average"></tf-chart>
+      <tf-map class="half" title="Sales this month by state (click to filter)" query="by_state" geo="State" color="Sales (Current)"></tf-map>
+      <tf-chart class="half" title="This month by group" query="by_view" mark="bar" x="Sales (Current)" y="Group" color="Sales (% Change)"></tf-chart>
+      <tf-crosstab class="full" title="Top 10 products this month" query="top_products"></tf-crosstab>
+    </tf-dashboard>
+  </body>
+</html>

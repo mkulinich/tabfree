@@ -1,0 +1,106 @@
+# TabFree Helm chart (BUILD_PLAN P7.5). The AWS-native deploy is infra/terraform/envs/production (ECS);
+# this chart is for clusters that already run on EKS. Data stays where it is in either case: Athena or
+# Redshift for queries, Aurora PostgreSQL for metadata (not in this chart).
+
+image:
+  repository: ghcr.io/OWNER/tabfree-api   # the images workflow pushes here once the public name is cleared
+  # Deploy by digest (the release workflow signs and attests it). A tag is used only when digest is empty.
+  digest: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Plain settings, as TABFREE_* environment variables (apps/api/src/tabfree_api/settings.py).
+config:
+  TABFREE_ENVIRONMENT: production
+  TABFREE_ENGINE: aws
+  TABFREE_BASE_URL: https://tabfree.example.com
+  TABFREE_SITE_ID: default
+  TABFREE_MAIL_BACKEND: ses
+  TABFREE_SES_REGION: us-east-1
+  TABFREE_JOBS_INLINE: "false"
+  TABFREE_DATABASE_AUTO_MIGRATE: "false"
+
+# Secrets are never values in this chart. Name an existing Secret (created by External Secrets,
+# the Secrets Store CSI driver or your own tooling) and the keys to read from it.
+secrets:
+  existingSecret: tabfree
+  # Environment variable -> key in the Secret.
+  env:
+    TABFREE_DB_HOST: db-host
+    TABFREE_DB_USER: db-user
+    TABFREE_DB_PASSWORD: db-password
+    TABFREE_LINK_SIGNING_KEY: link-signing-key
+    TABFREE_OAUTH_SIGNING_KEY: oauth-signing-key
+    TABFREE_FRAME_SIGNING_KEY: frame-signing-key
+    TABFREE_OIDC_CLIENT_SECRET: oidc-client-secret
+
+serviceAccount:
+  create: true
+  name: ""
+  # IRSA: the IAM role with Athena, Glue, S3, SES and Bedrock access (see modules/app task role).
+  annotations: {}
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/tabfree-task
+
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 2Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 55
+  podDisruptionBudget:
+    minAvailable: 1
+
+worker:
+  enabled: true
+  replicas: 1
+  args: ["python", "-m", "tabfree_api.jobs", "worker", "--scheduler", "--all-sites"]
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+
+# A pre-install and pre-upgrade hook that runs the database migrations once (the services never migrate).
+migrations:
+  enabled: true
+  backoffLimit: 1
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
+    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:...
+  hosts:
+    - tabfree.example.com
+  tls: []
+
+networkPolicy:
+  enabled: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }
+
+nodeSelector: {}
+tolerations: []
+topologySpreadAcrossZones: true

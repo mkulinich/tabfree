@@ -1,0 +1,92 @@
+# TabFree demo with sample data (BUILD_PLAN P7.5): the portal, a worker and Postgres, nothing else.
+#
+#   docker compose -f infra/docker/demo.compose.yaml up --build -d --wait
+#   open http://localhost:8765            # sign in as admin, erin (a manager) or casey (a contractor)
+#   docker compose -f infra/docker/demo.compose.yaml down -v
+#
+# Queries run on the "sample" engine (DuckDB with generated Superstore-like data), so no AWS account is
+# needed. It is a development configuration: the dev sign-in has no password, so every port binds to
+# 127.0.0.1 and the server refuses to start this way with TABFREE_ENVIRONMENT=production.
+# For the AWS-like stack (Trino, Iceberg, S3) use compose.yaml instead.
+#
+# The Postgres password is a fixed, public, local-only placeholder. It is not a secret.
+
+name: tabfree-demo
+
+x-tabfree-env: &tabfree-env
+  TABFREE_ENVIRONMENT: dev
+  TABFREE_ENGINE: sample
+  TABFREE_DEV_LOGIN: "1"
+  TABFREE_SITE_ID: dev
+  TABFREE_BASE_URL: http://localhost:8765
+  TABFREE_DATABASE_URL: postgresql+psycopg://tabfree:tabfree-demo-not-a-secret@postgres:5432/tabfree
+  TABFREE_SITE_FILE: /demo/apps/api/dev/site.yaml
+  TABFREE_MAIL_BACKEND: log
+
+x-tabfree-image: &tabfree-image
+  image: tabfree/api:demo
+  build:
+    context: ../..
+    dockerfile: infra/docker/api/Dockerfile
+    args:
+      EXTRAS: ""
+  volumes:
+    # The dev site and its example dashboards and models, at the same relative paths as in the repository.
+    - ../../apps/api/dev:/demo/apps/api/dev:ro
+    - ../../packages/schemas/examples:/demo/packages/schemas/examples:ro
+
+services:
+  postgres:
+    image: postgres:17.12-trixie
+    environment:
+      POSTGRES_USER: tabfree
+      POSTGRES_PASSWORD: tabfree-demo-not-a-secret
+      POSTGRES_DB: tabfree
+    volumes:
+      - demo-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U tabfree -d tabfree"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  setup:
+    <<: *tabfree-image
+    environment: *tabfree-env
+    # Migrate, then load the sample site once (a second run finds it and leaves it alone).
+    command:
+      - sh
+      - -c
+      - >-
+        python -m tabfree_api.db upgrade && {
+        python -c "import os, sys; from sqlalchemy import text; from tabfree_api.db import connect;
+        c = connect(os.environ['TABFREE_DATABASE_URL']).connect();
+        sys.exit(0 if c.execute(text(\"SELECT count(*) FROM sites WHERE id = 'dev'\")).scalar() else 3)" ||
+        python -m tabfree_api.db import-site "$$TABFREE_SITE_FILE"; }
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *tabfree-image
+    environment: *tabfree-env
+    ports:
+      - "127.0.0.1:${TABFREE_DEMO_PORT:-8765}:8000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *tabfree-image
+    environment: *tabfree-env
+    command: ["python", "-m", "tabfree_api.jobs", "worker", "--scheduler", "--all-sites"]
+    healthcheck:
+      disable: true
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+volumes:
+  demo-pgdata:

@@ -8,6 +8,14 @@ import {
   type DashboardState,
 } from "../src/index.js";
 
+const specs = {
+  filters: {
+    region: { label: "Region", kind: "categorical", multi: true, default: null },
+    order_date: { label: "Order date", kind: "relative_date", multi: false, default: { relative: { period: "month", from: -11, to: 0 } } },
+  },
+  parameters: { top_n: { label: "Top N", type: "integer", default: 10, min: 1, max: 50, step: 1 } },
+};
+
 const state: DashboardState = {
   filters: { region: { members: ["East", "West"] }, order_date: { relative: { period: "month", from: -11, to: 0 } } },
   parameters: { top_n: 10 },
@@ -18,6 +26,7 @@ describe("parseDashboardMessage", () => {
   it.each([
     { v: 0, type: "hello" },
     { v: 0, type: "query", id: "q-1", query: "by_region" },
+    { v: 0, type: "domain", id: "d-1", filter: "region" },
     { v: 0, type: "setFilter", filter: "region", value: { members: ["East"] } },
     { v: 0, type: "setFilter", filter: "region", value: null },
     { v: 0, type: "setParameter", parameter: "top_n", value: 20 },
@@ -99,15 +108,15 @@ describe("parseHostMessage", () => {
   it("accepts connect, init, result, error and state messages", () => {
     const messages = [
       { v: 0, type: "connect" },
-      { v: 0, type: "init", dashboard: { id: "sales-overview", title: "Sales Overview" }, state, theme: { mode: "dark" } },
+      { v: 0, type: "init", dashboard: { id: "sales-overview", title: "Sales Overview" }, state, theme: { mode: "dark" }, ...specs },
       {
         v: 0,
         type: "result",
         id: "q-1",
         query: "by_region",
         columns: [
-          { name: "Region", type: "string" },
-          { name: "Sales", type: "float" },
+          { name: "Region", type: "string", role: "dimension" },
+          { name: "Sales", type: "float", role: "measure", format: "$#,##0" },
         ],
         rows: [
           ["East", 678781.24],
@@ -147,7 +156,15 @@ describe("parseHostMessage", () => {
     const badState = { filters: { "bad name": { members: [] } }, parameters: {}, highlight: null };
     expect(parseHostMessage({ v: 0, type: "state", state: badState })).toBeNull();
     expect(
-      parseHostMessage({ v: 0, type: "init", dashboard: { id: "Bad Id", title: "x" }, state, theme: { mode: "light" } }),
+      parseHostMessage({ v: 0, type: "init", dashboard: { id: "Bad Id", title: "x" }, state, theme: { mode: "light" }, ...specs }),
+    ).toBeNull();
+    const badSpec = { ...specs, filters: { region: { label: "Region", kind: "fuzzy", multi: true, default: null } } };
+    expect(
+      parseHostMessage({ v: 0, type: "init", dashboard: { id: "x", title: "x" }, state, theme: { mode: "light" }, ...badSpec }),
+    ).toBeNull();
+    const badParam = { ...specs, parameters: { top_n: { label: "Top N", type: "integer", default: 1, max: Infinity } } };
+    expect(
+      parseHostMessage({ v: 0, type: "init", dashboard: { id: "x", title: "x" }, state, theme: { mode: "light" }, ...badParam }),
     ).toBeNull();
   });
 });

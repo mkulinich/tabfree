@@ -18,25 +18,33 @@ TabFree is a free, open-source (Apache-2.0) replacement for Tableau Server and T
 | [Architecture decision records](docs/adr/) | Each architecture decision, why it was made, and what would change it |
 | [Research report](docs/research/research-report.md) | Whether anything like this already exists, what can be reused, and the hard problems |
 | [Research notes](docs/research/notes/) | Detailed, sourced notes behind the report |
+| [Guides](docs/guides/) | Administration, migration, authoring and architecture (`make docs` builds the site) |
+| [Operations](docs/operations/) | Deploy, backup and restore, disaster recovery, load testing, cutover, releases |
+| [Security](docs/security/) | Threat model and penetration-test scope |
+| [Roadmap](ROADMAP.md), [Governance](GOVERNANCE.md), [Changelog](CHANGELOG.md) | Where the project is going and how it decides |
 
 ## Repository layout
 
 ```
 apps/
-  api/            FastAPI service: auth, permissions, content, governed query API (Python)
+  api/            FastAPI service: auth, permissions, content, governed queries, authoring, migration, jobs
+  portal/         the web portal (TypeScript)
+  author-agent/   sandbox image for larger "Edit with Claude" sessions
 packages/
   schemas/        JSON Schemas: Tableau IR, semantic model, dashboard manifest (+ validators)
-  migrate/        tabfree-migrate: Tableau Server crawler and converters (Python)
-  runtime/        @tabfree/runtime: sandboxed dashboard runtime (TypeScript)
+  compiler/       Tableau-semantics compiler: calcs, LODs, filters, RLS -> Athena/Redshift/Trino SQL
+  migrate/        tabfree-migrate: Tableau Server crawler, converters and the migration factory
+  runtime/        @tabfree/runtime: sandboxed dashboard runtime and <tf-*> components (TypeScript)
+  tablecalc/      @tabfree/tablecalc: table calculations
+  cli/            the tabfree CLI and the Claude Code kit
 infra/
-  docker/         local development stack (Postgres, Trino + Iceberg, S3 emulator)
-  terraform/      AWS sandbox infrastructure (OpenTofu/Terraform)
+  docker/         local stack, the API image and a demo with sample data
+  terraform/      AWS sandbox and production environments (OpenTofu/Terraform)
+  helm/           Helm chart for EKS
 corpus/           test workbooks, data sources, extracts and TDVT expression tests (permissively licensed)
 third_party/      vendored official Tableau schemas and calculation grammar (Apache-2.0)
 docs/             plan, ADRs, research
 ```
-
-The plan adds further packages as their phases start: compiler, MCP server, CLI, worker, author sandbox and web portal.
 
 ## Getting started
 
@@ -49,7 +57,8 @@ Prerequisites:
 ```bash
 make setup    # install Python and Node dependencies
 make check    # lint, type-check and test everything (what CI runs)
-make dev-up   # start the local stack (needs Docker)
+make demo     # TabFree on sample data at http://localhost:8765 (needs Docker)
+make dev-up   # start the AWS-like local stack (needs Docker)
 make help     # list all targets
 ```
 

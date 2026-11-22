@@ -7,12 +7,13 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import typer
 
 from tabfree_migrate import __version__
 from tabfree_migrate.corpus import verify_corpus
+from tabfree_migrate.repository import RepositoryConnection
 from tabfree_migrate.smoke import format_report, run_smoke
 from tabfree_migrate.tableau import (
     ConfigError,
@@ -21,6 +22,12 @@ from tabfree_migrate.tableau import (
     TableauReader,
     TscReader,
 )
+
+if TYPE_CHECKING:
+    from tabfree_migrate.downloads import ContentDownloader
+    from tabfree_migrate.ground_truth import ViewExporter
+    from tabfree_migrate.metadata import MetadataClient
+    from tabfree_migrate.repository import RepositoryReader
 
 app = typer.Typer(
     help="TabFree migration toolkit. Every command is read-only against Tableau.",
@@ -70,16 +77,641 @@ def smoke(
 
 @app.command("corpus-check")
 def corpus_check(
-    root: Annotated[
-        Path, typer.Option(help="Repository root that contains corpus/manifest.json.")
-    ] = Path("."),
+    root: Annotated[Path, typer.Option(help="Repository root that contains corpus/manifest.json.")] = Path(
+        "."
+    ),
 ) -> None:
     """Verify corpus files against corpus/manifest.json: presence, hashes and XML structure."""
     report = verify_corpus(root)
     for problem in report.problems:
         typer.echo(f"FAIL {problem}")
-    typer.echo(
-        f"{report.checked} checked, {report.skipped} external, {len(report.problems)} problems"
-    )
+    typer.echo(f"{report.checked} checked, {report.skipped} external, {len(report.problems)} problems")
     if report.problems:
         raise typer.Exit(code=1)
+
+
+def _connection_or_exit() -> TableauConnection:
+    try:
+        return TableauConnection.from_env(os.environ)
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+
+@app.command()
+def crawl(
+    db: Annotated[Path, typer.Option(help="SQLite inventory file (created if missing).")] = Path(
+        "inventory.db"
+    ),
+    types: Annotated[
+        list[str] | None, typer.Option("--type", help="Object types to crawl (default: all).")
+    ] = None,
+) -> None:
+    """Inventory a Tableau site into SQLite: users, groups, projects, content, permissions, tasks."""
+    from tabfree_migrate.inventory import OBJECT_TYPES, InventoryStore
+    from tabfree_migrate.inventory import crawl as run_crawl
+    from tabfree_migrate.inventory_tsc import TscInventorySource
+
+    connection = _connection_or_exit()
+    store = InventoryStore(db)
+    try:
+        with TscReader(connection) as reader:
+            stats = run_crawl(TscInventorySource(connection, reader), store, types or OBJECT_TYPES)
+    except (TableauAccessError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    finally:
+        store.close()
+    for object_type, count in stats.counts.items():
+        note = f"  ERROR {stats.errors[object_type]}" if object_type in stats.errors else ""
+        typer.echo(f"{object_type:<14} {count}{note}")
+    typer.echo(f"added {stats.added}, updated {stats.updated}, unchanged {stats.unchanged}")
+
+
+@app.command()
+def parse(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx/.tds/.tdsx files")],
+    out: Annotated[Path, typer.Option(help="Directory for <name>.ir.json files.")] = Path("ir"),
+) -> None:
+    """Parse Tableau files into the TabFree IR and validate each one against its schema."""
+    from tabfree_migrate.twb import TableauFileError, parse_file
+    from tabfree_schemas import SchemaKind, schema_errors
+
+    out.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for path in paths:
+        try:
+            ir = parse_file(path)
+        except TableauFileError as exc:
+            failed += 1
+            typer.echo(f"FAIL {path}: {exc}")
+            continue
+        errors = schema_errors(SchemaKind.TABLEAU_IR, ir)
+        target = out / f"{path.stem}.ir.json"
+        target.write_text(json.dumps(ir, indent=2), encoding="utf-8")
+        if errors:
+            failed += 1
+            typer.echo(f"FAIL {path}: {errors[0]}")
+        else:
+            typer.echo(f"ok   {path} -> {target}")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def census(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx/.tds/.tdsx files")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+) -> None:
+    """Count constructs and score migration complexity per workbook and for the whole set."""
+    from tabfree_migrate.census import census_of, estate_census
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    per_file: dict[str, dict[str, object]] = {}
+    irs = []
+    for path in paths:
+        try:
+            ir = parse_file(path)
+        except TableauFileError as exc:
+            typer.echo(f"skip {path}: {exc}", err=True)
+            continue
+        irs.append(ir)
+        per_file[str(path)] = census_of(ir).to_dict()
+    total = estate_census(irs).to_dict()
+    if as_json:
+        typer.echo(json.dumps({"files": per_file, "estate": total}, indent=2))
+        return
+    ranked = sorted(per_file.items(), key=lambda kv: float(str(kv[1]["score"])), reverse=True)
+    for name, info in ranked:
+        typer.echo(f"{info['score']:>8}  {name}")
+    typer.echo("\nEstate totals:")
+    totals = cast("dict[str, int]", total["totals"])
+    for key, value in sorted(totals.items()):
+        typer.echo(f"  {key:<20} {value}")
+
+
+@app.command("convert-hyper")
+def convert_hyper_command(
+    path: Annotated[Path, typer.Argument(help=".hyper extract")],
+    out: Annotated[Path, typer.Option(help="Output directory for Parquet files.")] = Path("parquet"),
+) -> None:
+    """Export every table of a .hyper extract to Parquet with parity statistics (needs \\[hyper])."""
+    try:
+        from tabfree_migrate.hyper import convert_hyper, write_report
+    except ImportError as exc:  # pragma: no cover - depends on the platform
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    try:
+        results = convert_hyper(path, out)
+    except ImportError:
+        typer.echo("error: install tabfree-migrate[hyper] (Linux x86-64 or Windows)", err=True)
+        raise typer.Exit(code=2) from None
+    write_report(results, out / "conversion.json")
+    for result in results:
+        typer.echo(f"{result.glue_table:<30} {result.rows:>10} rows -> {result.parquet}")
+
+
+@app.command("convert-batch")
+def convert_batch_command(
+    out: Annotated[
+        str, typer.Option(envvar="TABFREE_CONVERT_OUT", help="Output: a directory or s3://bucket/prefix.")
+    ],
+    input_dir: Annotated[
+        Path | None, typer.Option(help="Directory of .hyper/.tde/.twbx/.tdsx files to convert.")
+    ] = None,
+    store: Annotated[
+        str | None,
+        typer.Option(
+            envvar="TABFREE_CONVERT_STORE",
+            help="Content-addressed store written by `download` (directory or s3://); uses its manifest.",
+        ),
+    ] = None,
+    database: Annotated[
+        str, typer.Option(envvar="TABFREE_GLUE_DATABASE", help="Glue database for the Athena DDL.")
+    ] = "tabfree_lake",
+    iceberg_root: Annotated[
+        str | None,
+        typer.Option(
+            envvar="TABFREE_ICEBERG_ROOT", help="S3 prefix for Iceberg tables (Glue database location)."
+        ),
+    ] = None,
+    workers: Annotated[int, typer.Option(min=1, help="Parallel conversions in this process.")] = max(
+        1, (os.cpu_count() or 2) // 2
+    ),
+    shard: Annotated[str, typer.Option(help="INDEX/COUNT: this task's share, for parallel tasks.")] = "0/1",
+    tde: Annotated[
+        str, typer.Option(help="flag (report .tde as needs-upgrade) or upgrade (legacy image only).")
+    ] = "flag",
+    work_dir: Annotated[
+        Path | None, typer.Option(envvar="TABFREE_WORK_DIR", help="Scratch directory (needs space).")
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Convert again even if already done.")] = False,
+) -> None:
+    """Convert many extracts in parallel to Parquet + Athena DDL, resumably (P2.8).
+
+    Writes extracts/<sha256>/ (Parquet per table and report.json) and extracts/manifest.json to
+    --out. A re-run skips extracts already converted. Legacy .tde files are reported as
+    needs-upgrade. Conversion needs the [hyper] extra (Linux x86-64 or Windows).
+    """
+    from tabfree_migrate.blobstore import sink_for
+    from tabfree_migrate.convert_batch import (
+        BatchOptions,
+        convert_batch,
+        parse_shard,
+        sources_from_directory,
+        sources_from_store,
+    )
+
+    if tde not in {"flag", "upgrade"}:
+        typer.echo("error: --tde must be flag or upgrade", err=True)
+        raise typer.Exit(code=2)
+    try:
+        shard_spec = parse_shard(shard)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    store_sink = sink_for(store) if store is not None else None
+    if store_sink is not None and input_dir is None:
+        sources = sources_from_store(store_sink)
+    elif input_dir is not None and store_sink is None:
+        sources = sources_from_directory(input_dir)
+    else:
+        typer.echo("error: give exactly one of --input-dir or --store", err=True)
+        raise typer.Exit(code=2)
+    options = BatchOptions(
+        out=out,
+        database=database,
+        iceberg_root=iceberg_root,
+        tde_mode="upgrade" if tde == "upgrade" else "flag",
+        work_dir=str(work_dir) if work_dir else "",
+    )
+
+    def show(report: dict[str, object]) -> None:
+        tables = cast("list[dict[str, object]]", report.get("tables") or [])
+        detail = report.get("error") or ", ".join(
+            f"{t.get('glue_table')} ({t.get('rows')} rows)" for t in tables
+        )
+        typer.echo(f"{report.get('status')!s:<14} {report.get('origin')}  {detail}")
+
+    stats = convert_batch(
+        sources, options, store=store_sink, workers=workers, shard=shard_spec, force=force, on_report=show
+    )
+    typer.echo(
+        f"converted {stats.converted}, skipped {stats.skipped}, needs-upgrade {stats.flagged}, "
+        f"upgraded {stats.upgraded}, failed {stats.failed}"
+    )
+    if stats.failed:
+        raise typer.Exit(code=1)
+
+
+@app.command("parity-check")
+def parity_check_command(
+    report_path: Annotated[Path, typer.Argument(help="An extracts/<sha256>/report.json from convert-batch.")],
+    engine: Annotated[str, typer.Option(help="duckdb (local Parquet) or athena (needs AWS).")] = "duckdb",
+    root: Annotated[
+        Path | None, typer.Option(help="duckdb: the local --out directory the report's Parquet keys are in.")
+    ] = None,
+    database: Annotated[str, typer.Option(envvar="TABFREE_GLUE_DATABASE")] = "tabfree_lake",
+    workgroup: Annotated[str | None, typer.Option(envvar="TABFREE_ATHENA_WORKGROUP")] = None,
+) -> None:
+    """Compare per-column statistics of converted tables with those Hyper recorded (P2.8)."""
+    from tabfree_migrate.convert_batch import check_report_parity
+    from tabfree_migrate.parity import AthenaRunner, QueryRunner, duckdb_parquet_runner
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    runner: QueryRunner
+    if engine == "duckdb":
+        if root is None:
+            typer.echo("error: --root is required with --engine duckdb", err=True)
+            raise typer.Exit(code=2)
+        files = {str(t["glue_table"]): str(root / str(t["parquet"])) for t in report.get("tables", [])}
+        runner = duckdb_parquet_runner(files)
+        dialect = "duckdb"
+    elif engine == "athena":
+        if not workgroup:
+            typer.echo("error: --workgroup is required with --engine athena", err=True)
+            raise typer.Exit(code=2)
+        import importlib
+
+        boto3 = importlib.import_module("boto3")
+        runner = AthenaRunner(boto3.client("athena"), workgroup)
+        dialect = "athena"
+    else:
+        typer.echo("error: --engine must be duckdb or athena", err=True)
+        raise typer.Exit(code=2)
+    results = check_report_parity(
+        report, runner, "athena" if dialect == "athena" else "duckdb", database=database
+    )
+    failed = False
+    for table, result in results.items():
+        typer.echo(f"{'ok  ' if result.ok else 'FAIL'} {table}: {len(result.checks)} checks")
+        for check in [*result.errors, *result.warnings]:
+            typer.echo(
+                f"  {check.severity:<7} {check.column}.{check.stat} ({check.rule}): "
+                f"expected {check.expected!r}, got {check.actual!r}"
+            )
+        failed = failed or not result.ok
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def report(
+    paths: Annotated[list[Path], typer.Argument(help=".twb/.twbx files (or directories to search)")],
+    out: Annotated[Path, typer.Option(help="Directory for report.md and report.json.")] = Path("report"),
+    inventory: Annotated[Path | None, typer.Option(help="The crawler's inventory database.")] = None,
+    usage: Annotated[Path | None, typer.Option(help="CSV with workbook,views_180d columns.")] = None,
+    repository: Annotated[
+        Path | None, typer.Option(help="The repository harvest database (usage from views_stats).")
+    ] = None,
+) -> None:
+    """Inventory report (P1.6): census, connections, RLS, compiler readiness and triage."""
+    from tabfree_migrate import report as rpt
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    files: list[Path] = []
+    for path in paths:
+        files += (
+            sorted(p for p in path.rglob("*") if p.suffix.lower() in (".twb", ".twbx"))
+            if path.is_dir()
+            else [path]
+        )
+    irs = []
+    for path in files:
+        try:
+            irs.append((str(path), parse_file(path)))
+        except TableauFileError as exc:
+            typer.echo(f"skip {path}: {exc}")
+    workbooks, connections, estate = rpt.build(
+        irs,
+        usage=rpt.load_usage(usage) if usage else rpt.repository_usage(repository) if repository else None,
+        inventory=rpt.inventory_details(inventory) if inventory else None,
+    )
+    md, js = rpt.write_report(out, workbooks, connections, estate)
+    typer.echo(f"{len(workbooks)} workbooks -> {md} and {js}")
+
+
+# --- P1.2-P1.5: harvests, downloads and ground truth ------------------------------------------
+# These factories are the only places that open real connections; tests replace them.
+
+
+@contextmanager
+def metadata_client(connection: TableauConnection) -> Iterator[MetadataClient]:
+    from tabfree_migrate.metadata import TscMetadataClient
+
+    with TscReader(connection) as reader:
+        yield TscMetadataClient(connection.server_url, connection.site, reader._server)
+
+
+@contextmanager
+def repository_reader(connection: RepositoryConnection, timeout_ms: int) -> Iterator[RepositoryReader]:
+    from tabfree_migrate.repository import PsycopgRepository
+
+    with PsycopgRepository(connection, timeout_ms) as reader:
+        yield reader
+
+
+@contextmanager
+def content_downloader(connection: TableauConnection) -> Iterator[ContentDownloader]:
+    from tabfree_migrate.downloads import TscDownloader
+
+    with TscReader(connection) as reader:
+        yield TscDownloader(reader._server)
+
+
+@contextmanager
+def view_exporter(connection: TableauConnection) -> Iterator[ViewExporter]:
+    from tabfree_migrate.ground_truth import TscViewExporter
+
+    with TscReader(connection) as reader:
+        yield TscViewExporter(reader._server, reader._tsc)
+
+
+def _fail(exc: BaseException, code: int = 1) -> NoReturn:
+    typer.echo(f"error: {exc}", err=True)
+    raise typer.Exit(code=code) from None
+
+
+_FAILURES = (TableauAccessError, OSError, RuntimeError)
+
+
+@app.command("harvest-metadata")
+def harvest_metadata(
+    db: Annotated[Path, typer.Option(help="SQLite file (shared with the inventory).")] = Path("inventory.db"),
+    entities: Annotated[
+        list[str] | None, typer.Option("--entity", help="Metadata API entities (default: all).")
+    ] = None,
+    resume: Annotated[bool, typer.Option(help="Continue an interrupted harvest from its cursors.")] = False,
+    page_size: Annotated[
+        int | None, typer.Option(min=1, max=1000, help="Override the per-entity page size.")
+    ] = None,
+) -> None:
+    """Harvest lineage, formulas, custom SQL and RLS flags from the Metadata API (read-only)."""
+    from tabfree_migrate.metadata import ENTITY_NAMES, MetadataStore, harvest
+
+    connection = _connection_or_exit()
+    store = MetadataStore(db)
+    try:
+        with metadata_client(connection) as client:
+            stats = harvest(client, store, entities or ENTITY_NAMES, resume=resume, page_size=page_size)
+    except ValueError as exc:
+        _fail(exc, code=2)
+    except _FAILURES as exc:
+        _fail(exc)
+    finally:
+        store.close()
+    for name, entity in stats.entities.items():
+        note = f"  ERROR {entity.error}" if entity.error else ""
+        total = "" if entity.total is None else f" of {entity.total}"
+        typer.echo(f"{name:<22} {entity.count}{total} ({entity.pages} pages){note}")
+
+
+@app.command("harvest-repository")
+def harvest_repository_command(
+    db: Annotated[Path, typer.Option(help="SQLite file (shared with the inventory).")] = Path("inventory.db"),
+    sources: Annotated[
+        list[str] | None, typer.Option("--source", help="Repository sources (default: all).")
+    ] = None,
+    since_days: Annotated[int, typer.Option(min=1, help="History window for usage tables.")] = 183,
+    page_size: Annotated[int, typer.Option(min=1, max=50_000)] = 5_000,
+    max_rows: Annotated[int, typer.Option(min=1, help="Row cap per source per run.")] = 2_000_000,
+    statement_timeout: Annotated[int, typer.Option(min=1, help="Statement timeout in seconds.")] = 120,
+) -> None:
+    """Read usage, subscriptions, alerts, comments and sizes from the repository (needs \\[repository]).
+
+    Reads TABLEAU_REPO_HOST, TABLEAU_REPO_PORT (8060), TABLEAU_REPO_USER (readonly),
+    TABLEAU_REPO_PASSWORD and TABLEAU_REPO_DB (workgroup). The password is never printed.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tabfree_migrate.repository import SOURCE_NAMES, RepositoryStore
+    from tabfree_migrate.repository import harvest_repository as run_harvest
+
+    try:
+        connection = RepositoryConnection.from_env(os.environ)
+    except ConfigError as exc:
+        _fail(exc, code=2)
+    store = RepositoryStore(db)
+    since = datetime.now(UTC) - timedelta(days=since_days)
+    try:
+        with repository_reader(connection, statement_timeout * 1000) as reader:
+            stats = run_harvest(reader, store, sources or SOURCE_NAMES, since, page_size, max_rows)
+    except ValueError as exc:
+        _fail(exc, code=2)
+    except Exception as exc:  # includes psycopg errors; libpq never puts the password in messages
+        _fail(exc)
+    finally:
+        store.close()
+    for name, source in stats.sources.items():
+        note = f"  ERROR {source.error}" if source.error else ""
+        cap = " (row cap reached)" if source.truncated else ""
+        typer.echo(f"{name:<24} {source.rows}{cap}{note}")
+
+
+@app.command()
+def download(
+    out: Annotated[str, typer.Option(help="Directory, or s3://bucket/prefix (needs \\[aws]).")],
+    db: Annotated[Path, typer.Option(help="Inventory from `crawl`.")] = Path("inventory.db"),
+    kinds: Annotated[
+        list[str] | None, typer.Option("--kind", help="workbooks and/or datasources (default: both).")
+    ] = None,
+    with_extract: Annotated[
+        list[str] | None, typer.Option("--with-extract", help="Also download this LUID with its extract.")
+    ] = None,
+    all_extracts: Annotated[bool, typer.Option(help="Download every item with its extract too.")] = False,
+    force: Annotated[bool, typer.Option(help="Download again even when unchanged.")] = False,
+) -> None:
+    """Download .twbx/.tdsx files (without extracts first) into content-addressed storage."""
+    from tabfree_migrate import downloads
+    from tabfree_migrate.blobstore import sink_for
+    from tabfree_migrate.inventory import InventoryStore
+
+    connection = _connection_or_exit()
+    inventory = InventoryStore(db)
+    try:
+        targets = downloads.targets_from_inventory(inventory, kinds or downloads.KINDS)
+    except ValueError as exc:
+        _fail(exc, code=2)
+    finally:
+        inventory.close()
+    if not targets:
+        _fail(RuntimeError("nothing to download: run `tabfree-migrate crawl` first"))
+    policy = downloads.all_extracts if all_extracts else downloads.extracts_for(with_extract or [])
+    try:
+        sink = sink_for(out)
+        with content_downloader(connection) as downloader:
+            stats = downloads.download_all(downloader, sink, targets, policy, force=force)
+    except _FAILURES as exc:
+        _fail(exc)
+    for key, error in stats.errors.items():
+        typer.echo(f"FAIL {key}: {error}")
+    typer.echo(
+        f"downloaded {stats.downloaded}, skipped {stats.skipped}, failed {len(stats.errors)}, "
+        f"{stats.bytes} bytes -> {sink.describe()}"
+    )
+
+
+@app.command()
+def capture(
+    out: Annotated[str, typer.Option(help="Directory, or s3://bucket/prefix (needs \\[aws]).")],
+    db: Annotated[Path, typer.Option(help="Inventory (and repository harvest) SQLite file.")] = Path(
+        "inventory.db"
+    ),
+    formats: Annotated[
+        list[str] | None, typer.Option("--format", help="png, pdf, csv, xlsx (default: all).")
+    ] = None,
+    permutations: Annotated[
+        Path | None, typer.Option(help="JSON file of filter/parameter permutations.")
+    ] = None,
+    top: Annotated[int, typer.Option(min=0, help="Permutations for the N most used views.")] = 25,
+    max_views: Annotated[int | None, typer.Option(min=1, help="Capture at most N views.")] = None,
+    viz_width: Annotated[int, typer.Option(min=100, max=10_000)] = 1920,
+    viz_height: Annotated[int, typer.Option(min=100, max=10_000)] = 1080,
+    force: Annotated[bool, typer.Option(help="Capture again even when unchanged.")] = False,
+) -> None:
+    """Capture ground truth per view: PNG, PDF, summary CSV, crosstab and permutations."""
+    from tabfree_migrate import ground_truth as gt
+    from tabfree_migrate.blobstore import sink_for
+    from tabfree_migrate.inventory import InventoryStore
+    from tabfree_migrate.repository import RepositoryStore
+
+    connection = _connection_or_exit()
+    chosen = tuple(formats or gt.FORMATS)
+    unknown = [f for f in chosen if f not in gt.FORMATS]
+    if unknown:
+        _fail(ValueError(f"unknown formats {', '.join(unknown)}"), code=2)
+    try:
+        perms = gt.load_permutations(json.loads(permutations.read_text())) if permutations else None
+    except (OSError, ValueError, AttributeError) as exc:
+        _fail(ValueError(f"bad permutations file: {exc}"), code=2)
+    repository = RepositoryStore(db)
+    usage = repository.view_usage_by_luid() or None
+    repository.close()
+    inventory = InventoryStore(db)
+    targets = gt.targets_from_inventory(inventory, usage)[:max_views]
+    inventory.close()
+    if not targets:
+        _fail(RuntimeError("no views to capture: run `tabfree-migrate crawl` first"))
+    base = gt.ExportOptions(viz_width=viz_width, viz_height=viz_height)
+    permutation_formats = [f for f in gt.PERMUTATION_FORMATS if f in chosen] or list(chosen)
+    plan = gt.plan_captures(targets, base, chosen, perms, top=top, permutation_formats=permutation_formats)
+    try:
+        sink = sink_for(out)
+        with view_exporter(connection) as exporter:
+            stats = gt.capture_all(exporter, sink, plan, force=force)
+    except _FAILURES as exc:
+        _fail(exc)
+    for key, error in stats.errors.items():
+        typer.echo(f"FAIL {key}: {error}")
+    typer.echo(
+        f"captured {stats.captured}, skipped {stats.skipped}, failed {len(stats.errors)}, "
+        f"{stats.bytes} bytes -> {sink.describe()}"
+    )
+
+
+@app.command("generate-model")
+def generate_model_command(
+    path: Annotated[Path, typer.Argument(help="A .twb/.twbx/.tds/.tdsx file")],
+    out: Annotated[Path, typer.Option(help="Where to write the model YAML.")] = Path("model.yaml"),
+    datasource: Annotated[
+        str | None, typer.Option(help="Data source name or caption (default: the first).")
+    ] = None,
+    model_id: Annotated[
+        str | None, typer.Option("--id", help="Model id (default: from the caption).")
+    ] = None,
+    engine: Annotated[str, typer.Option(help="athena or redshift")] = "athena",
+    database: Annotated[
+        str, typer.Option(help="Database (Athena) or schema holding the tables.")
+    ] = "tabfree_lake",
+) -> None:
+    """Generate a semantic model from a Tableau data source (P2.4) and print what needs review."""
+    import yaml
+
+    from tabfree_migrate.modelgen import generate_model
+    from tabfree_migrate.twb import TableauFileError, parse_file
+
+    try:
+        doc, report = generate_model(
+            parse_file(path), datasource=datasource, model_id=model_id, engine=engine, database=database
+        )
+    except (TableauFileError, ValueError) as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    out.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    typer.echo(f"wrote {out}: {len(doc['fields'])} fields, {len(doc['tables'])} tables")
+    for title, items in (
+        ("schema errors", report.schema_errors),
+        ("calculations that do not compile", report.invalid_calcs),
+        ("not translated", report.unsupported),
+        ("review", report.review),
+        ("assumptions", report.assumptions),
+    ):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("worksheet-query")
+def worksheet_query_command(
+    path: Annotated[Path, typer.Argument(help="A .twb/.twbx file")],
+    worksheet: Annotated[str, typer.Argument(help="Worksheet name")],
+) -> None:
+    """Print the TabFree query behind a worksheet (P2.5), against the model generate-model writes."""
+    from tabfree_migrate.modelgen import generate_model
+    from tabfree_migrate.twb import TableauFileError, parse_file
+    from tabfree_migrate.worksheets import worksheet_query
+
+    try:
+        workbook = parse_file(path)
+        sheet = next((w for w in workbook["worksheets"] if w["name"] == worksheet), None)
+        if sheet is None:
+            raise ValueError(f"no worksheet {worksheet!r}")
+        sources = [d for d in sheet.get("datasources", []) if d != "Parameters"]
+        _, model = generate_model(workbook, datasource=sources[0] if sources else None)
+        query, report = worksheet_query(workbook, worksheet, model)
+    except (TableauFileError, ValueError) as exc:
+        typer.echo(f"error: {exc}")
+        raise typer.Exit(code=1) from None
+    typer.echo(json.dumps(query, indent=2, ensure_ascii=False))
+    for title, items in (("not converted", report.unsupported), ("notes", report.notes)):
+        if items:
+            typer.echo(f"{title}:")
+            for item in items:
+                typer.echo(f"  - {item}")
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def factory(
+    config: Annotated[Path, typer.Argument(help="A tabfree/factory@0 file (inputs, remap rules, waves).")],
+    out: Annotated[Path, typer.Option(help="The factory folder to write.")] = Path("factory"),
+    as_json: Annotated[bool, typer.Option("--json", help="Print the summary as JSON.")] = False,
+) -> None:
+    """Convert the harvested estate: models, manifests, HTML baselines, governance and waves (Phase 5).
+
+    Reads only local or raw-zone files written by the read-only harvest; never contacts Tableau.
+    """
+    from tabfree_migrate.factory.run import FactoryConfig, FactoryError, run_factory
+
+    try:
+        result = run_factory(FactoryConfig.load(config), out)
+    except (FactoryError, OSError, ValueError) as exc:
+        _fail(exc)
+    summary = result.summary
+    if as_json:
+        typer.echo(json.dumps(summary, indent=2, default=str))
+        return
+    typer.echo(f"workbooks {summary['workbooks']}, data sources {summary['datasources']}")
+    typer.echo(
+        f"dashboards {summary['dashboards']}: {summary['converted']} converted "
+        f"({summary['fullyConverted']} with nothing unsupported), {summary['manual']} need a manual rebuild"
+    )
+    typer.echo(f"models {summary['models']}, decisions waiting {summary['decisions']}")
+    for wave in summary["waves"]:
+        typer.echo(f"wave {wave['wave']}: {wave['dashboards']} dashboards")
+    typer.echo(f"retire: {summary['retire']}; errors: {len(summary['errors'])}")
+    typer.echo(f"wrote {out}/ (site.yaml, governance.json, waves.json, decisions.json, dashboards/, models/)")

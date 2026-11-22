@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.7
+# Legacy .tde upgrade image (BUILD_PLAN P2.8, risk R11). Use only for .tde extracts that cannot be
+# upgraded on Tableau Server first.
+#
+# Tableau's `tde-to-hyper` sample (hyper-api-samples/Community-Supported/tde-to-hyper) reads .tde
+# through an undocumented `external(..., format => 'tde')` table function that only
+# tableauhyperapi==0.0.17537 (2023-08) provides. This image pins exactly that release; the code
+# refuses to read .tde with any other version (tabfree_migrate.tde).
+#
+#   docker build --platform linux/amd64 -f infra/docker/converter/Dockerfile.tde-legacy -t tabfree/converter-tde:<sha> .
+#   docker run --read-only -v "$PWD/scratch:/scratch" tabfree/converter-tde:<sha> \
+#       convert-batch --input-dir /scratch/in --out /scratch/out --tde upgrade
+#
+# It writes upgraded/<sha256>.hyper to --out; re-running convert-batch with the normal image and the
+# same --out converts those files. Untested: written without Docker, and no .tde reader runs in CI.
+
+ARG PYTHON_IMAGE=python:3.12.12-slim-bookworm
+ARG LEGACY_HYPER_API=0.0.17537
+
+FROM --platform=linux/amd64 ghcr.io/astral-sh/uv:0.9.5 AS uv
+
+FROM --platform=linux/amd64 ${PYTHON_IMAGE} AS build
+ARG LEGACY_HYPER_API
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
+COPY apps ./apps
+# Everything from the lock except the Hyper API, which is the pinned legacy release.
+RUN uv sync --frozen --no-dev --no-editable --package tabfree-migrate --extra aws \
+ && uv pip install --python /opt/venv/bin/python "tableauhyperapi==${LEGACY_HYPER_API}" \
+ && /opt/venv/bin/python -c "from tabfree_migrate.tde import tde_reader_available as ok; assert ok()"
+
+FROM --platform=linux/amd64 ${PYTHON_IMAGE}
+RUN groupadd --system --gid 10001 tabfree \
+ && useradd --system --uid 10001 --gid tabfree --home-dir /scratch --no-create-home --shell /usr/sbin/nologin tabfree \
+ && mkdir -p /scratch && chown 10001:10001 /scratch
+COPY --from=build /opt/venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/scratch \
+    TMPDIR=/scratch \
+    TABFREE_WORK_DIR=/scratch/work
+VOLUME ["/scratch"]
+WORKDIR /scratch
+USER 10001:10001
+ENTRYPOINT ["tabfree-migrate"]
+CMD ["convert-batch", "--help"]

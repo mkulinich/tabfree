@@ -19,16 +19,38 @@ make dev-up           # local stack via Docker (Postgres, Trino+Iceberg, S3 emul
 uv run pytest packages/schemas -q            # one Python package
 npm test -w @tabfree/runtime                 # one TS package
 uv run tabfree-validate path/to/tabfree.json # validate a manifest, model or IR file
+uv run tabfree-validate path/to/bundle/      # a dashboard bundle: every <tf-*> reference against tabfree.json
 uv run tabfree-migrate smoke                 # read-only Tableau Server check (needs TABLEAU_* env vars)
+uv run tabfree-compile tdvt                  # Tableau's TDVT calc tests through the compiler, on DuckDB
+uv run tabfree-compile query MODEL MANIFEST QUERY --dialect athena --user alice  # print compiled SQL
+npm run build -w @tabfree/runtime            # frame + host bundles (needed by the preview)
+TABFREE_DEV_LOGIN=1 TABFREE_PREVIEW=1 uv run uvicorn tabfree_api.main:app_factory --factory --port 8765
+                                             # portal at / (dev sign-in), /preview without sign-in (dev only)
+uv run tabfree-migrate report corpus/workbooks --out report   # P1.6 inventory report
+uv run python -m tabfree_api.probe --engine duckdb            # P1.16 latency probe harness (athena/redshift need AWS)
+uv run tabfree kit path/to/folder                             # CLAUDE.md, .mcp.json and the dashboard skill for Claude Code
+uv run tabfree-migrate factory factory.yaml --out factory/    # Phase 5: models, manifests, baselines, governance, waves
+uv run python -m tabfree_api.migration import factory/ --by admin   # load a factory folder (then repair/verify)
+uv run python -m tabfree_api.jobs worker --scheduler         # Phase 6: schedules, refreshes, subscriptions, alerts
+uv run python -m tabfree_api.backup export|verify|restore FILE  # Phase 7: logical backup of the metadata DB
+uv run python -m tabfree_api.loadtest URL --tokens FILE      # Phase 7: load test against staging (never production)
+uv run python -m tabfree_api.migration import factory/ --by admin --delta   # cutover: reopen what changed in Tableau
+make demo                                                    # TabFree on sample data in Docker (port 8765)
+make openapi && make docs                                    # API reference, then the docs site (mkdocs-material)
 ```
 
 ## Layout
 
 - `apps/api`: FastAPI service (`tabfree_api`).
 - `packages/schemas`: the JSON Schemas (`src/tabfree_schemas/json/*.schema.json`), plus validators and the `tabfree-validate` CLI. These are the contracts between components.
-- `packages/migrate`: `tabfree-migrate` CLI (`tabfree_migrate`), covering the Tableau Server crawler and converters.
-- `packages/runtime`: `@tabfree/runtime` in TypeScript. The dashboard sandbox protocol now; the SDK and `<tf-*>` components arrive in Phase 1.
-- `infra/docker`, `infra/terraform`: local stack and AWS sandbox.
+- `packages/compiler`: `tabfree_compiler`, the Tableau-semantics compiler: calc parser, semantic queries → Athena/Redshift/Trino SQL with LODs, filters and RLS, and the TDVT runner (`tabfree-compile`).
+- `packages/migrate`: `tabfree-migrate` CLI (`tabfree_migrate`), covering the Tableau Server crawler and converters; `factory/` is the Phase 5 migration factory.
+- `packages/cli`: the `tabfree` CLI (`tabfree_cli`, stdlib only): login, pull/push/validate/preview/publish drafts, and `tabfree kit` for Claude Code.
+- `apps/api/src/tabfree_api/authoring`: Phase 4: drafts, validation, the MCP server (`/mcp`) and OAuth, "Edit with Claude".
+- `apps/api/src/tabfree_api/migration`: Phase 5 in the server: import, the repair agent, verification and the migration console API.
+- `apps/author-agent`: the Agent SDK sandbox image for larger "Edit with Claude" sessions (not a uv workspace member).
+- `packages/runtime`: `@tabfree/runtime` in TypeScript: the sandbox protocol, host bridge, dashboard SDK, `<tf-*>` components and table calcs. Components build DOM with `textContent` only; data never goes through `innerHTML`.
+- `infra/docker`, `infra/terraform`, `infra/helm`: local stack and demo, the AWS sandbox and production environments, the Helm chart.
 - `corpus/`: permissively licensed Tableau test files plus `manifest.json`. `third_party/`: vendored Tableau XSDs and calc grammar. Never edit vendored files by hand.
 
 ## Conventions

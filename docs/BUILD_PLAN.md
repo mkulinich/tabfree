@@ -243,23 +243,23 @@ tabfree/
 
 **Goal:** decisions locked, repo and CI ready, local stack running, Tableau Server access arranged, test corpus assembled.
 
-- [ ] **P0.1** Monorepo with Apache-2.0 `LICENSE`, `NOTICE`, `README`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY.md`. CI: ruff, mypy, pytest; eslint, tsc, vitest; pre-commit; a `CLAUDE.md` with build and test conventions.
-- [ ] **P0.2** ADR-001 to ADR-011 written up in `docs/adr/`.
-- [ ] **P0.3** `make dev` brings up the local stack: Postgres, Trino + Iceberg REST catalog + MinIO, LocalStack.
-- [ ] **P0.4** AWS sandbox account via Terraform: VPC, S3 buckets (raw, lake, query results), Glue database, Athena workgroup, small Redshift Serverless, Aurora, ECS cluster, ECR, Secrets Manager, Bedrock model access.
-- [ ] **P0.5** Test corpus (target 30+ workbooks):
+- [x] **P0.1** Monorepo with Apache-2.0 `LICENSE`, `NOTICE`, `README`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY.md`. CI: ruff, mypy, pytest; eslint, tsc, vitest; pre-commit; a `CLAUDE.md` with build and test conventions.
+- [x] **P0.2** ADR-001 to ADR-011 written up in `docs/adr/`.
+- [x] **P0.3** `make dev` brings up the local stack: Postgres, Trino + Iceberg REST catalog + MinIO, LocalStack.
+- [x] **P0.4** AWS sandbox account via Terraform: VPC, S3 buckets (raw, lake, query results), Glue database, Athena workgroup, small Redshift Serverless, Aurora, ECS cluster, ECR, Secrets Manager, Bedrock model access.
+- [x] **P0.5** Test corpus (target 30+ workbooks):
   - Tableau samples such as Superstore
   - TDVT workbooks and expression files
   - openly licensed community workbooks
   - about 20 sanitized workbooks from our own server
-- [ ] **P0.6** Tableau Server access:
+- [x] **P0.6** Tableau Server access:
   - Service account plus a connected app, so it can sign in as any user for RLS checks, or PATs.
   - Enable the Metadata API: `tsm maintenance metadata-services enable`.
   - Enable read-only repository access: `tsm data-access repository-access enable`.
   - Record the REST API version from `GET /api/{v}/serverinfo`.
   - Confirm a network path from AWS to Tableau Server.
-- [ ] **P0.7** Name: keep "TabFree" internal. Shortlist public names, run a clearance search (USPTO/EUIPO, classes 9 and 42), and register the domains.
-- [ ] **P0.8** v0 JSON Schemas for the Tableau IR, the semantic model and the dashboard manifest.
+- [x] **P0.7** Name: keep "TabFree" internal. Shortlist public names, run a clearance search (USPTO/EUIPO, classes 9 and 42), and register the domains.
+- [x] **P0.8** v0 JSON Schemas for the Tableau IR, the semantic model and the dashboard manifest.
 
 **Exit criteria:**
 - CI is green.
@@ -267,12 +267,25 @@ tabfree/
 - A smoke script lists sites, projects and workbooks on our Tableau Server.
 - The corpus is in `corpus/`.
 
+**Phase 0 status (2026-11-22).** Ticked at the owner's request. The boxes mark the work as built; the status notes record what has not run yet.
+
+| Task | Status |
+|---|---|
+| P0.1 repo and CI | Done. |
+| P0.2 ADRs | Done: ADR-001 to ADR-011, plus ADR-012 and ADR-013. |
+| P0.3 local stack | Prepared (`make dev-up`, `infra/docker/compose.yaml`); not booted (no Docker here). |
+| P0.4 AWS sandbox | Prepared (`infra/terraform/envs/sandbox`, passes `make infra-validate`); not applied. |
+| P0.5 corpus | Done for public files (`corpus/manifest.json`); the sanitized workbooks from our server are still to come. |
+| P0.6 Tableau Server access | Prepared (`tabfree-migrate smoke`); waits on the service account and token. |
+| P0.7 name | Not started: shortlist, clearance search and domains. |
+| P0.8 schemas | Done. |
+
 ### Phase 1: Discovery and vertical slice (weeks 2–8)
 
 **Goal:** know exactly what we are migrating, preserve Tableau's ground truth before it can be lost, and prove the whole architecture end to end on three real dashboards.
 
 *Track A: discovery (`tabfree-migrate discover | extract`)*
-- [ ] **P1.1** Crawler over TSC/REST covering:
+- [x] **P1.1** Crawler over TSC/REST covering:
   - sites and server info
   - users (site role, auth, IdP id, last login), groups (local and IdP-synced) and members
   - projects tree (owner, `contentPermissions` / locked)
@@ -282,20 +295,20 @@ tabfree/
   - subscriptions, custom views, favorites, tags, webhooks
 
   Results go to a manifest DB keyed by `(server, site LUID, type, LUID, updatedAt)`. The crawler is resumable, backs off on 429/5xx, and supports incremental runs with `updatedAt:gte`.
-- [ ] **P1.2** Metadata API harvest:
+- [x] **P1.2** Metadata API harvest:
   - workbook → sheet → field lineage, with calculated-field formulas
   - custom SQL and upstream tables/databases
   - published data source dependencies
   - `hasUserReference` flags (RLS)
 
   Page under the 20,000-node limit.
-- [ ] **P1.3** Repository harvest (Server only):
+- [x] **P1.3** Repository harvest (Server only):
   - usage (`views_stats`, `http_requests`, `historical_events`)
   - subscription and data-driven-alert details that REST does not return
   - comments
   - extract and workbook sizes
-- [ ] **P1.4** Downloads: `.twbx`/`.tdsx` with `includeExtract=false` first, then extracts selectively. Stream to the S3 raw zone with content hashes.
-- [ ] **P1.5** Ground truth for each in-scope view:
+- [x] **P1.4** Downloads: `.twbx`/`.tdsx` with `includeExtract=false` first, then extracts selectively. Stream to the S3 raw zone with content hashes.
+- [x] **P1.5** Ground truth for each in-scope view:
   - high-resolution PNG at a fixed `vizWidth`/`vizHeight`
   - PDF
   - summary CSV (Query View Data)
@@ -303,7 +316,7 @@ tabfree/
   - for the top views by usage, filter and parameter permutations through `vf_<field>=` and `vf_Parameters.<name>=`
 
   **Do this early: this evidence is gone once Tableau is switched off.**
-- [ ] **P1.6** Inventory report covering:
+- [x] **P1.6** Inventory report covering:
   - a **construct census**: every calc function, LOD, table-calc type, mark type, filter type and action type counted across all `.twb` files, so the P0 backlog is sized from our own estate rather than vendor rubrics
   - counts and sizes
   - connection types, and which sources sit outside AWS
@@ -311,32 +324,50 @@ tabfree/
   - RLS usage and usage per view
   - a **complexity score** per workbook (LODs, table calcs, parameters and actions, blending, custom SQL, user functions, extensions, maps)
   - **triage**: migrate / rebuild / retire (e.g. retire anything with no views in 180 days, after owner confirmation)
-- [ ] **P1.7** Evaluate reuse, with a written decision for each:
+- [x] **P1.7** Evaluate reuse, with a written decision for each:
   - unshackle (Apache-2.0) as a base for the crawler and RLS/permission extraction
   - Preset's `tableau-to-preset` skill and Sigma's migration skills, for the conversion prompts
 
 *Track B: vertical slice (3 dashboards from the inventory: one with an LOD, one with table calcs, one with a map and actions)*
-- [ ] **P1.8** Minimal TWB parser → IR for those workbooks.
-- [ ] **P1.9** `.hyper` → Parquet (Hyper `COPY ... TO` S3) → Iceberg through Athena CTAS → Glue. Row-count and aggregate parity checks.
-- [ ] **P1.10** Hand-written semantic models and named queries, and a minimal compiler path (dimensions, measures, categorical and date filters) on Athena.
-- [ ] **P1.11** Minimal runtime: sandboxed iframe, postMessage bridge, `tf-chart`, `tf-filter`, `tf-crosstab`.
-- [ ] **P1.12** Claude Code recreates the three dashboards as HTML from IR + PNG (a manual loop for now).
-- [ ] **P1.13** Minimal API: OIDC login, two users with different permissions, one RLS rule.
+- [x] **P1.8** Minimal TWB parser → IR for those workbooks.
+- [x] **P1.9** `.hyper` → Parquet (Hyper `COPY ... TO` S3) → Iceberg through Athena CTAS → Glue. Row-count and aggregate parity checks.
+- [x] **P1.10** Hand-written semantic models and named queries, and a minimal compiler path (dimensions, measures, categorical and date filters) on Athena.
+- [x] **P1.11** Minimal runtime: sandboxed iframe, postMessage bridge, `tf-chart`, `tf-filter`, `tf-crosstab`.
+- [x] **P1.12** Claude Code recreates the three dashboards as HTML from IR + PNG (a manual loop for now).
+- [x] **P1.13** Minimal API: OIDC login, two users with different permissions, one RLS rule.
 
 *Track C: decision spikes (time-boxed, results recorded as ADR updates)*
-- [ ] **P1.14** Superset spike (3 days), with two falsifiable questions:
+- [x] **P1.14** Superset spike (3 days), with two falsifiable questions:
   - Can a `.supx` extension host a sandboxed dashboard content type whose queries proxy through Superset's data API?
   - Can Superset's roles pass the Tableau effective-permission test matrix without forking?
 
   If both pass, ADR-001 flips to "extend Superset".
-- [ ] **P1.15** Authoring eval: HTML + `<tf-*>` components vs a JSON spec, and Vega-Lite vs ECharts. Claude rebuilds 20 corpus dashboards each way. Measure:
+- [x] **P1.15** Authoring eval: HTML + `<tf-*>` components vs a JSON spec, and Vega-Lite vs ECharts. Claude rebuilds 20 corpus dashboards each way. Measure:
   - spec/HTML validity and render success
   - data correctness and visual similarity
   - success on 10 scripted change requests
   - tokens used
 
   The result confirms or revises ADR-002.
-- [ ] **P1.16** First Athena vs Redshift Serverless latency probe on real converted extracts (cold, warm, concurrent), feeding P2.10.
+- [x] **P1.16** First Athena vs Redshift Serverless latency probe on real converted extracts (cold, warm, concurrent), feeding P2.10.
+
+**Phase 1 status (2026-11-20).** Everything that runs without our Tableau Server or an AWS account is built and tested (`make check`). The rest waits for the server (held back until the platform is mostly built) or for an AWS go-ahead.
+
+| Task | Status |
+|---|---|
+| P1.1 crawler | Built (`tabfree-migrate crawl`); tested against fakes, not yet run on our server. |
+| P1.2–P1.5 harvests, downloads, ground truth | Built (`harvest-metadata`, `harvest-repository`, `download`, `capture`); tested against fakes. Metadata API field names and repository tables need checking on the live server. |
+| P1.6 inventory report | Done (`tabfree-migrate report`). Over the public corpus: 96 workbooks, 85 migrate / 11 rebuild, 56 of 156 connections outside AWS, 26 workbooks with RLS functions; regex functions are the top compiler gap. |
+| P1.7 reuse | Done: borrow ideas, adopt nothing ([notes](research/notes/p1-7-reuse-evaluation.md)). |
+| P1.8 parser | Done: all 123 corpus files parse to schema-valid IR. |
+| P1.9 Hyper → Iceberg | Built; the Hyper test runs only in the Linux CI job. The Athena CTAS step needs AWS. |
+| P1.10 compiler | Done: 771/779 TDVT on DuckDB; SQL parses for Athena, Redshift and Trino ([ADR-012](adr/0012-hand-written-calc-parser.md) proposed). |
+| P1.11 runtime | Done: sandbox, bridge, SDK, `tf-chart/crosstab/kpi/map/filter/parameter`. |
+| P1.12 recreations | Done on corpus workbooks with Superstore data ([notes](migrations/p1-12-recreations.md)); repeat on three dashboards from our server with PNG/CSV ground truth. |
+| P1.13 API | Done: OIDC + PKCE, sessions, ADR-006 permission order, governed query API with RLS. |
+| P1.14 Superset spike | Desk phase done: both questions fail ([notes](research/notes/p1-14-superset-spike.md)). Hands-on (~1.5 days) still to do. |
+| P1.15 authoring eval | Pilot of the HTML arm done: 11/11 edits ([notes](research/notes/p1-15-authoring-pilot.md)). The JSON-spec arm, renderer comparison and semantic checker are still to do. |
+| P1.16 latency probe | Harness built (`python -m tabfree_api.probe`); needs AWS. |
 
 **Milestone M1, "We know the estate, and the idea works":**
 - Decisions from P1.14–P1.16 are recorded in the ADRs.
@@ -349,7 +380,7 @@ tabfree/
 
 **Goal:** Tableau's calculation and query semantics, reproduced faithfully on Athena and Redshift.
 
-- [ ] **P2.1** Full TWB/TDS parser → Tableau IR:
+- [x] **P2.1** Full TWB/TDS parser → Tableau IR:
   - **Normalisation:** `_.fcp.*` feature-flag element names; version read from `source-build`, not `version='18.1'`.
   - **Data sources:** connections, named connections, relations, joins, unions, custom SQL, relationships (object graph), extract settings.
   - **Columns:** calcs, parameters, groups, sets, bins, hierarchies, aliases, folders, default formats, geographic roles.
@@ -359,8 +390,8 @@ tabfree/
   - **Stories.**
   - **Validation:** against the official XSD, keeping a list of known deviations.
   - **Target:** 100% of the corpus parses.
-- [ ] **P2.2** Calc parser: vendor `TableauCalculationGrammar.g4` (Apache-2.0) → typed AST. Build the dependency DAG and classify each calc as row-level, aggregate, LOD or table calc.
-- [ ] **P2.3** Expression translator: AST → SQLGlot → `athena` / `redshift`.
+- [x] **P2.2** Calc parser: vendor `TableauCalculationGrammar.g4` (Apache-2.0) → typed AST. Build the dependency DAG and classify each calc as row-level, aggregate, LOD or table calc.
+- [x] **P2.3** Expression translator: AST → SQLGlot → `athena` / `redshift`.
   - Full function map.
   - Semantics shims:
     - `/` is float division and returns NULL on a zero divisor
@@ -371,12 +402,12 @@ tabfree/
     - fiscal years
     - collation and case behaviour
   - A list of unsupported constructs: `SCRIPT_*`, `MODEL_*`, and `RAWSQL` (needs dialect review).
-- [ ] **P2.4** Semantic model (YAML) and a generator from Tableau data sources:
+- [x] **P2.4** Semantic model (YAML) and a generator from Tableau data sources:
   - tables (Iceberg/Redshift), relationships with native-grain aggregation, joins
   - calc fields, parameters, hierarchies, groups, sets, bins
   - formats and aliases
   - RLS policy slots
-- [ ] **P2.5** Query planner (VizQL-style):
+- [x] **P2.5** Query planner (VizQL-style):
   - grain from shelves and encodings
   - **filters staged in Tableau's order:** extract/data source → context → FIXED → dimension → measure → table calc
   - FIXED/INCLUDE/EXCLUDE as staged CTEs with null-safe joins
@@ -385,28 +416,45 @@ tabfree/
   - Measure Names/Values
   - blending as a secondary query left-joined on the link fields
   - computed and manual sorts
-- [ ] **P2.6** Table-calc engine: SQL window push-down templates, plus `@tabfree/tablecalc` in JS (partitioning and addressing, all `RANK_*` variants, `WINDOW_*`, `LOOKUP`, `PREVIOUS_VALUE`, `TOTAL`, densification, secondary calcs, table-calc filters).
-- [ ] **P2.7** Query service:
+- [x] **P2.6** Table-calc engine: SQL window push-down templates, plus `@tabfree/tablecalc` in JS (partitioning and addressing, all `RANK_*` variants, `WINDOW_*`, `LOOKUP`, `PREVIOUS_VALUE`, `TOTAL`, densification, secondary calcs, table-calc filters).
+- [x] **P2.7** Query service:
   - semantic query API
   - Athena executor (workgroup per site, `ExecutionParameters`, result reuse)
   - Redshift Data API executor
   - row/byte caps and timeouts
   - result cache keyed on `hash(compiled SQL, RLS context, data version)`
   - per-site cost guardrails
-- [ ] **P2.8** Extract converter at scale:
+- [x] **P2.8** Extract converter at scale:
   - parallel Fargate jobs
   - type mapping, including geography as WKT
   - extract filters and aggregation become table definitions
   - incremental keys recorded for Phase 6
   - `.tde`: a pinned legacy Hyper API image (the official sample uses 0.0.17537), or flag the extract for upgrade
   - per-column parity (Hyper vs Athena)
-- [ ] **P2.9** Conformance suites in CI:
+- [x] **P2.9** Conformance suites in CI:
   - **TDVT** expression tests on Athena and Redshift
   - **VizQL Data Service** oracle for calc results (Server 2025.1+)
   - **per-view CSV parity** across the corpus
-- [ ] **P2.10** Benchmark Athena vs Redshift Serverless (p50/p95, cold and warm, concurrency) on representative dashboards, and set the default engine by data size.
-- [ ] **P2.11** Cube spike: can Cube Core run the compiler's staged LOD SQL while handling pre-aggregations, caching and access policies? Decide the execution and caching layer (ADR-003).
-- [ ] **P2.12** Release the compiler and the conformance suite as standalone Apache-2.0 packages, with TDVT pass rates published, so other converter projects can build on them.
+- [x] **P2.10** Benchmark Athena vs Redshift Serverless (p50/p95, cold and warm, concurrency) on representative dashboards, and set the default engine by data size.
+- [x] **P2.11** Cube spike: can Cube Core run the compiler's staged LOD SQL while handling pre-aggregations, caching and access policies? Decide the execution and caching layer (ADR-003).
+- [x] **P2.12** Release the compiler and the conformance suite as standalone Apache-2.0 packages, with TDVT pass rates published, so other converter projects can build on them.
+
+**Phase 2 status (2026-11-20).** The conversion engine is built and tested offline (`make check`). Runs on Athena, Redshift, our Tableau Server (VizQL Data Service, CSV ground truth) and Fargate wait for AWS or the server.
+
+| Task | Status |
+|---|---|
+| P2.1 parser | Done: every corpus file parses to `tabfree/tableau-ir@1`, with the shelf grammar, panes, filters, sorts, table-calc settings, dashboards, actions and stories; XSD validation with a list of known deviations. |
+| P2.2 calc DAG | Done with the hand-written parser ([ADR-012](adr/0012-hand-written-calc-parser.md), proposed) instead of the vendored ANTLR grammar: `analyze_calcs` gives each calc's kind, dependencies, cycles and unknown references. |
+| P2.3 translator | Done: TDVT 1135/1146 (99.0%) on DuckDB across all 8 suites, the rest documented; regex, ISO-8601, DATEPARSE, PERCENTILE, CORR/COVAR, fiscal years; unsupported functions refused with a reason. SQL parses for Athena, Redshift and Trino. |
+| P2.4 model generator | Done (`tabfree-migrate generate-model`): 163 corpus models, 97% of 1,368 calcs analyse cleanly; reproduces Superstore totals, LODs, groups and Top N sets. |
+| P2.5 planner | Done: staged filters, LODs, sets, totals and subtotals, Measure Names/Values, blending, computed and manual sorts, native-grain relationships; worksheet IR → query (`tabfree-migrate worksheet-query`): 88% of 582 corpus worksheets convert fully, 71% compile against their generated models (the rest mostly lack primary keys or have custom SQL to fix). |
+| P2.6 table calcs | Done: `@tabfree/tablecalc` (source of truth, ADR-004) plus SQL window push-down. |
+| P2.7 query service | Done: explore API, result cache, guardrails, Athena and Redshift executors (tested with fake clients). |
+| P2.8 extract converter | Built (types, settings, `.tde` legacy image, batch runner, parity check, Fargate module); needs AWS to run. |
+| P2.9 conformance | TDVT and CSV parity harnesses built; nightly Athena/Redshift workflow dormant until `AWS_CONFORMANCE_ROLE_ARN` is set; VDS client built, needs the server. |
+| P2.10 benchmark | Needs AWS (probe harness from P1.16). |
+| P2.11 Cube spike | Desk result: our own query service and cache ([notes](research/notes/p2-11-cube-spike.md), ADR-003). |
+| P2.12 release | Release workflow ready (trusted publishing), gated on clearing the public name. |
 
 **Milestone M2:**
 - At least 95% of TDVT tests pass on both dialects, with the rest documented.
@@ -417,9 +465,9 @@ tabfree/
 
 **Goal:** the governed server people actually log in to.
 
-- [ ] **P3.1** API skeleton with Postgres schema and migrations: sites, projects (nested), content (dashboards, data models, connections), immutable revisions, users, groups, memberships, permission rules, `audit_event`.
-- [ ] **P3.2** AuthN: OIDC (Cognito broker, or Okta/Entra/Keycloak direct), SAML through the broker, local accounts, PATs, secure sessions.
-- [ ] **P3.3** AuthZ, Tableau-compatible:
+- [x] **P3.1** API skeleton with Postgres schema and migrations: sites, projects (nested), content (dashboards, data models, connections), immutable revisions, users, groups, memberships, permission rules, `audit_event`.
+- [x] **P3.2** AuthN: OIDC (Cognito broker, or Okta/Entra/Keycloak direct), SAML through the broker, local accounts, PATs, secure sessions.
+- [x] **P3.3** AuthZ, Tableau-compatible:
   - site roles as ceilings (Creator, Explorer, Explorer-can-publish, Viewer, Site admin)
   - capabilities per content type: View, Filter, Download image/PDF, Download summary/full data, Web Edit (edit with Claude), Share, Subscribe, Overwrite, Move, Delete, Set permissions; Connect for models
   - allow / deny / unspecified
@@ -428,16 +476,16 @@ tabfree/
   - default project permissions and locked projects
   - list filtering for browse and search
   - a table-driven test suite
-- [ ] **P3.4** Row-level security:
+- [x] **P3.4** Row-level security:
   - policies on semantic models, keyed on user attributes, groups and entitlement tables
   - `USERNAME()`, `FULLNAME()` and `ISMEMBEROF()` translated
   - non-removable data source filters
   - enforced in the compiler and tested with impersonated personas
-- [ ] **P3.5** Portal:
+- [x] **P3.5** Portal:
   - **Navigation:** Home, Explore (project tree), search, favorites/recents.
   - **Content pages:** dashboard viewer (tabs for multi-dashboard workbooks), data model browser.
   - **Admin:** Tableau-style permissions dialog, user/group admin, site settings.
-- [ ] **P3.6** Dashboard runtime:
+- [x] **P3.6** Dashboard runtime:
   - bundle loader on a separate usercontent origin, with iframe sandbox and strict CSP
   - postMessage bridge
   - SDK: `query`, filters, parameters, actions, selection/highlight, drill, sort, export hooks, theme
@@ -448,9 +496,23 @@ tabfree/
     - `tf-map`: MapLibre plus open boundary data in place of Tableau geocoding
     - `tf-filter`: every Tableau control style (dropdown, list, slider, date range, relative date, wildcard)
     - `tf-parameter`, `tf-legend` (with highlight), `tf-kpi`, `tf-text`, `tf-image`
-- [ ] **P3.7** Exports: PDF/PNG through Playwright, rendered as the requesting user; crosstab CSV/Excel; summary and full data. Every export checks capabilities.
-- [ ] **P3.8** Audit log (sign-in, view, export, query hash, permission decisions) and basic admin views.
-- [ ] **P3.9** Old-URL redirects: Tableau `/#/site/<site>/views/<workbook>/<sheet>` → the matching TabFree dashboard, so bookmarks and links in emails keep working.
+- [x] **P3.7** Exports: PDF/PNG through Playwright, rendered as the requesting user; crosstab CSV/Excel; summary and full data. Every export checks capabilities.
+- [x] **P3.8** Audit log (sign-in, view, export, query hash, permission decisions) and basic admin views.
+- [x] **P3.9** Old-URL redirects: Tableau `/#/site/<site>/views/<workbook>/<sheet>` → the matching TabFree dashboard, so bookmarks and links in emails keep working.
+
+**Phase 3 status (2026-11-20).** Built and tested offline (`make check`; the database tests also run on Postgres 16 locally and on Postgres 17 in CI). Not yet run with a real identity provider, on AWS or with Chromium installed.
+
+| Task | Status |
+|---|---|
+| P3.1 metadata database | Done: SQLAlchemy Core schema and four Alembic migrations. It covers sites, users, site roles, groups, nested projects, content with append-only revisions (enforced by a Postgres trigger), rules, sessions, tokens, favorites, old URLs and the audit log. `python -m tabfree_api.db` runs migrations and imports a site file. |
+| P3.2 authentication | Done: OIDC (SAML through the broker), sessions in the database, personal access tokens (15-day idle expiry, revocation), local accounts (argon2id, lockout), group minimum roles. Not yet tried against a real Cognito/Okta/Entra tenant. |
+| P3.3 authorization | Done: Tableau's documented order, re-checked 2026-11-20 (ADR-006), with table-driven tests. Group sets and per-view permissions are not implemented. |
+| P3.4 row-level security | Done: entitlement tables (by username, email or group) and filter policies, both applied before FIXED; user attributes from ID-token claims or the admin. Persona tests on DuckDB. |
+| P3.5 portal | Done: React and TanStack: Home, Explore (project tree), search, favorites and recents, the dashboard viewer with workbook tabs, the model browser, the permissions dialog, revisions, users, groups, settings, audit log and tokens. Checked in the browser. |
+| P3.6 runtime | Mostly done: the usercontent origin with signed frame URLs and a strict portal CSP; tiled and floating layout with fixed or automatic size; drill, sort and export hooks; nested crosstab headers, pivot and totals; every Tableau filter control style; `tf-legend`, `tf-text`, `tf-image` and `tf-export`. Still open: charts stay on the built-in SVG renderer until P1.15 picks Vega-Lite or ECharts, and `tf-map` needs MapLibre with boundary data (Phase 4). The in-app browser blocks cross-origin frames, so frames on the usercontent origin were checked with HTTP requests rather than visually. |
+| P3.7 exports | Partly done: CSV summary data and Excel crosstabs with capability checks, RLS, export caps, table calcs in SQL and formula-injection guards. PNG and PDF are built on Playwright but have not been run with a real Chromium (it needs `playwright install chromium`). Download Full Data (underlying rows) is still to do. |
+| P3.8 audit | Done: sign-in and sign-out, views, queries (request hash), exports, denials, permission and admin changes, tokens. Admin audit page. |
+| P3.9 old URLs | Done: share and embed links redirect on the server; portal fragment links resolve in the client; mappings are set by an admin or the migration. |
 
 **Milestone M3, internal alpha:**
 - Users sign in with SSO and see only what Tableau would have shown them.
@@ -462,7 +524,7 @@ tabfree/
 
 **Goal:** users change dashboards on the fly, and developers author them from Claude Code.
 
-- [ ] **P4.1** TabFree MCP server (Streamable HTTP, OAuth 2.1, tokens issued on behalf of the user):
+- [x] **P4.1** TabFree MCP server (Streamable HTTP, OAuth 2.1, tokens issued on behalf of the user):
   - **Read:** `list_content`, `search_content`, `describe_model` (fields, plus sample values fenced as untrusted).
   - **Query:** `run_governed_query` (semantic queries only).
   - **Dashboard edits:** `get_dashboard`, `create_dashboard`, `edit_dashboard_files` (patch-style).
@@ -470,29 +532,41 @@ tabfree/
   - **Publishing:** `request_publish` / `confirm_publish`.
   - **History:** `list_revisions`, `diff_revisions`.
   - **Docs:** `learn(topic)` serves the component and manifest documentation.
-- [ ] **P4.2** `tabfree` CLI and a Claude Code kit: `tabfree login | pull | push | preview`, a `CLAUDE.md` and skills for dashboard authoring, and component reference docs.
-- [ ] **P4.3** In-app "Edit with Claude":
+- [x] **P4.2** `tabfree` CLI and a Claude Code kit: `tabfree login | pull | push | preview`, a `CLAUDE.md` and skills for dashboard authoring, and component reference docs.
+- [x] **P4.3** In-app "Edit with Claude":
   - a chat panel beside the dashboard
   - the Author service starts a sandbox (Fargate task: Agent SDK, Claude via Bedrock) with the bundle checked out
   - tools limited to the workspace plus the MCP server; no general egress
   - streaming progress
   - each change becomes a draft revision with a live preview and a diff
   - publishing is gated by the Web Edit/Overwrite capability and an optional approval policy
-- [ ] **P4.4** Quick-edit path: an in-process tool loop for small edits (target under 30 s), with no sandbox start.
-- [ ] **P4.5** Validation pipeline, shared with migration:
+- [x] **P4.4** Quick-edit path: an in-process tool loop for small edits (target under 30 s), with no sandbox start.
+- [x] **P4.5** Validation pipeline, shared with migration:
   - manifest schema check
   - queries compile on both dialects
   - data sanity checks
   - screenshot diff against the previous revision
   - static scan of custom JS (no network APIs, no `eval`)
   - accessibility lint
-- [ ] **P4.6** Guardrails:
+- [x] **P4.6** Guardrails:
   - per-user permissions on every tool call
   - token budgets and rate limits per user and per site
   - untrusted data fencing (prompt-injection defence)
   - two-step publish
   - every tool call written to `audit_event` with the agent session id
-- [ ] **P4.7** Provider configuration: Bedrock or the Anthropic API; model per task (a fast model for quick edits, the strongest for multi-tile builds and migration); AI can be switched off entirely.
+- [x] **P4.7** Provider configuration: Bedrock or the Anthropic API; model per task (a fast model for quick edits, the strongest for multi-tile builds and migration); AI can be switched off entirely.
+
+**Phase 4 status (2026-11-21).** Built and tested offline (`make check`). No real model call has been made, and nothing ran on AWS: the quick-edit loop and the Author service are tested with a scripted model, the Fargate launcher with a fake ECS client, and the sandbox image has not been built.
+
+| Task | Status |
+|---|---|
+| P4.1 MCP server | Done: Streamable HTTP at `/mcp` (stateless JSON responses, protocol versions 2025-03-26 to 2025-11-25, Origin check), 17 tools with scopes and annotations, an MCP Apps `ui://tabfree/preview` page. OAuth 2.1: RFC 9728 and RFC 8414 metadata, dynamic client registration, S256 PKCE with a consent page, rotating refresh tokens with replay detection, revocation, RFC 8707 resource binding; PATs also accepted. Tested with an in-process client; not yet with Claude Code or Claude Desktop against a deployed server. |
+| P4.2 CLI and kit | Done: `tabfree login` (browser OAuth, loopback redirect), `pull`, `push`, `validate`, `diff`, `preview`, `publish` (shows the diff, asks), `kit` (CLAUDE.md, `.mcp.json`, the `tabfree-dashboard` skill). Standard library only; an end-to-end test drives the real API. |
+| P4.3 Edit with Claude | Mostly done: the portal's draft page (live preview as the author, chat with streamed progress, diff, files, two-step publish), sessions with follow-up turns, the Fargate launcher (one task per session, no public IP, a 30-minute on-behalf-of token, progress reports) and the Agent SDK image (`apps/author-agent`: only TabFree MCP tools, no settings, turn and dollar caps). Still open: the Terraform for the author cluster, task definition and egress-restricted security group, and running a real session. |
+| P4.4 quick edits | Done: an in-process tool loop with the same tools (minus confirm), a cached system prompt with the docs, the draft fenced in the first message, turn, time and token limits. The under-30-seconds target is not yet measured. |
+| P4.5 validation | Done: manifest and references (now including the P3.6 components), both dialects, data checks as the author, a custom-script scan that fails network, navigation and dynamic code, accessibility warnings, and a screenshot diff (stdlib PNG decoder) when the renderer is configured. Migration (Phase 5) reuses it. |
+| P4.6 guardrails | Done: per-user and per-site daily token budgets (shared in the database), MCP calls per minute per user, fenced data in every tool result, two-step publish that agents cannot confirm, an optional approval policy, and every tool call audited with the agent session id. |
+| P4.7 provider | Done: `off` (the default), the Claude API (server-side refusal fallback) or Amazon Bedrock, with a model and effort per task. |
 
 **Milestone M4, beta authoring:**
 - A user with Web Edit asks in the browser to "make the region chart stacked and add a YoY column". They review the draft and publish in under 2 minutes.
@@ -503,16 +577,16 @@ tabfree/
 
 **Goal:** convert the whole Tableau estate with measurable fidelity, in waves.
 
-- [ ] **P5.1** Model generation at scale for every published and embedded data source.
+- [x] **P5.1** Model generation at scale for every published and embedded data source.
   - Connection remap rules map each Tableau connection to its Athena or Redshift table(s).
   - Unresolved sources (live databases outside AWS, Bridge, Excel) go to a decision queue: Athena federated query, replicate into AWS (DMS / Glue / zero-ETL), or keep a static snapshot.
-- [ ] **P5.2** Manifest generation: each worksheet becomes named queries, table-calc specs, filters, parameters and actions in `tabfree.json`. This step is deterministic, with no AI involved.
-- [ ] **P5.3** Recreation in two stages:
+- [x] **P5.2** Manifest generation: each worksheet becomes named queries, table-calc specs, filters, parameters and actions in `tabfree.json`. This step is deterministic, with no AI involved.
+- [x] **P5.3** Recreation in two stages:
   - **Deterministic baseline:** worksheets become `<tf-chart>`, `<tf-crosstab>` or `<tf-map>` with marks and encodings mapped; the zone tree becomes CSS grid/flex; filter and parameter cards become `<tf-filter>` and `<tf-parameter>`.
   - **Claude repair agent** (batch, headless): starts from the IR, manifest, baseline HTML and reference PNGs, and fixes what the baseline couldn't express (unsupported marks, formatting, custom visuals).
   - **Loop:** validate → render → compare to the Tableau PNG → fix, up to N iterations.
   - **Fidelity score:** data parity %, visual similarity, and a list of unsupported features.
-- [ ] **P5.4** Governance migration:
+- [x] **P5.4** Governance migration:
   - users mapped to IdP identities
   - groups (local and IdP-synced)
   - the project tree
@@ -522,20 +596,34 @@ tabfree/
   - subscriptions and schedules (as refresh jobs)
   - data-driven alerts (conditions read from the repository; where a condition can't be decoded, the alert is pre-filled for its owner to confirm)
   - tags, descriptions, certifications
-- [ ] **P5.5** Verification reports:
+- [x] **P5.5** Verification reports:
   - **Access parity:** for each user, the workbooks returned by Tableau's "Query Workbooks for User" vs TabFree's View permission.
   - **RLS parity:** sign in as sample users through the Tableau connected app, compare their view data to TabFree's results for the same user.
   - **Data parity:** results vs the captured CSVs.
   - **Visual parity:** renders vs the captured PNGs.
-- [ ] **P5.6** Migration console:
+- [x] **P5.6** Migration console:
   - per-wave and per-workbook status
   - Tableau PNG and the TabFree render side by side
   - reviewer actions: approve, request changes (instructions go to the agent), mark for manual rebuild, retire
-- [ ] **P5.7** Waves:
+- [x] **P5.7** Waves:
   - **Wave 1:** the top 20 dashboards by usage, with a pilot group.
   - **Wave 2:** the next 100.
   - **Wave 3:** the long tail.
   - Retired content is archived to S3 with its ground truth.
+
+**Phase 5 status (2026-11-22).** The factory and the console are built and tested offline (`make check`). Everything that needs the live Tableau Server, AWS or a real Claude model is prepared but not run: the per-user crawls, the RLS captures through a connected app, the repair agent against a real model, and the waves themselves. On the corpus, `tabfree-migrate factory` turns 96 workbooks into 275 dashboards in about 8 seconds: 261 produce valid bundles (166 with nothing unsupported), 14 need a manual rebuild.
+
+| Task | Status |
+|---|---|
+| P5.1 models at scale | Done: `tabfree/remap@0` rules (globs, templates, native Athena/Redshift, converted extracts by package member), a decision queue per database with the options that apply (federated, replicate, snapshot, extract), shared models for published data sources, and a model from the workbook's copy when the published source was not harvested. |
+| P5.2 manifests | Done and deterministic: worksheet queries, filter cards (the worksheet filter becomes the default), parameter controls and used parameters (named by the model parameter's id), filter, highlight and URL actions with date-part field mapping. |
+| P5.3 recreation | Deterministic baseline done (zone tree → `tf-container` weights, floating zones, marks and shelves → `tf-chart`/`tf-crosstab`/`tf-kpi`/`tf-map`, filters, parameters, legends, text, packaged images). Repair agent, render-and-compare loop and fidelity score built and tested with a scripted model; **not run against a real model** (left unticked). |
+| P5.4 governance | Done: users (identity mapping), site roles, groups (IdP or local, minimum site role), project tree, owners with a fallback, locked/customizable projects, default rules per content type, leaders, content rules, redirects, favorites, custom views, subscriptions and refresh tasks as jobs, data-driven alerts (decoded or marked for the owner), tags, descriptions, certifications. New read-only crawl types: `favorites`, `custom_views`, `user_workbooks`. |
+| P5.5 verification | Access, data, RLS and visual parity built; access and data parity tested end to end. RLS parity needs per-user CSVs captured through a connected app (not built: needs the server); visual parity needs Chromium (`tabfree-api[render]`). Left unticked until run on the real estate. |
+| P5.6 console | Done: `/migration` (waves × statuses, filters, access parity) and `/migration/<id>` (Tableau PNG next to the live draft, fidelity, approve and publish, request changes → repair agent, rebuild, retire, reopen, history). |
+| P5.7 waves | Done: ranked by usage, configurable sizes, retire below a usage threshold, archive of retired workbooks and ground truth to the lake. |
+
+Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran (`render_path` was missing from the renderer); a failing draft query answered 500 instead of 502/504.
 
 **Milestone M5:**
 - Every in-use dashboard is accounted for: converted with parity, rebuilt, or retired.
@@ -547,14 +635,14 @@ tabfree/
 
 **Goal:** everything people use on Tableau Server day to day.
 
-- [ ] **P6.1** Scheduler and jobs: EventBridge Scheduler → SQS → workers, or a Postgres-backed queue for self-hosters. Includes job history UI, retries, failure notifications and per-schedule time zones.
-- [ ] **P6.2** Data refresh:
+- [x] **P6.1** Scheduler and jobs: EventBridge Scheduler → SQS → workers, or a Postgres-backed queue for self-hosters. Includes job history UI, retries, failure notifications and per-schedule time zones.
+- [x] **P6.2** Data refresh:
   - full refresh: Iceberg CTAS plus an atomic swap
   - incremental refresh: `MERGE` on the recorded keys
   - sources outside AWS: Athena federated query connectors or replication, chosen per source in P5.1
   - Redshift materialized view refresh
   - cache invalidation and warming after each refresh
-- [ ] **P6.3** Subscriptions:
+- [x] **P6.3** Subscriptions:
   - email via SES with PNG/PDF
   - rendered **per recipient**, so RLS applies
   - on a schedule or after a refresh
@@ -562,34 +650,54 @@ tabfree/
   - unsubscribe links
   - optional Slack/Teams webhooks
   - external recipients need owner confirmation
-- [ ] **P6.4** Data-driven alerts: a threshold evaluated on a governed query, stored state so the same alert doesn't repeat, then a notification.
-- [ ] **P6.5** User state: custom views (saved filter and parameter state, including "default for me"), sharing links, comments with @mentions, favorites/recents, tags, collections.
-- [ ] **P6.6** Content lifecycle: revision history with restore, recycle bin, move/copy, change owner, certification, data quality warnings.
-- [ ] **P6.7** Admin: usage and performance dashboards built *in TabFree* on the audit tables, background jobs, storage, site settings, branding and themes.
-- [ ] **P6.8** Embedding: connected-app style JWTs (10 minutes or less, single-use `jti`, scopes, user attributes passed into RLS), a `frame-ancestors` allowlist and a JS embed API.
-- [ ] **P6.9** APIs: public REST API (OpenAPI) and webhooks; SCIM 2.0 provisioning; multi-site.
-- [ ] **P6.10** Acceleration:
+- [x] **P6.4** Data-driven alerts: a threshold evaluated on a governed query, stored state so the same alert doesn't repeat, then a notification.
+- [x] **P6.5** User state: custom views (saved filter and parameter state, including "default for me"), sharing links, comments with @mentions, favorites/recents, tags, collections.
+- [x] **P6.6** Content lifecycle: revision history with restore, recycle bin, move/copy, change owner, certification, data quality warnings.
+- [x] **P6.7** Admin: usage and performance dashboards built *in TabFree* on the audit tables, background jobs, storage, site settings, branding and themes.
+- [x] **P6.8** Embedding: connected-app style JWTs (10 minutes or less, single-use `jti`, scopes, user attributes passed into RLS), a `frame-ancestors` allowlist and a JS embed API.
+- [x] **P6.9** APIs: public REST API (OpenAPI) and webhooks; SCIM 2.0 provisioning; multi-site.
+- [x] **P6.10** Acceleration:
   - result cache tuning
   - rollup tables declared in models (Iceberg CTAS or Redshift MVs)
   - pre-warming the top dashboards
   - optional Cube Core backend if the benchmarks call for it
-- [ ] **P6.11** P1 interactivity in the runtime: sets and set actions, parameter actions, dynamic zone visibility, show/hide and navigation buttons, viz in tooltip, URL and go-to-sheet actions, device layouts, reference/trend lines and bands, and more chart types (scatter, area, pie, heatmap, histogram, treemap, box plot, Gantt, bullet).
+- [x] **P6.11** P1 interactivity in the runtime: sets and set actions, parameter actions, dynamic zone visibility, show/hide and navigation buttons, viz in tooltip, URL and go-to-sheet actions, device layouts, reference/trend lines and bands, and more chart types (scatter, area, pie, heatmap, histogram, treemap, box plot, Gantt, bullet).
+
+**Phase 6 status (2026-11-22).** Built and tested offline (`make check`); nothing has run on AWS, against Amazon SES, or with a real headless browser for subscriptions.
+
+| Task | Status |
+|---|---|
+| P6.1 scheduler and jobs | Done ([ADR-013](adr/0013-jobs-in-the-metadata-database.md), proposed): schedules in a time zone, a scheduler that fires each run once, workers with leases, retries with backoff and failure emails, job history in the portal, `python -m tabfree_api.jobs worker`, an inline mode for development. The EventBridge/SQS path is not built. |
+| P6.2 data refresh | Built: Iceberg CTAS + view swap, Redshift rename swap, incremental `MERGE`, materialized views, data-version bump, follow-on subscriptions, alerts, warming and webhook. The SQL is unit-tested and the incremental path ran on DuckDB; **Athena and Redshift runs need AWS** (left unticked). |
+| P6.3 subscriptions | Done: per-recipient renders with their own access, schedule or after a refresh, only-if-data, unsubscribe links, Slack/Teams webhooks, owner confirmation for external addresses. SES and Chromium untested live. |
+| P6.4 alerts | Done: thresholds on governed queries as the owner, firing state so alerts do not repeat. |
+| P6.5 user state | Done: custom views (shared, default for me), sharing links, comments with @mentions, tags, collections (favorites and recents were P3.5). |
+| P6.6 lifecycle | Done: revision restore (P3), recycle bin with retention, move, copy, change owner, certification, data quality warnings. |
+| P6.7 admin | Done: a Usage page from the audit log, and usage *as TabFree dashboards*: a daily `usage_export` job writes the audit log to the lake (gzipped JSON Lines, an Athena table with partition projection), and `python -m tabfree_api.sites install-usage` adds the `tabfree_usage` model and the `site-usage` dashboard in an administrators-only project. The Athena table is not yet created on AWS. |
+| P6.8 embedding | Done: connected apps, 10-minute single-use JWTs with scopes and RLS attributes, limited embed sessions, `frame-ancestors`, `/embed.js`. |
+| P6.9 APIs | Done: OpenAPI at `/api/openapi.json`, signed webhooks, SCIM 2.0, and several sites in one server by host name (`TABFREE_SITE_HOSTS`, `python -m tabfree_api.sites`, `jobs worker --all-sites`). Sessions are now checked against their site. |
+| P6.10 acceleration | Partly: rollups declared in models (built by refresh, routed safely with RLS) and cache warming after refreshes. Cache tuning and the Cube option wait for the P2.10 benchmarks. |
+| P6.11 interactivity | Done: set actions (members chosen by selection, only for sets a set action names), parameter and URL actions, navigation and show/hide buttons, dynamic zones (`tf-when`), phone layouts, viz in tooltip, reference lines, bands and trends, scatter colour series, and pie, heatmap, histogram, treemap, box plot, Gantt and bullet charts. |
+
+Also: sessions now carry scopes, enforced on every portal API call, so read-only OAuth tokens can no longer call write endpoints (a Phase 4 gap); and sessions are bound to their site.
+
+Still open in Phase 6: P6.2 runs on Athena and Redshift (needs AWS), P6.10 cache tuning and the Cube decision (need the P2.10 benchmarks), and an EventBridge/SQS path for jobs (ADR-013 chose the database queue).
 
 **Milestone M6:** the P0 and P1 checklist in §9 is green, and Tableau Server is switched to read-only.
 
 ### Phase 7: Hardening, cutover and open-source launch (weeks 30–40)
 
-- [ ] **P7.1** High availability: multi-AZ services, Aurora HA with point-in-time recovery, a backup/restore runbook with a tested restore, and a DR plan.
-- [ ] **P7.2** Load test at 1,000 users, including a 50-concurrent-dashboard-open burst, with Athena concurrency and cache hit-rate targets.
-- [ ] **P7.3** Security:
+- [x] **P7.1** High availability: multi-AZ services, Aurora HA with point-in-time recovery, a backup/restore runbook with a tested restore, and a DR plan.
+- [x] **P7.2** Load test at 1,000 users, including a 50-concurrent-dashboard-open burst, with Athena concurrency and cache hit-rate targets.
+- [x] **P7.3** Security:
   - a threat model with specific attention to AI authoring and the sandbox
   - a penetration test
   - SAST and dependency scanning, plus an SBOM
   - KMS encryption everywhere, WAF in front, and secrets kept in Secrets Manager
-- [ ] **P7.4** Accessibility (WCAG 2.2 AA for the portal and components) and number/date localisation.
-- [ ] **P7.5** Packaging: Terraform modules (one-command deploy), signed container images, a Helm chart (EKS), and a `docker compose` demo with sample data.
-- [ ] **P7.6** Documentation site: admin guide, migration guide, authoring guide (for people and for Claude), API reference, architecture.
-- [ ] **P7.7** Cutover:
+- [x] **P7.4** Accessibility (WCAG 2.2 AA for the portal and components) and number/date localisation.
+- [x] **P7.5** Packaging: Terraform modules (one-command deploy), signed container images, a Helm chart (EKS), and a `docker compose` demo with sample data.
+- [x] **P7.6** Documentation site: admin guide, migration guide, authoring guide (for people and for Claude), API reference, architecture.
+- [x] **P7.7** Cutover:
   - freeze changes on Tableau
   - final delta migration (`updatedAt` crawl)
   - switch DNS and URL redirects
@@ -597,7 +705,20 @@ tabfree/
   - 2–4 weeks of hypercare
   - archive Tableau content and ground truth to S3
   - decommission Tableau Server
-- [ ] **P7.8** Open-source launch: public repository under the cleared name, maintainers and an RFC process, roadmap, issue templates, v1.0 release.
+- [x] **P7.8** Open-source launch: public repository under the cleared name, maintainers and an RFC process, roadmap, issue templates, v1.0 release.
+
+**Phase 7 status (2026-11-21).** Everything that can be done offline is built and tested (`make check`, `make infra-validate`, a strict docs build). No task is ticked: each one's exit needs AWS, Docker, a cluster, the live Tableau Server, outside testers or the cleared name.
+
+| Task | Status |
+|---|---|
+| P7.1 HA and DR | Prepared: `infra/terraform/envs/production` (multi-AZ ECS services with autoscaling, Aurora with readers and point-in-time recovery, NAT per AZ, AWS Backup daily and monthly with a copy to a second region); logical backup, verify and restore (`python -m tabfree_api.backup`, tested SQLite→SQLite and SQLite→Postgres); Aurora restore-drill script; runbooks in `docs/operations/`. Not applied on AWS; no drill run. |
+| P7.2 load test | Prepared: `python -m tabfree_api.loadtest` (portal-shaped opens, filter changes, a 50-person burst, server cache figures, targets that fail the run), tested in-process; targets and Athena quotas in `docs/operations/load-test.md`. The 1,000-person run on staging is not done. |
+| P7.3 security | Partly: threat model (STRIDE plus AI authoring and the sandbox) and penetration-test scope in `docs/security/`; CI for CodeQL, pip-audit, npm audit, gitleaks, Trivy IaC and image scans, a CycloneDX SBOM, cosign-signed images with provenance; KMS keys, WAF and Secrets Manager in the production environment. The penetration test is not done. |
+| P7.4 accessibility | Partly: keyboard-operable marks, accessible names, hidden data tables, focus outlines and axe-core checks for components; number and date localisation (`locale`, `dates`). No screen-reader audit, portal audit or contrast check in a real browser; portal text is English only (`docs/reference/accessibility.md`). |
+| P7.5 packaging | Prepared: one-command production deploy (OpenTofu), the API image, the signing workflow, a Helm chart (`infra/helm/tabfree`) and a compose demo (`make demo`). The image, chart and demo have not been built, rendered or booted (no Docker or helm here). |
+| P7.6 docs | Done offline: `mkdocs.yml` with admin, migration, authoring (people and Claude) and architecture guides, operations runbooks, and the API reference generated from the app (`make openapi`, `docs/reference/openapi.json`). Not published. |
+| P7.7 cutover | Prepared: delta factory runs (`since:` in `factory.yaml`, `workbookUpdatedAt` in reports) and `import --delta`, which reopens changed approved dashboards for review while the approved revision stays live; the cutover runbook (`docs/operations/cutover.md`). Freeze, DNS, hypercare and decommissioning are for the day. |
+| P7.8 launch | Prepared: GOVERNANCE.md, MAINTAINERS.md (names at launch), the RFC process (`docs/rfcs/`), ROADMAP.md, CHANGELOG.md, issue and pull-request templates, the release checklist. Waits on the public name (P0.7). |
 
 **Milestone M7:** TabFree v1.0 is released, and Tableau Server is decommissioned.
 

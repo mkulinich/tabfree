@@ -109,3 +109,20 @@ variable "apply_immediately" {
   type        = bool
   default     = false
 }
+
+variable "reader_count" {
+  description = "Aurora readers in other AZs, failover targets (production: at least 1)."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.reader_count >= 0 && var.reader_count <= 3
+    error_message = "reader_count must be between 0 and 3."
+  }
+}
+
+variable "performance_insights" {
+  description = "Enable Performance Insights (7 days free retention)."
+  type        = bool
+  default     = false
+}

@@ -2,10 +2,177 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TABFREE_", extra="ignore")
 
     environment: str = "dev"
+    #: Public URL of this service; cookies are Secure when it is https.
+    base_url: str = "http://localhost:8000"
+    #: Projects, dashboards, permissions and users (Postgres from Phase 3).
+    site_file: Path = REPO_ROOT / "apps" / "api" / "dev" / "site.yaml"
+    #: SQLite file for sessions when there is no database (Phase 1 mode).
+    session_db: Path = Path("tabfree-sessions.db")
+    #: The metadata database (P3.1), e.g. postgresql+psycopg://user:pass@host/tabfree. When set, content,
+    #: permissions and sessions come from it and ``site_file`` is not read. It carries a password:
+    #: inject it (``secret run -e TABFREE_DATABASE_URL=...``), never write it to a file.
+    database_url: SecretStr | None = None
+    #: Or the parts (P7.5, ECS): the host from Terraform, the password injected from the Aurora-managed
+    #: secret. Used only when ``database_url`` is unset.
+    db_host: str | None = None
+    db_port: int = 5432
+    db_name: str = "tabfree"
+    db_user: str | None = None
+    db_password: SecretStr | None = None
+    #: The site this process serves (multi-site routing arrives with /site/<id> URLs).
+    site_id: str = "default"
+    #: Apply migrations at start-up (dev and test only; deployments run ``python -m tabfree_api.db upgrade``).
+    database_auto_migrate: bool = False
+    #: Seconds a process may serve a cached view of permissions after a change made elsewhere.
+    permission_cache_s: float = Field(default=2.0, ge=0)
+    session_hours: float = 8.0
+    #: Where queries run: "sample" is DuckDB with generated data; "aws" uses each model's connection.
+    engine: Literal["sample", "aws"] = "sample"
+
+    # ---- query service (P2.7) -------------------------------------------------------------------
+    #: Most rows any query returns; more are cut off and the result is flagged ``truncated``.
+    query_row_limit: int = Field(default=10_000, ge=1)
+    #: Most bytes of a result (approximate JSON size of the rows); more rows are cut off and flagged.
+    query_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1024)
+    #: Per-query engine timeout; a query running longer is cancelled on the engine.
+    query_timeout_s: float = Field(default=60.0, gt=0)
+    #: Result cache entries kept in memory (0 turns the cache off) and how long they stay fresh.
+    result_cache_entries: int = Field(default=2_000, ge=0)
+    result_cache_ttl_s: float = Field(default=300.0, gt=0)
+    #: Athena result reuse (exact repeats in the same workgroup, at most this old); 0 turns it off.
+    athena_result_reuse_minutes: int = Field(default=60, ge=0, le=10_080)
+    #: Allow Athena result reuse for queries with ExecutionParameters (RLS, filter values). Off until
+    #: P2.10 confirms on real Athena that reuse matches on the parameter values as well as the SQL.
+    athena_reuse_with_parameters: bool = False
+    #: Athena workgroup per site id; the site file's ``query.athenaWorkgroup`` wins over this.
+    athena_workgroups: dict[str, str] = Field(default_factory=dict)
+    #: Bytes scanned a site may spend per UTC day (None: no budget); the site file can override it.
+    daily_scan_budget_bytes: int | None = Field(default=None, ge=0)
+    #: Redshift does not report bytes scanned per query, so each one is charged this estimate.
+    redshift_scan_estimate_bytes: int = Field(default=100 * 1024 * 1024, ge=0)
+    #: Engine queries running at once per site (Athena allows 200 active queries per account).
+    max_concurrent_queries: int = Field(default=20, ge=1)
+    #: How long a query waits for a free slot before it is refused with 429.
+    queue_timeout_s: float = Field(default=10.0, ge=0)
+
+    # ---- exports (P3.7) -----------------------------------------------------------------------------
+    #: Most rows and bytes a data export (CSV or Excel) may carry.
+    export_row_limit: int = Field(default=1_000_000, ge=1)
+    export_max_bytes: int = Field(default=256 * 1024 * 1024, ge=1024)
+    #: PNG/PDF exports: "playwright" renders in headless Chromium (needs tabfree-api[render]); "none" refuses.
+    export_renderer: Literal["none", "playwright"] = "none"
+    #: The URL the renderer opens (the portal as seen from the export worker); defaults to base_url.
+    export_base_url: str | None = None
+
+    #: Built runtime bundles (npm run build -w @tabfree/runtime).
+    runtime_dir: Path = REPO_ROOT / "packages" / "runtime" / "dist" / "bundle"
+    #: Separate origin that serves dashboard bundles (P3.6), e.g. https://usercontent.tabfree.example.
+    #: Point it at this service. With it set, the portal page gets a strict CSP and dashboards load from
+    #: signed, short-lived /frame URLs there; without it they load as inline srcdoc (development).
+    usercontent_origin: str | None = None
+    #: HMAC key for /frame URLs. Set it when several processes serve the API (any one may verify).
+    frame_signing_key: SecretStr | None = None
+    #: The built portal (npm run build -w @tabfree/portal); without it, / serves a minimal page.
+    portal_dir: Path = REPO_ROOT / "apps" / "portal" / "dist"
+
+    # ---- AI authoring (Phase 4) ---------------------------------------------------------------------
+    #: Which model provider runs "Edit with Claude": "off" (AI disabled; drafts, validation and the MCP
+    #: server still work), "anthropic" (the Claude API; ANTHROPIC_API_KEY from the environment) or
+    #: "bedrock" (Amazon Bedrock in ``ai_bedrock_region``, with the task role's credentials).
+    ai_provider: Literal["off", "anthropic", "bedrock"] = "off"
+    ai_bedrock_region: str | None = None
+    #: Model per task (P4.7): quick edits, multi-tile builds in the sandbox, migration repair.
+    ai_model_quick: str = "claude-sonnet-5-5"
+    ai_model_build: str = "claude-opus-5-5"
+    ai_model_migrate: str = "claude-opus-5-5"
+    #: Model tokens per UTC day (input + output); site settings can override; 0 means no limit.
+    ai_daily_tokens_per_user: int = Field(default=2_000_000, ge=0)
+    ai_daily_tokens_per_site: int = Field(default=50_000_000, ge=0)
+    #: The quick-edit loop's limits (P4.4): model turns and the wall-clock budget per request.
+    ai_quick_max_turns: int = Field(default=12, ge=1, le=50)
+    ai_quick_timeout_s: float = Field(default=60.0, gt=0)
+    #: "Edit with Claude" sandboxes (P4.3): "none" (quick edits only), "local" (a subprocess, dev only)
+    #: or "fargate" (an ECS task per session; the cluster, task definition and network below).
+    author_backend: Literal["none", "local", "fargate"] = "none"
+    author_cluster: str | None = None
+    author_task_definition: str | None = None
+    author_subnets: list[str] = Field(default_factory=list)
+    author_security_groups: list[str] = Field(default_factory=list)
+    #: The MCP URL sandboxes call (inside the VPC); defaults to base_url + /mcp.
+    author_mcp_url: str | None = None
+    #: MCP tool calls per user per minute (P4.6).
+    mcp_calls_per_minute: int = Field(default=120, ge=0)
+    #: Browser origins allowed to call /mcp besides the portal's own (MCP clients send none).
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
+    #: OAuth for MCP clients (P4.1): token lifetimes, and the key that signs consent forms (set it when
+    #: several processes serve the API).
+    oauth_access_ttl_s: int = Field(default=3600, ge=60, le=86_400)
+    oauth_refresh_days: int = Field(default=30, ge=1, le=90)
+    oauth_signing_key: SecretStr | None = None
+
+    # Phase 6: jobs (ADR-013), mail, links and embedding.
+    #: Run a worker and the scheduler inside the API process (development; production runs
+    #: ``python -m tabfree_api.jobs worker`` as its own service).
+    jobs_inline: bool = False
+    #: Finished jobs older than this many days are pruned from the job history.
+    job_retention_days: int = Field(default=30, ge=1, le=3650)
+    #: "log" writes mail to the log (development); "ses" sends through Amazon SES.
+    mail_backend: Literal["log", "ses"] = "log"
+    mail_from: str = "TabFree <tabfree@localhost>"
+    ses_region: str | None = None
+    #: Email domains of the organisation. Subscriptions to other addresses wait for the owner to
+    #: confirm them (P6.3), and render with the owner's access.
+    mail_internal_domains: list[str] = Field(default_factory=list)
+    #: Signs unsubscribe links. Unset: derived from the database URL (set it explicitly in production).
+    link_signing_key: SecretStr | None = None
+    #: Embedding (P6.8): the longest an embed token may live, in seconds.
+    embed_token_max_s: int = Field(default=600, ge=30, le=600)
+    #: Several sites in one server (P6.9): host name → site id, e.g. {"sales.tabfree.example": "sales"}.
+    #: Requests for other hosts go to ``site_id``. Empty: one site per server.
+    site_hosts: dict[str, str] = Field(default_factory=dict)
+    #: Where the usage_export job writes the audit log for usage dashboards (P6.7): s3://bucket/prefix
+    #: or a folder.
+    usage_lake: str | None = None
+
+    # OpenID Connect. The secret comes from the environment (inject it with `secret run`), never a file.
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: SecretStr | None = None
+    oidc_scopes: str = "openid email profile"
+    oidc_username_claim: str = "preferred_username"
+    oidc_groups_claim: str = "groups"
+    #: ID-token claims copied into user attributes for RLS (``USERATTRIBUTE('region')``), e.g. ["region"].
+    oidc_attribute_claims: list[str] = Field(default_factory=list)
+
+    #: Sign in as any site-file user without a password. Development only.
+    dev_login: bool = False
+    #: Mount the local dashboard preview (/preview). Development only: it has no authentication.
+    preview: bool = False
+
+    @model_validator(mode="after")
+    def _database_from_parts(self) -> Settings:
+        if self.database_url is None and self.db_host and self.db_user and self.db_password is not None:
+            from urllib.parse import quote
+
+            password = quote(self.db_password.get_secret_value(), safe="")
+            user = quote(self.db_user, safe="")
+            url = f"postgresql+psycopg://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}"
+            self.database_url = SecretStr(url + "?sslmode=require")
+        return self
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.base_url.startswith("https://")

@@ -1,0 +1,88 @@
+# Development site: who can see what. Phase 3 moves this into Postgres (P3.1).
+# Paths are relative to this file.
+id: dev
+dashboards: ../../../packages/schemas/examples/dashboards
+defaultSiteRole: viewer
+
+# Query service (P2.7): this site's Athena workgroup (one per site, ADR-007) and cost guardrails.
+# Unset values fall back to the TABFREE_* settings.
+query:
+  athenaWorkgroup: tabfree-dev
+  dailyScanBudgetBytes: 107374182400 # 100 GiB scanned per UTC day
+  maxConcurrentQueries: 20
+
+# Semantic models. Connect (ad-hoc semantic queries, POST /api/models/{id}/query) is denied unless a
+# rule here allows it; site roles below Explorer never get it. RLS applies to explore queries too.
+# dataVersion goes into every result-cache key; the extract refresh pipeline bumps it (P6.2).
+models:
+  path: ../../../packages/schemas/examples/models
+  entries:
+    - id: superstore_sales
+      dataVersion: "2024-12-31"
+      permissions:
+        - group: Executives
+          capabilities: { view: allow, connect: allow }
+        - group: Managers
+          capabilities: { view: allow, connect: allow }
+        - group: Authors
+          capabilities: { view: allow, connect: allow }
+        - group: Contractors
+          capabilities: { view: deny, connect: deny }
+    - id: superstore
+      dataVersion: "2019-12-30"
+      permissions:
+        - group: Executives
+          capabilities: { view: allow, connect: allow }
+
+projects:
+  - id: sales
+    name: Sales
+    # Locked: dashboards use the project's rules (Tableau's "locked to the project").
+    locked: true
+    permissions:
+      - group: Executives
+        capabilities: { view: allow, download_summary_data: allow, web_edit: allow }
+      - group: Managers
+        capabilities: { view: allow }
+      - group: Contractors
+        capabilities: { view: deny }
+      # Phase 4: authors edit with Claude (Web Edit) and save over dashboards (Overwrite).
+      - group: Authors
+        capabilities: { view: allow, web_edit: allow, overwrite: allow, download_summary_data: allow }
+    # Authors may publish new dashboards here; Priya leads the project (she approves drafts when the
+    # site requires approval).
+    defaults:
+      project:
+        - group: Authors
+          capabilities: { view: allow, publish: allow }
+        - group: Executives
+          capabilities: { view: allow }
+        - group: Managers
+          capabilities: { view: allow }
+    leaders: [priya]
+    dashboards:
+      - id: sales-overview
+        owner: admin
+      - id: sales-analysis
+        owner: admin
+  - id: migrated
+    name: Migrated from Tableau (P1.12)
+    locked: false
+    permissions:
+      - group: Executives
+        capabilities: { view: allow }
+    dashboards:
+      - id: dimensional-hierarchy
+
+# Site roles and groups for the dev login. With OIDC, groups come from the ID token's groups claim.
+users:
+  - { username: admin, fullname: Site Admin, siteRole: site_administrator }
+  - { username: erin, fullname: Erin (executive), siteRole: explorer, groups: [Executives] }
+  - { username: alice, fullname: Alice (East manager), siteRole: viewer, groups: [Managers] }
+  - { username: bob, fullname: Bob (West manager), siteRole: explorer, groups: [Managers] }
+  - { username: carol, fullname: Carol (Central manager), siteRole: viewer, groups: [Managers] }
+  - { username: dave, fullname: Dave (South manager), siteRole: viewer, groups: [Managers] }
+  - { username: mallory, fullname: Mallory (contractor), siteRole: viewer, groups: [Managers, Contractors] }
+  - { username: ivan, fullname: Ivan (no groups), siteRole: viewer }
+  - { username: casey, fullname: Casey (author), siteRole: creator, groups: [Authors, Executives] }
+  - { username: priya, fullname: Priya (Sales project leader), siteRole: creator, groups: [Authors] }

@@ -1,0 +1,35 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues go to SECURITY.md, not here.** Never attach customer workbooks, extracts,
+        tokens or data; use the public corpus or a minimal workbook you made.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands, a minimal dashboard bundle or workbook, the filter state.
+    validations: { required: true }
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Portal or components, Query compiler, Permissions or RLS, Authoring or MCP, Migration, Jobs, Infrastructure, Docs]
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options: [Athena, Redshift, Trino, DuckDB sample, Not relevant]

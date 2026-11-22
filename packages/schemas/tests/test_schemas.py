@@ -80,8 +80,7 @@ def test_manifest_requires_queries() -> None:
     doc = manifest()
     del doc["queries"]
     assert any(
-        "'queries' is a required property" in e
-        for e in schema_errors(SchemaKind.DASHBOARD_MANIFEST, doc)
+        "'queries' is a required property" in e for e in schema_errors(SchemaKind.DASHBOARD_MANIFEST, doc)
     )
 
 
@@ -168,15 +167,11 @@ def test_example_manifest_references_are_consistent() -> None:
             "unknown parameter 'nope'",
         ),
         (
-            lambda d: d["queries"]["top_customers"]["where"][0]["topN"].update(
-                n={"param": "absent"}
-            ),
+            lambda d: d["queries"]["top_customers"]["where"][0]["topN"].update(n={"param": "absent"}),
             "unknown parameter 'absent'",
         ),
         (
-            lambda d: d["queries"]["by_region"]["measures"].append(
-                {"field": "Sales", "agg": "avg"}
-            ),
+            lambda d: d["queries"]["by_region"]["measures"].append({"field": "Sales", "agg": "avg"}),
             "duplicate output name 'Sales'",
         ),
     ],
@@ -245,6 +240,34 @@ def test_ir_rejects_captured_passwords() -> None:
     doc = load_document(IR_PATH)
     doc["datasources"][0]["namedConnections"][0]["attributes"] = {"password": "hunter2"}
     assert schema_errors(SchemaKind.TABLEAU_IR, doc)
+
+
+def test_ir_v1_encodings_are_structured_field_references() -> None:
+    doc = load_document(IR_PATH)
+    pane = doc["worksheets"][0]["panes"][0]
+    pane["encodings"]["color"] = ["[federated.0a1b2c3].[usr:Calculation_1:qk]"]  # the @0 shape
+    assert schema_errors(SchemaKind.TABLEAU_IR, doc)
+    pane["encodings"]["color"] = [{"ref": "[federated.0a1b2c3].[usr:Calculation_1:qk]", "kind": "qk"}]
+    assert not schema_errors(SchemaKind.TABLEAU_IR, doc)
+
+
+def test_ir_filters_are_typed() -> None:
+    doc = load_document(IR_PATH)
+    flt = doc["worksheets"][0]["filters"][0]
+    del flt["kind"]
+    assert schema_errors(SchemaKind.TABLEAU_IR, doc)
+    flt["kind"] = "top-n"
+    flt["topN"] = {"end": "middle"}
+    assert schema_errors(SchemaKind.TABLEAU_IR, doc)
+    flt["topN"] = {"end": "top", "count": 10, "by": "SUM([Sales])"}
+    assert not schema_errors(SchemaKind.TABLEAU_IR, doc)
+
+
+def test_ir_schema_version_is_one() -> None:
+    doc = load_document(IR_PATH)
+    doc["schema"] = "tabfree/tableau-ir@0"
+    with pytest.raises(ValueError, match="cannot tell the document type"):
+        detect_kind(doc)
 
 
 def test_ir_requires_sha256_of_source_file() -> None:

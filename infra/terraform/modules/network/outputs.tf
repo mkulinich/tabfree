@@ -25,7 +25,7 @@ output "private_subnet_ids" {
 
 output "private_route_table_id" {
   description = "Route table shared by the private subnets."
-  value       = aws_route_table.private.id
+  value       = aws_route_table.private[0].id
 }
 
 output "s3_gateway_endpoint_id" {
@@ -36,4 +36,9 @@ output "s3_gateway_endpoint_id" {
 output "nat_gateway_enabled" {
   description = "Whether a NAT gateway was created."
   value       = var.enable_nat_gateway
+}
+
+output "private_route_table_ids" {
+  description = "Private route tables (one, or one per AZ)."
+  value       = aws_route_table.private[*].id
 }

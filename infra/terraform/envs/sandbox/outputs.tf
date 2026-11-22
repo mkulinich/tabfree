@@ -87,3 +87,13 @@ output "redshift_admin_secret_arn" {
   description = "Secrets Manager secret with the Redshift admin password (null when enable_redshift = false)."
   value       = one(module.redshift[*].admin_password_secret_arn)
 }
+
+output "converter_task_definition" {
+  description = "Extract converter task definition family (null when enable_extract_converter = false)."
+  value       = one(module.extract_converter[*].task_definition_family)
+}
+
+output "converter_task_role_arn" {
+  description = "IAM role of the extract converter (null when enable_extract_converter = false)."
+  value       = one(module.extract_converter[*].task_role_arn)
+}

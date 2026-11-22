@@ -118,9 +118,7 @@ class TscReader:
 
     def count(self, endpoint: str) -> int | None:
         try:
-            _items, pagination = getattr(self._server, endpoint).get(
-                self._tsc.RequestOptions(pagesize=1)
-            )
+            _items, pagination = getattr(self._server, endpoint).get(self._tsc.RequestOptions(pagesize=1))
         except self._tsc.ServerResponseError:
             return None
         return int(pagination.total_available)

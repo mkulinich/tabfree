@@ -18,6 +18,19 @@ jobs:
     strategy:
       matrix:
         python: ["3.12", "3.13"]
+    services:
+      # The metadata database tests (apps/api/tests/test_db.py) also run on Postgres (Aurora's engine).
+      postgres:
+        image: postgres:17.12-trixie
+        env:
+          POSTGRES_USER: tabfree
+          POSTGRES_PASSWORD: tabfree-ci-not-a-secret
+          POSTGRES_DB: tabfree_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tabfree" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TABFREE_TEST_POSTGRES_URL: postgresql+psycopg://tabfree:tabfree-ci-not-a-secret@localhost:5432/tabfree_test
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -29,6 +42,34 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest
+
+  hyper:
+    # The Hyper API ships wheels for Linux x86-64 and Windows only, so extract conversion is tested here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-packages --extra hyper --locked
+      # Real Hyper conversion, Hyper-vs-Parquet parity (DuckDB stands in for Athena) and the batch runner.
+      - run: >-
+          uv run pytest -rs
+          packages/migrate/tests/test_hyper.py
+          packages/migrate/tests/test_parity.py
+          packages/migrate/tests/test_convert_batch.py
+          packages/migrate/tests/test_extract_types.py
+
+  converter-image:
+    # Builds the Fargate converter image (P2.8) and smoke-runs it as non-root with a read-only root fs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -f infra/docker/converter/Dockerfile -t tabfree/converter:ci .
+      - run: >-
+          docker run --rm --read-only --tmpfs /scratch:uid=10001,gid=10001
+          tabfree/converter:ci convert-batch --help
 
   node:
     runs-on: ubuntu-latest

@@ -1,0 +1,20 @@
+name: Feature request
+description: Something Tableau does that TabFree should, or a new idea.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Who needs this and what they do today. For Tableau parity, name the Tableau feature.
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+  - type: checkboxes
+    id: rfc
+    attributes:
+      label: Size
+      options:
+        - label: This changes a public API, a schema version or the security model (it needs an RFC, see docs/rfcs)

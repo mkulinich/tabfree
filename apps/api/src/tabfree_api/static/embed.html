@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>TabFree</title>
+<style>html,body{margin:0;height:100%} #viz{height:100%} .problem{font:14px system-ui;padding:16px}</style>
+</head><body><div id="viz" role="main"></div>
+<script type="module" nonce="__NONCE__">
+import { mountDashboard } from "/runtime/host.js";
+const dashboard = location.pathname.split("/").pop();  // checked by the server: [a-z0-9-]
+const allowed = __ORIGINS__;
+const params = new URLSearchParams(location.hash.slice(1));
+history.replaceState(null, "", location.pathname);
+const parentOrigin = allowed.includes(params.get("origin")) ? params.get("origin") : null;
+const tell = (message) => { if (parentOrigin) parent.postMessage({ source: "tabfree", ...message }, parentOrigin); };
+const fail = (text) => { const p = document.createElement("p"); p.className = "problem"; p.textContent = text; document.body.replaceChildren(p); tell({ type: "error", message: text }); };
+try {
+  const exchange = await fetch("/api/embed/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: params.get("token") || "", dashboard }) });
+  if (!exchange.ok) throw new Error((await exchange.json()).detail || "embedding refused");
+  const { session } = await exchange.json();
+  const headers = { Authorization: `Bearer ${session}`, "Content-Type": "application/json", "X-TabFree-Request": "1" };
+  const api = async (path, body) => {
+    const r = await fetch(path, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    return r.json();
+  };
+  const bundle = await api(`/api/dashboards/${encodeURIComponent(dashboard)}`);
+  const runtime = bundle.frameUrl ? "" : await (await fetch("/runtime/frame.js")).text();
+  const host = mountDashboard({
+    container: document.getElementById("viz"), manifest: bundle.manifest, html: bundle.html || "", runtime,
+    ...(bundle.frameUrl ? { frameUrl: bundle.frameUrl } : {}),
+    runQuery: (request) => api(`/api/dashboards/${encodeURIComponent(dashboard)}/query`, request),
+    runDomain: (request) => api(`/api/dashboards/${encodeURIComponent(dashboard)}/domain`, request),
+    onStateChange: (state, selections) => tell({ type: "state", state, selections }),
+    onDashboardError: (message) => tell({ type: "error", message }),
+  });
+  addEventListener("message", (event) => {
+    if (event.origin !== parentOrigin || event.source !== parent || !event.data || event.data.target !== "tabfree") return;
+    if (event.data.type === "setState") host.setState({ filters: event.data.filters, parameters: event.data.parameters });
+  });
+  tell({ type: "ready" });
+} catch (error) { fail(String(error.message || error)); }
+</script></body></html>

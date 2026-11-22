@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored). No secrets here: the OIDC client secret is referenced by ARN.
+region                 = "us-east-1"
+dr_region              = "us-west-2"
+allowed_account_ids    = ["123456789012"]
+domain                 = "tabfree.example.com"
+certificate_arn        = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+image                  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/tabfree/api@sha256:<digest>"
+ses_sender             = "TabFree <tabfree@example.com>"
+oidc_issuer            = "https://login.example.com"
+oidc_client_id         = "tabfree"
+oidc_client_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:tabfree/oidc-client-secret-AbCdEf"

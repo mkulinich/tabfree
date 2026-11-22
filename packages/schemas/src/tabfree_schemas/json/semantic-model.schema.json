@@ -35,10 +35,28 @@
       "type": "array",
       "items": { "$ref": "#/$defs/rlsPolicy" }
     },
+    "rollups": {
+      "description": "Pre-aggregated tables (P6.10): a query whose fields all fit a rollup reads it instead of the base tables. Refresh jobs build them (Iceberg CTAS on Athena, a table or materialized view on Redshift).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rollup" }
+    },
     "source": { "$ref": "#/$defs/source" }
   },
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,99}$" },
+    "rollup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "table", "dimensions", "measures"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string" },
+        "table": { "$ref": "#/$defs/identifier" },
+        "database": { "$ref": "#/$defs/identifier" },
+        "dimensions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "measures": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "identifier": {
       "description": "A physical SQL identifier (database, table or column). Identifiers are allow-listed through the model and never come from user input.",
       "type": "string",

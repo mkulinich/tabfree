@@ -115,3 +115,30 @@ The stack is close enough for compiler and query-service development. It is not 
 - **Security.** Locally there is no IAM, no Lake Formation and no encryption. App-side RLS (ADR-007) behaves the same in both places; IAM and Lake Formation backstops don't exist locally.
 - **Storage.** No bucket versioning, lifecycle rules or SSE locally, unlike the AWS buckets.
 - **Email and queues.** Moto doesn't deliver mail and doesn't enforce SES sandbox limits or sending quotas. Its SQS covers the common API but not every edge case of visibility timeouts or FIFO ordering.
+
+## Extract converter image (P2.8)
+
+`converter/Dockerfile` builds the `tabfree-migrate convert-batch` image for ECS Fargate (linux/amd64; Python 3.13; the Hyper API pinned by `uv.lock`; non-root uid 10001; writes only to `/scratch`, so it runs with a read-only root file system). `converter/Dockerfile.tde-legacy` pins `tableauhyperapi==0.0.17537`, the only release that reads legacy `.tde` files, for `convert-batch --tde upgrade`. Build both from the repository root:
+
+```sh
+docker build --platform linux/amd64 -f infra/docker/converter/Dockerfile -t tabfree/converter:dev .
+docker run --rm --read-only -v "$PWD/scratch:/scratch" tabfree/converter:dev \
+    convert-batch --input-dir /scratch/in --out /scratch/out
+```
+
+Neither image has been built yet (no Docker on the authoring machine).
+
+## Demo with sample data (P7.5)
+
+[`demo.compose.yaml`](demo.compose.yaml) runs TabFree itself (the API image from `api/Dockerfile`, a job
+worker and Postgres) on the generated sample data, with no AWS account:
+
+```sh
+docker compose -f infra/docker/demo.compose.yaml up --build -d --wait
+open http://localhost:8765     # dev sign-in: admin, erin (a manager), casey (a contractor)
+docker compose -f infra/docker/demo.compose.yaml down -v
+```
+
+It is a development configuration (passwordless dev sign-in, the DuckDB sample engine), bound to
+`127.0.0.1`, and the server refuses it when `TABFREE_ENVIRONMENT` is not `dev`. Like the stack above, it
+**has not been booted yet**.

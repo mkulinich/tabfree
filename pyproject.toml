@@ -1,7 +1,7 @@
 # Workspace root (virtual: not itself a package). Each member has its own pyproject.toml.
 
 [tool.uv.workspace]
-members = ["packages/schemas", "packages/migrate", "apps/api"]
+members = ["packages/schemas", "packages/compiler", "packages/migrate", "packages/cli", "apps/api"]
 
 [dependency-groups]
 dev = [
@@ -13,34 +13,59 @@ dev = [
   "types-PyYAML>=6.0",
   "types-defusedxml>=0.7",
   "types-jsonschema>=4.23",
+  "duckdb>=2.0.0",
+  # The quick-edit loop (P4.4) is type-checked against the SDK; tests use a scripted client.
+  "anthropic[bedrock]>=2.6",
+  "xmlschema>=3.4",
 ]
 
 [tool.ruff]
-line-length = 100
+line-length = 110
 target-version = "py312"
-extend-exclude = ["corpus", "third_party", "infra", "node_modules"]
+extend-exclude = ["corpus", "third_party", "infra", "node_modules", "docs", ".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "C4", "PT", "N"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tabfree_api", "tabfree_migrate", "tabfree_schemas"]
+known-first-party = ["tabfree_api", "tabfree_compiler", "tabfree_migrate", "tabfree_schemas"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests may assert and use obviously fake credentials.
 "**/tests/**" = ["S101", "S105", "S106"]
+# Hyper SQL is built from catalog names, always quoted; the files themselves are the input.
+"packages/migrate/src/tabfree_migrate/hyper.py" = ["S608"]
+"packages/migrate/src/tabfree_migrate/parity.py" = ["S608"]
+"packages/migrate/src/tabfree_migrate/tde.py" = ["S608"]
+"packages/migrate/tests/test_parity.py" = ["S608"]
+# Refresh statements are built from checked identifiers and an administrator's SELECT (P6.2).
+"apps/api/src/tabfree_api/jobs/refresh.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["packages/schemas/src", "packages/migrate/src", "apps/api/src"]
+files = [
+  "packages/schemas/src",
+  "packages/compiler/src",
+  "packages/migrate/src",
+  "packages/cli/src",
+  "apps/api/src",
+  "apps/author-agent/src",
+]
 
 [[tool.mypy.overrides]]
-module = ["tableauserverclient", "tableauserverclient.*"]
+module = ["tableauserverclient", "tableauserverclient.*", "tableauhyperapi", "tableauhyperapi.*", "pyarrow", "pyarrow.*", "boto3", "boto3.*", "openpyxl", "openpyxl.*", "playwright", "playwright.*", "claude_agent_sdk", "claude_agent_sdk.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["packages/schemas/tests", "packages/migrate/tests", "apps/api/tests"]
+testpaths = [
+  "packages/schemas/tests",
+  "packages/compiler/tests",
+  "packages/migrate/tests",
+  "packages/cli/tests",
+  "apps/api/tests",
+  "apps/author-agent/tests",
+]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = ["integration: needs a real Tableau Server or AWS account; skipped unless enabled"]

@@ -14,9 +14,7 @@ from tabfree_migrate.corpus import verify_corpus
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-WORKBOOK = (
-    b"<?xml version='1.0' encoding='utf-8' ?><workbook source-build='2025.2.0' version='18.1'/>"
-)
+WORKBOOK = b"<?xml version='1.0' encoding='utf-8' ?><workbook source-build='2025.2.0' version='18.1'/>"
 DATASOURCE = b"<?xml version='1.0' encoding='utf-8' ?><datasource version='18.1'/>"
 BILLION_LAUGHS = b"""<?xml version="1.0"?>
 <!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>
@@ -113,9 +111,7 @@ def test_expect_invalid_fixtures(tmp_path: Path) -> None:
 
 def test_external_entries_are_skipped(tmp_path: Path) -> None:
     (tmp_path / "corpus").mkdir()
-    manifest = {
-        "files": [{"kind": "tdvt-data", "url": "https://example.com/big.csv", "external": True}]
-    }
+    manifest = {"files": [{"kind": "tdvt-data", "url": "https://example.com/big.csv", "external": True}]}
     (tmp_path / "corpus" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     report = verify_corpus(tmp_path)
     assert (report.checked, report.skipped, report.problems) == (0, 1, [])

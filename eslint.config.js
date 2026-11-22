@@ -13,6 +13,7 @@ export default tseslint.config(
       "infra/**",
       "docs/**",
       "packages/schemas/**",
+      ".claude/**",
     ],
   },
   js.configs.recommended,
