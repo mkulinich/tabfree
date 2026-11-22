@@ -30,6 +30,7 @@ COMPONENTS: dict[str, dict[str, str]] = {
         "drill": "query",
         "size": "column",
         "target": "column",
+        "tooltip-query": "query",
     },
     "tf-crosstab": {"query": "query", "columns": "column"},
     "tf-kpi": {"query": "query", "measure": "column", "change": "column"},

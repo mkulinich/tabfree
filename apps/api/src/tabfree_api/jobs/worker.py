@@ -32,6 +32,7 @@ class Permanent(RuntimeError):  # noqa: N818
 
 
 def default_handlers() -> dict[str, Handler]:
+    from tabfree_api import usage_lake
     from tabfree_api.jobs import alerts, refresh, subscribe, warm, webhooks
 
     return {
@@ -40,6 +41,7 @@ def default_handlers() -> dict[str, Handler]:
         "alert": alerts.handle,
         "warm": warm.handle,
         "webhook": webhooks.deliver,
+        "usage_export": usage_lake.handle,
     }
 
 

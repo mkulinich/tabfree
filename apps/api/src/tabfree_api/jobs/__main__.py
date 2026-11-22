@@ -25,6 +25,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     worker = commands.add_parser("worker")
     worker.add_argument("--scheduler", action="store_true", help="also fire schedules")
+    worker.add_argument("--all-sites", action="store_true", help="serve every site in the database (P6.9)")
     commands.add_parser("scheduler")
     commands.add_parser("drain")
     commands.add_parser("prune")
@@ -60,6 +61,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         while not stop.is_set():
             ticker.tick()
             stop.wait(15)
+        return 0
+    if args.all_sites:
+        # One worker thread per site; the scheduler (sites share the schedules table) runs once.
+        from tabfree_api.db import schema as t
+
+        with ctx.site.engine.connect() as conn:
+            site_ids = [r[0] for r in conn.execute(t.sites.select().with_only_columns(t.sites.c.id))]
+        threads = []
+        for index, site_id in enumerate(site_ids):
+            site_ctx = (
+                ctx
+                if site_id == ctx.site.id
+                else create_app(
+                    settings.model_copy(update={"jobs_inline": False, "site_id": site_id})
+                ).state.context
+            )
+            thread = threading.Thread(
+                target=run_forever,
+                args=(site_ctx,),
+                kwargs={"scheduler": args.scheduler and index == 0, "stop": stop},
+                name=f"jobs-{site_id}", daemon=True,
+            )  # fmt: skip
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
         return 0
     run_forever(ctx, scheduler=args.scheduler, stop=stop)
     return 0

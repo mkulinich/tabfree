@@ -6,6 +6,7 @@ import datetime as dt
 import functools
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -232,6 +233,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )  # fmt: skip
 
         service.recorder = record_query
+    if config.engine == "sample" and config.usage_lake and not config.usage_lake.startswith("s3://"):
+        # Development: the exported usage files queryable in the sample engine (P6.7).
+        from tabfree_api.usage_lake import load_into_duckdb
+
+        sample = engine_for({})
+        ctx.usage_loader = lambda root: load_into_duckdb(sample.connection, root)
+        ctx.usage_loader(Path(config.usage_lake))
     from tabfree_api.jobs import mail
 
     ctx.mailer = mail.from_settings(config)
@@ -270,6 +278,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def app_factory() -> FastAPI:
-    """For ``uvicorn --factory tabfree_api.main:app_factory``."""
-    return create_app()
+def app_factory() -> Any:
+    """For ``uvicorn --factory tabfree_api.main:app_factory``: one site, or several by host name."""
+    from tabfree_api.multisite import create
+
+    return create()

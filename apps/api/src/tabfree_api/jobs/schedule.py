@@ -20,6 +20,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 FREQUENCIES = ("hourly", "daily", "weekly", "monthly")
+SITE_JOBS = ("usage_export",)
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _HORIZON_DAYS = 400
 
@@ -49,6 +50,12 @@ def validate(spec: Mapping[str, Any]) -> dict[str, Any]:
     if frequency not in FREQUENCIES:
         raise ScheduleError(f"frequency must be one of {', '.join(FREQUENCIES)}")
     out: dict[str, Any] = {"frequency": frequency, "timezone": str(spec.get("timezone") or "UTC")}
+    if spec.get("jobs"):
+        # Site jobs a schedule runs itself (no task row), e.g. the daily usage export (P6.7).
+        jobs = [str(j) for j in spec["jobs"]]
+        if any(j not in SITE_JOBS for j in jobs):
+            raise ScheduleError(f"schedules may run these jobs: {', '.join(SITE_JOBS)}")
+        out["jobs"] = sorted(set(jobs))
     _zone(out["timezone"])
     if frequency == "hourly":
         every = int(spec.get("every", 1))

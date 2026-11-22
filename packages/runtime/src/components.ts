@@ -153,7 +153,40 @@ const MARKS = MARK_NAMES;
 export class TfChart extends TfElement {
   static observedAttributes = [
     "query", "mark", "x", "y", "color", "height", "sort", "drill", "size", "target", "bins", "reference", "band", "trend",
+    "tooltip-query", "tooltip-x", "tooltip-y", "tooltip-mark",
   ];
+  #tip: HTMLElement | null = null;
+  #hovering = 0;
+
+  /** Viz in tooltip (P6.11): a small chart of `tooltip-query`, narrowed to the hovered mark. */
+  #hover(source: string, tuple: Tuple | null, at: { x: number; y: number }): void {
+    const query = this.getAttribute("tooltip-query");
+    const generation = ++this.#hovering;
+    if (!query || !this.tf) return;
+    if (tuple === null) {
+      window.setTimeout(() => {
+        if (generation === this.#hovering) this.#tip?.remove();
+      }, 150);
+      return;
+    }
+    const tf = this.tf;
+    window.setTimeout(() => {
+      if (generation !== this.#hovering) return;
+      void tf.hoverQuery(query, source, tuple).then((result) => {
+        if (generation !== this.#hovering) return;
+        const x = this.getAttribute("tooltip-x") ?? result.columns[0]?.name ?? "";
+        const y = this.getAttribute("tooltip-y") ?? result.columns[1]?.name ?? "";
+        const svg = renderChart({ mark: (this.getAttribute("tooltip-mark") ?? "bar") as Mark, x, y }, result, { width: 260, height: 160 });
+        this.#tip?.remove();
+        const tip = h("div", { class: "tf-viz-tooltip", role: "tooltip" });
+        tip.append(svg);
+        tip.style.left = `${Math.min(at.x + 12, Math.max(0, window.innerWidth - 280))}px`;
+        tip.style.top = `${at.y + 12}px`;
+        document.body.append(tip);
+        this.#tip = tip;
+      }).catch(() => undefined);
+    }, 200);
+  }
   #selected: Tuple | null = null;
   /** In-place drill (P3.6): the detail query shown after a mark was clicked. */
   #drilled: { query: string; from: Tuple } | null = null;
@@ -217,6 +250,7 @@ export class TfChart extends TfElement {
         // The dashboard's highlight action wins; otherwise emphasise this chart's own selection.
         highlight: highlight ? highlight.tuples : this.#selected ? [this.#selected] : null,
         onSelect: (tuple) => this.#select(query, tuple),
+        ...(this.hasAttribute("tooltip-query") ? { onHover: (tuple: Tuple | null, at: { x: number; y: number }) => this.#hover(query, tuple, at) } : {}),
       },
     );
     svg.addEventListener("click", () => {

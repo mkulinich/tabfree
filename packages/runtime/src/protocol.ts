@@ -51,6 +51,8 @@ export interface DashboardState {
   filters: Record<string, FilterValue>;
   parameters: Record<string, Scalar>;
   highlight: Highlight | null;
+  /** Set members chosen by set actions (P6.11); absent means the model's own definitions. */
+  sets?: Record<string, Scalar[]>;
 }
 
 export type ColumnType =
@@ -117,6 +119,8 @@ export interface QueryMessage {
   type: "query";
   id: string;
   query: string;
+  /** Viz in tooltip (P6.11): run as if this mark were selected, without changing the dashboard. */
+  hover?: { source: string; tuples: Tuple[] };
 }
 /** Ask for the members a filter control can offer; answered with a ResultMessage (query = filter). */
 export interface DomainMessage {
@@ -346,10 +350,17 @@ function isRecordOf<T>(value: unknown, isValue: (v: unknown) => v is T): value i
   return isObject(value) && Object.entries(value).every(([k, v]) => NAME.test(k) && isValue(v));
 }
 
+function isMemberList(value: unknown): value is Scalar[] {
+  return Array.isArray(value) && value.length <= 10_000 && value.every(isScalar);
+}
+
 export function isDashboardState(value: unknown): value is DashboardState {
-  if (!isObject(value) || !hasExactKeys(value, ["filters", "parameters", "highlight"])) return false;
-  const { filters, parameters, highlight } = value;
+  if (!isObject(value) || !hasExactKeys(value, ["filters", "parameters", "highlight"], ["sets"])) return false;
+  const { filters, parameters, highlight, sets } = value;
   if (!isRecordOf(filters, isFilterValue) || !isRecordOf(parameters, isScalar)) return false;
+  if (sets !== undefined && !isRecordOf(sets, isMemberList)) {
+    return false;
+  }
   if (highlight === null) return true;
   return (
     isObject(highlight) &&
@@ -411,9 +422,12 @@ export function parseDashboardMessage(data: unknown): DashboardMessage | null {
     case "hello":
       return hasExactKeys(data, ["v", "type"]) ? { v: 0, type: "hello" } : null;
     case "query": {
-      const { id, query } = data;
-      if (!hasExactKeys(data, ["v", "type", "id", "query"]) || !isId(id) || !isName(query)) return null;
-      return { v: 0, type: "query", id, query };
+      const { id, query, hover } = data;
+      if (!hasExactKeys(data, ["v", "type", "id", "query"], ["hover"]) || !isId(id) || !isName(query)) return null;
+      if (hover === undefined) return { v: 0, type: "query", id, query };
+      if (!isObject(hover) || !hasExactKeys(hover, ["source", "tuples"]) || !isName(hover.source)) return null;
+      if (!isTupleList(hover.tuples) || hover.tuples.length > 1) return null;
+      return { v: 0, type: "query", id, query, hover: { source: hover.source, tuples: hover.tuples } };
     }
     case "domain": {
       const { id, filter } = data;

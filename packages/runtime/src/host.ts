@@ -65,7 +65,35 @@ export interface ManifestAction {
   field?: string;
   /** URL actions: a template with <Field Name> placeholders. */
   url?: string;
+  /** Set actions: the model set, the output whose values become members, and how. */
+  set?: string;
+  mode?: "assign" | "add" | "remove";
   openIn?: "new_tab" | "same_tab";
+}
+
+/**
+ * A set action's new members (P6.11): undefined leaves the set alone, null restores the model's own
+ * definition. Members come from the action's ``field`` (or the selection's only field). On an empty
+ * selection, ``clear`` decides: keep, remove_all (empty set) or add_all (the model's definition).
+ */
+export function setMembers(action: ManifestAction, current: Scalar[] | undefined, tuples: Tuple[]): Scalar[] | null | undefined {
+  if (!tuples.length) {
+    const clear = (action as { clear?: string }).clear ?? "keep";
+    return clear === "remove_all" ? [] : clear === "add_all" ? null : undefined;
+  }
+  const values: Scalar[] = [];
+  for (const tuple of tuples) {
+    const keys = Object.keys(tuple);
+    const name = action.field ?? (keys.length === 1 ? keys[0] : undefined);
+    if (name === undefined || !(name in tuple)) return undefined;
+    const value = tuple[name] ?? null;
+    if (!values.includes(value)) values.push(value);
+  }
+  const mode = action.mode ?? "assign";
+  if (mode === "assign") return values;
+  const base = current ?? [];
+  if (mode === "add") return [...base, ...values.filter((v) => !base.includes(v))];
+  return base.filter((v) => !values.includes(v));
 }
 
 /** A URL action's link for a selected mark; null when the template is not http(s) (P6.11). */
@@ -349,7 +377,17 @@ export function mountDashboard(options: MountOptions): DashboardHost {
         const query = manifest.queries[message.query];
         if (!query) return fail(message.id, "not_found", `no query named "${message.query}"`);
         try {
-          const response = await options.runQuery({ dashboard: manifest.id, query: message.query, state, selections });
+          // Viz in tooltip: the hovered mark counts as selected for this one request only. The server
+          // applies only the manifest's declared filter actions, so a hover narrows nothing undeclared.
+          const requestSelections = message.hover
+            ? { ...selections, [message.hover.source]: message.hover.tuples }
+            : selections;
+          const response = await options.runQuery({
+            dashboard: manifest.id,
+            query: message.query,
+            state,
+            selections: requestSelections,
+          });
           const calcs = query.tableCalcs ?? [];
           const needed = calcs.length > 0 || (query.tableCalcFilters ?? []).length > 0 || query.densify !== undefined;
           const table = needed ? applyTableCalcs(response, calcs, tableCalcOptions(query)) : response;
@@ -419,6 +457,14 @@ export function mountDashboard(options: MountOptions): DashboardHost {
             const value = coerceParameter(spec, first[action.field] ?? null);
             if (value === undefined || state.parameters[action.parameter] === value) continue;
             state = { ...state, parameters: { ...state.parameters, [action.parameter]: value } };
+            changed = true;
+          } else if (action.type === "set" && action.set) {
+            const next = setMembers(action, state.sets?.[action.set], message.tuples);
+            if (next === undefined) continue;
+            const name = action.set;
+            const sets = Object.fromEntries(Object.entries(state.sets ?? {}).filter(([k]) => k !== name));
+            if (next !== null) sets[name] = next;
+            state = { ...state, sets };
             changed = true;
           } else if (action.type === "url" && action.url && message.tuples[0]) {
             const url = actionUrl(action.url, message.tuples[0]);

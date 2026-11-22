@@ -640,15 +640,15 @@ Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran 
 - [x] **P6.4** Data-driven alerts: a threshold evaluated on a governed query, stored state so the same alert doesn't repeat, then a notification.
 - [x] **P6.5** User state: custom views (saved filter and parameter state, including "default for me"), sharing links, comments with @mentions, favorites/recents, tags, collections.
 - [x] **P6.6** Content lifecycle: revision history with restore, recycle bin, move/copy, change owner, certification, data quality warnings.
-- [ ] **P6.7** Admin: usage and performance dashboards built *in TabFree* on the audit tables, background jobs, storage, site settings, branding and themes.
+- [x] **P6.7** Admin: usage and performance dashboards built *in TabFree* on the audit tables, background jobs, storage, site settings, branding and themes.
 - [x] **P6.8** Embedding: connected-app style JWTs (10 minutes or less, single-use `jti`, scopes, user attributes passed into RLS), a `frame-ancestors` allowlist and a JS embed API.
-- [ ] **P6.9** APIs: public REST API (OpenAPI) and webhooks; SCIM 2.0 provisioning; multi-site.
+- [x] **P6.9** APIs: public REST API (OpenAPI) and webhooks; SCIM 2.0 provisioning; multi-site.
 - [ ] **P6.10** Acceleration:
   - result cache tuning
   - rollup tables declared in models (Iceberg CTAS or Redshift MVs)
   - pre-warming the top dashboards
   - optional Cube Core backend if the benchmarks call for it
-- [ ] **P6.11** P1 interactivity in the runtime: sets and set actions, parameter actions, dynamic zone visibility, show/hide and navigation buttons, viz in tooltip, URL and go-to-sheet actions, device layouts, reference/trend lines and bands, and more chart types (scatter, area, pie, heatmap, histogram, treemap, box plot, Gantt, bullet).
+- [x] **P6.11** P1 interactivity in the runtime: sets and set actions, parameter actions, dynamic zone visibility, show/hide and navigation buttons, viz in tooltip, URL and go-to-sheet actions, device layouts, reference/trend lines and bands, and more chart types (scatter, area, pie, heatmap, histogram, treemap, box plot, Gantt, bullet).
 
 **Phase 6 status (2026-11-22).** Built and tested offline (`make check`); nothing has run on AWS, against Amazon SES, or with a real headless browser for subscriptions.
 
@@ -660,13 +660,15 @@ Also fixed on the way (Phase 4 gaps): draft screenshots in validation never ran 
 | P6.4 alerts | Done: thresholds on governed queries as the owner, firing state so alerts do not repeat. |
 | P6.5 user state | Done: custom views (shared, default for me), sharing links, comments with @mentions, tags, collections (favorites and recents were P3.5). |
 | P6.6 lifecycle | Done: revision restore (P3), recycle bin with retention, move, copy, change owner, certification, data quality warnings. |
-| P6.7 admin | Partly: a Usage page (views, people, latency, cache, jobs, storage) from the audit log, plus site settings from P3. Not yet built *as TabFree dashboards* (needs the audit log exported to the lake). |
+| P6.7 admin | Done: a Usage page from the audit log, and usage *as TabFree dashboards*: a daily `usage_export` job writes the audit log to the lake (gzipped JSON Lines, an Athena table with partition projection), and `python -m tabfree_api.sites install-usage` adds the `tabfree_usage` model and the `site-usage` dashboard in an administrators-only project. The Athena table is not yet created on AWS. |
 | P6.8 embedding | Done: connected apps, 10-minute single-use JWTs with scopes and RLS attributes, limited embed sessions, `frame-ancestors`, `/embed.js`. |
-| P6.9 APIs | Partly: OpenAPI at `/api/openapi.json`, signed webhooks, SCIM 2.0. Multi-site in one process is not built (one site per service today). |
+| P6.9 APIs | Done: OpenAPI at `/api/openapi.json`, signed webhooks, SCIM 2.0, and several sites in one server by host name (`TABFREE_SITE_HOSTS`, `python -m tabfree_api.sites`, `jobs worker --all-sites`). Sessions are now checked against their site. |
 | P6.10 acceleration | Partly: rollups declared in models (built by refresh, routed safely with RLS) and cache warming after refreshes. Cache tuning and the Cube option wait for the P2.10 benchmarks. |
-| P6.11 interactivity | Partly: parameter and URL actions, navigation and show/hide buttons, dynamic zones (`tf-when`), phone layouts, reference lines, bands and trends, and pie, heatmap, histogram, treemap, box plot, Gantt and bullet charts. Sets and set actions, viz in tooltip and scatter colour series are not built. |
+| P6.11 interactivity | Done: set actions (members chosen by selection, only for sets a set action names), parameter and URL actions, navigation and show/hide buttons, dynamic zones (`tf-when`), phone layouts, viz in tooltip, reference lines, bands and trends, scatter colour series, and pie, heatmap, histogram, treemap, box plot, Gantt and bullet charts. |
 
-Also: sessions now carry scopes, enforced on every portal API call, so read-only OAuth tokens can no longer call write endpoints (a Phase 4 gap).
+Also: sessions now carry scopes, enforced on every portal API call, so read-only OAuth tokens can no longer call write endpoints (a Phase 4 gap); and sessions are bound to their site.
+
+Still open in Phase 6: P6.2 runs on Athena and Redshift (needs AWS), P6.10 cache tuning and the Cube decision (need the P2.10 benchmarks), and an EventBridge/SQS path for jobs (ADR-013 chose the database queue).
 
 **Milestone M6:** the P0 and P1 checklist in §9 is green, and Tableau Server is switched to read-only.
 

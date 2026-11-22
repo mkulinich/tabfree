@@ -161,6 +161,7 @@ class Scheduler:
                 if won != 1:
                     continue  # another scheduler fired it
                 tasks = _tasks(conn, site_id, "schedule_id", schedule_id)
+                tasks += [(job, f"{job}:{schedule_id}", {}) for job in (spec or {}).get("jobs", [])]
             for kind, key, payload in tasks:
                 if self.queue.enqueue(
                     site_id, kind, payload, schedule_id=schedule_id, created_by="schedule", dedupe_key=key

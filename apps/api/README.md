@@ -176,3 +176,7 @@ TABFREE_JOBS_INLINE=1 ...                       # development: the worker inside
 - **SCIM 2.0** at `/scim/v2` with a site administrator's personal access token.
 - **Webhooks** signed with `X-TabFree-Signature: sha256=…`; **OpenAPI** at `/api/openapi.json`.
 - **Rollups**: declare `rollups` in a model and add a refresh task with mode `rollup`.
+- **Several sites**: `TABFREE_SITE_HOSTS='{"ops.tabfree.example": "ops"}'`; manage sites with
+  `python -m tabfree_api.sites list|create`; run `python -m tabfree_api.jobs worker --all-sites`.
+- **Usage dashboards**: set `TABFREE_USAGE_LAKE`, create the Athena table from `usage_lake.USAGE_DDL`, then
+  `python -m tabfree_api.sites install-usage --by <admin>`.

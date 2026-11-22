@@ -14,6 +14,7 @@ import {
   type DashboardHost,
   type FrameWindow,
   type Manifest,
+  type ManifestAction,
 } from "../src/index.js";
 
 const sales: ChartData = {
@@ -196,4 +197,85 @@ it("parameter and URL actions follow a selection; navigation reaches the host", 
   client.navigate("other-dashboard");
   await flush();
   expect(onNavigate).toHaveBeenCalledWith("other-dashboard");
+});
+
+describe("set actions", () => {
+  it("assigns, adds, removes and clears members", async () => {
+    const { setMembers } = await import("../src/host.js");
+    const action: ManifestAction = { type: "set", source: ["q"], set: "Top", field: "Customer" };
+    const picked = [{ Customer: "Ann" }, { Customer: "Bo" }];
+    expect(setMembers(action, undefined, picked)).toEqual(["Ann", "Bo"]);
+    expect(setMembers({ ...action, mode: "add" }, ["Cy", "Ann"], picked)).toEqual(["Cy", "Ann", "Bo"]);
+    expect(setMembers({ ...action, mode: "remove" }, ["Cy", "Ann"], picked)).toEqual(["Cy"]);
+    expect(setMembers(action, ["Ann"], [])).toBeUndefined(); // keep
+    expect(setMembers({ ...action, clear: "remove_all" } as never, ["Ann"], [])).toEqual([]);
+    expect(setMembers({ ...action, clear: "add_all" } as never, ["Ann"], [])).toBeNull();
+    expect(setMembers({ type: "set", source: ["q"], set: "Top" }, undefined, [{ A: 1, B: 2 }])).toBeUndefined();
+    const { isDashboardState } = await import("../src/protocol.js");
+    expect(isDashboardState({ filters: {}, parameters: {}, highlight: null, sets: { Top: ["Ann", 1, null] } })).toBe(true);
+    expect(isDashboardState({ filters: {}, parameters: {}, highlight: null, sets: { Top: [{}] } })).toBe(false);
+  });
+});
+
+describe("viz in tooltip and scatter series", () => {
+  it("checks hover queries", () => {
+    const ok = { v: 0, type: "query", id: "r1", query: "detail", hover: { source: "by_region", tuples: [{ Region: "East" }] } };
+    expect(parseDashboardMessage(ok)).toEqual(ok);
+    expect(parseDashboardMessage({ ...ok, hover: { source: "by_region", tuples: [{ A: 1 }, { A: 2 }] } })).toBeNull();
+    expect(parseDashboardMessage({ ...ok, hover: { source: "x" } })).toBeNull();
+  });
+
+  it("colours scatter series, reports hovers and clicks with the dimensions", () => {
+    const data: ChartData = {
+      columns: [
+        { name: "Customer", type: "string", role: "dimension" },
+        { name: "Segment", type: "string", role: "dimension" },
+        { name: "Sales", type: "float", role: "measure" },
+        { name: "Profit", type: "float", role: "measure" },
+      ],
+      rows: [
+        ["Ann", "Consumer", 10, 2],
+        ["Bo", "Corporate", 20, -1],
+        ["Cy", "Consumer", 30, 5],
+      ],
+    };
+    const onHover = vi.fn();
+    const onSelect = vi.fn();
+    const svg = renderChart({ mark: "point", x: "Sales", y: "Profit", color: "Segment" }, data, { width: 300, height: 200, onHover, onSelect });
+    const dots = [...svg.querySelectorAll("circle.tf-mark")];
+    expect(dots.map((d) => d.getAttribute("class"))).toEqual(["tf-mark tf-c0", "tf-mark tf-c1", "tf-mark tf-c0"]);
+    expect([...svg.querySelectorAll(".tf-legend text")].map((t) => t.textContent)).toEqual(["Consumer", "Corporate"]);
+    dots[1]?.dispatchEvent(new MouseEvent("mouseenter", { clientX: 5, clientY: 6 }));
+    expect(onHover).toHaveBeenCalledWith({ Customer: "Bo", Segment: "Corporate" }, { x: 5, y: 6 });
+    dots[2]?.dispatchEvent(new Event("click"));
+    expect(onSelect).toHaveBeenCalledWith({ Customer: "Cy", Segment: "Consumer" });
+  });
+});
+
+it("a hover query counts the mark as selected for that request only", async () => {
+  let listener: ((e: MessageEvent) => void) | null = null;
+  const add = window.addEventListener.bind(window);
+  vi.spyOn(window, "addEventListener").mockImplementation(((type: string, fn: EventListener, opts?: unknown) => {
+    if (type === "message") listener = fn as (e: MessageEvent) => void;
+    add(type, fn, opts as AddEventListenerOptions);
+  }) as typeof window.addEventListener);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const runQuery = vi.fn(async () => ({ columns: [], rows: [], truncated: false }));
+  const local: Manifest = { id: "d", title: "d", queries: { by_region: {}, detail: {} }, actions: [{ type: "filter", source: ["by_region"], targets: ["detail"] }] };
+  host = mountDashboard({ container, manifest: local, html: "", runtime: "", runQuery, runDomain: runQuery });
+  const hostListener = listener as unknown as (e: MessageEvent) => void;
+  const frameListeners = new Set<(e: MessageEvent) => void>();
+  const parent = { postMessage: (data: unknown) => hostListener({ data, source: host?.iframe.contentWindow } as MessageEvent) };
+  const contentWindow = host.iframe.contentWindow;
+  if (!contentWindow) throw new Error("no contentWindow");
+  vi.spyOn(contentWindow, "postMessage").mockImplementation(((data: unknown, _o: string, ports?: MessagePort[]) => {
+    for (const l of frameListeners) l({ data, source: parent, ports: ports ?? [] } as unknown as MessageEvent);
+  }) as typeof contentWindow.postMessage);
+  const frame: FrameWindow = { parent, addEventListener: (_t, l) => frameListeners.add(l), removeEventListener: (_t, l) => frameListeners.delete(l) };
+  const client = await TabfreeClient.connect(frame, 1000);
+  await client.hoverQuery("detail", "by_region", { Region: "East" });
+  expect(runQuery).toHaveBeenLastCalledWith(expect.objectContaining({ query: "detail", selections: { by_region: [{ Region: "East" }] } }));
+  await client.query("by_region");
+  expect(runQuery).toHaveBeenLastCalledWith(expect.objectContaining({ selections: {} }));
 });

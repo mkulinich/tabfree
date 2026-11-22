@@ -1059,7 +1059,8 @@ class DbSessionStore:
                 conn.execute(
                     select(t.sessions, t.users.c.username, t.users.c.disabled)
                     .join(t.users, t.users.c.id == t.sessions.c.user_id)
-                    .where(t.sessions.c.token_sha256 == _digest(token))
+                    # A session belongs to one site (several sites share a database, P6.9).
+                    .where(t.sessions.c.token_sha256 == _digest(token), t.sessions.c.site_id == self.site_id)
                 )
                 .mappings()
                 .first()

@@ -632,6 +632,11 @@
           "properties": {
             "type": { "const": "set" },
             "set": { "description": "Set name from the semantic model.", "type": "string", "minLength": 1 },
+            "field": {
+              "description": "Output name in the source query whose values become set members (default: the selection's only field).",
+              "type": "string",
+              "minLength": 1
+            },
             "mode": { "enum": ["assign", "add", "remove"], "default": "assign" },
             "clear": { "enum": ["keep", "add_all", "remove_all"], "default": "keep" }
           }

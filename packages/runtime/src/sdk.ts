@@ -115,6 +115,11 @@ export class TabfreeClient extends EventTarget {
     return this.#cached(`q:${name}`, () => this.#request({ type: "query", query: name }));
   }
 
+  /** A query run as if `tuple` were selected in `source` (viz in tooltip); not cached, no state change. */
+  hoverQuery(name: string, source: string, tuple: Tuple): Promise<QueryResult> {
+    return this.#request({ type: "query", query: name, hover: { source, tuples: [tuple] } });
+  }
+
   /** The members a filter control can offer. */
   domain(filter: string): Promise<QueryResult> {
     return this.#cached(`d:${filter}`, () => this.#request({ type: "domain", filter }));
@@ -165,7 +170,11 @@ export class TabfreeClient extends EventTarget {
     this.#send({ v: 0, type: "error", message });
   }
 
-  #request(body: { type: "query"; query: string } | { type: "domain"; filter: string }): Promise<QueryResult> {
+  #request(
+    body:
+      | { type: "query"; query: string; hover?: { source: string; tuples: Tuple[] } }
+      | { type: "domain"; filter: string },
+  ): Promise<QueryResult> {
     const id = `r${++this.#nextId}`;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });

@@ -81,6 +81,8 @@ class Context:
         #: Phase 6: outgoing mail and the job queue (database only).
         self.mailer: Any = None
         self.jobs: Any = None
+        #: Development: loads exported usage files into the sample engine (P6.7).
+        self.usage_loader: Any = None
 
     def audit(self, action: str, actor: str | None, outcome: str = "ok", **detail: Any) -> None:
         """An audit event: in the database when there is one, always in the service log."""

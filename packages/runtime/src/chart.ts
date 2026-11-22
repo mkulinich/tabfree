@@ -77,6 +77,8 @@ export interface ChartOptions {
   /** Tuples to emphasise; other marks are dimmed. */
   highlight?: Tuple[] | null | undefined;
   onSelect?: ((tuple: Tuple | null) => void) | undefined;
+  /** Viz in tooltip (P6.11): the pointer entered a mark (with where), or left it (null). */
+  onHover?: ((tuple: Tuple | null, at: { x: number; y: number }) => void) | undefined;
 }
 
 export class ChartError extends Error {}
@@ -397,7 +399,15 @@ export function renderChart(spec: ChartSpec, data: ChartData, options: ChartOpti
         select(tuple);
       });
     }
+    hoverable(el, tuple, options);
   }
+}
+
+function hoverable(el: SVGElement, tuple: Tuple, options: ChartOptions): void {
+  const hover = options.onHover;
+  if (!hover) return;
+  el.addEventListener("mouseenter", (event) => hover(tuple, { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY }));
+  el.addEventListener("mouseleave", () => hover(null, { x: 0, y: 0 }));
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -457,15 +467,46 @@ function renderScatter(
     axis.append(s("text", { x: plot.x - 6, y: py(t) + 4, "text-anchor": "end" }, formatAxis(t, yCol)));
   }
   svg.append(axis);
+  // A dimension on color gives one colour per series (P6.11), with a legend; a measure shades.
+  const series = colorc && !isMeasure(colorc[0]) ? seriesOf(data, colorc[0].name) : [];
+  const shadeValues = colorc && isMeasure(colorc[0]) ? data.rows.map((r) => numeric(r[colorc[1]] ?? null) ?? 0) : [];
+  const [shadeLo, shadeHi] = [Math.min(0, ...shadeValues), Math.max(0, ...shadeValues)];
+  const highlight = options.highlight?.length ? options.highlight : null;
+  const dims = data.columns.map((c, i) => [c, i] as const).filter(([c]) => !isMeasure(c));
   const marks = s("g", { class: "tf-marks" });
   for (const row of data.rows) {
     const x = numeric(row[xi] ?? null);
     const y = numeric(row[yi] ?? null);
     if (x === null || y === null) continue;
-    const dot = s("circle", { cx: px(x), cy: py(y), r: 4, class: "tf-mark tf-c0" });
+    const si = colorc && series.length ? series.findIndex((v) => key(v) === key(row[colorc[1]] ?? null)) : 0;
+    const dot = s("circle", { cx: px(x), cy: py(y), r: 4, class: `tf-mark tf-c${Math.max(0, si) % PALETTE_SIZE}` });
+    if (shadeValues.length && colorc) {
+      const v = numeric(row[colorc[1]] ?? null) ?? 0;
+      dot.setAttribute("fill-opacity", (shadeHi === shadeLo ? 0.85 : 0.3 + (0.7 * (v - shadeLo)) / (shadeHi - shadeLo)).toFixed(2));
+    }
     dot.append(s("title", {}, data.columns.map((c, i) => `${c.name}: ${formatValue(row[i] ?? null, c)}`).join("\n")));
-    if (colorc) dot.setAttribute("data-color", formatValue(row[colorc[1]] ?? null, colorc[0]));
+    const tuple: Tuple = Object.fromEntries(dims.map(([c, i]) => [c.name, row[i] ?? null]));
+    if (highlight && !matches(tuple, highlight)) dot.classList.add("tf-dim");
+    if (options.onSelect && dims.length) {
+      const select = options.onSelect;
+      dot.addEventListener("click", (event) => {
+        event.stopPropagation();
+        select(tuple);
+      });
+    }
+    if (dims.length) hoverable(dot, tuple, options);
     marks.append(dot);
   }
   svg.append(marks);
+  if (series.length > 1 && colorc) {
+    const legend = s("g", { class: "tf-legend" });
+    let lx = plot.x;
+    series.forEach((v, i) => {
+      const label = formatValue(v, colorc[0]);
+      legend.append(s("rect", { x: lx, y: height - 17, width: 10, height: 10, class: `tf-c${i % PALETTE_SIZE}` }));
+      legend.append(s("text", { x: lx + 14, y: height - 8 }, label));
+      lx += 24 + label.length * 7;
+    });
+    svg.append(legend);
+  }
 }

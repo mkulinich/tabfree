@@ -100,4 +100,6 @@ tf-when[hidden], [hidden] { display: none !important; }
 .tf-phone tf-container { flex-direction: column !important; }
 .tf-phone tf-container > * { flex: 1 1 auto !important; width: 100% !important; }
 .tf-phone tf-float { position: static !important; width: auto !important; height: auto !important; }
+.tf-viz-tooltip { position: fixed; z-index: 10; background: var(--tf-surface); border: 1px solid var(--tf-border);
+  border-radius: 6px; padding: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.2); pointer-events: none; }
 `;

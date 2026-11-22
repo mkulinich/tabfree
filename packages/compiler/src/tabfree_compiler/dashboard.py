@@ -27,6 +27,8 @@ class BoundQuery:
     parameters: Mapping[str, Any]
     #: The manifest's model aliases (alias → model id), for blended queries.
     models: Mapping[str, str] = field(default_factory=dict)
+    #: Set members chosen by set actions (P6.11): set name → members, replacing the set's definition.
+    sets: Mapping[str, tuple[Any, ...]] = field(default_factory=dict)
 
 
 def _applies(spec: Mapping[str, Any], query: str) -> bool:
@@ -157,6 +159,24 @@ def _model_for(manifest: Mapping[str, Any], query_spec: Mapping[str, Any]) -> st
     return str(models[alias])
 
 
+def _sets(manifest: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, tuple[Any, ...]]:
+    """Set members from the state: only sets a set action of the manifest may change."""
+    values = state.get("sets") or {}
+    if not isinstance(values, Mapping):
+        raise CompileError("sets must be an object")
+    allowed = {str(a.get("set")) for a in manifest.get("actions", []) or [] if a.get("type") == "set"}
+    out: dict[str, tuple[Any, ...]] = {}
+    for name, members in values.items():
+        if name not in allowed:
+            raise CompileError(f"no set action changes the set {name!r}")
+        if not isinstance(members, list) or len(members) > MAX_MEMBERS:
+            raise CompileError(f"set {name!r}: a list of at most {MAX_MEMBERS} members")
+        if any(not (m is None or isinstance(m, str | int | float | bool)) for m in members):
+            raise CompileError(f"set {name!r}: members are plain values")
+        out[str(name)] = tuple(members)
+    return out
+
+
 def _parameters(manifest: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
     declared = manifest.get("parameters", {})
     values = state.get("parameters", {}) or {}
@@ -196,7 +216,14 @@ def bind_query(
     for blend in spec.get("blend", []):
         if blend.get("model") not in aliases:
             raise CompileError(f"blend: unknown model alias {blend.get('model')!r}")
-    return BoundQuery(_model_for(manifest, spec), spec, tuple(filters), _parameters(manifest, state), aliases)
+    return BoundQuery(
+        _model_for(manifest, spec),
+        spec,
+        tuple(filters),
+        _parameters(manifest, state),
+        aliases,
+        _sets(manifest, state),
+    )
 
 
 def bind_domain(manifest: Mapping[str, Any], filter_name: str, state: Mapping[str, Any]) -> BoundQuery:
@@ -226,4 +253,6 @@ def bind_domain(manifest: Mapping[str, Any], filter_name: str, state: Mapping[st
     models = manifest.get("models", {})
     model = spec.get("model")
     model_id = str(models[model]) if model in models else _model_for(manifest, {})
-    return BoundQuery(model_id, query, tuple(filters), _parameters(manifest, state))
+    return BoundQuery(
+        model_id, query, tuple(filters), _parameters(manifest, state), {}, _sets(manifest, state)
+    )

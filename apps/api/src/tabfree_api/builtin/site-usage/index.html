@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Site usage</title>
+    <style>
+      tf-dashboard { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; padding: 16px; }
+      .wide { grid-column: 1 / -1; }
+      .kpis { display: flex; gap: 12px; flex-wrap: wrap; }
+    </style>
+  </head>
+  <body>
+    <tf-dashboard phone="stack">
+      <header class="wide"><tf-filter name="day"></tf-filter></header>
+      <section class="kpis wide">
+        <tf-kpi query="kpis" measure="Views"></tf-kpi>
+        <tf-kpi query="kpis" measure="People"></tf-kpi>
+        <tf-kpi query="kpis" measure="Queries"></tf-kpi>
+        <tf-kpi query="kpis" measure="95th Percentile (ms)" label="Query time, 95th percentile (ms)"></tf-kpi>
+        <tf-kpi query="kpis" measure="Cache Hit Rate"></tf-kpi>
+        <tf-kpi query="kpis" measure="Scanned GB"></tf-kpi>
+      </section>
+      <tf-chart class="wide" query="per_day" mark="line" x="Day" y="Views" reference="average" title="Views per day"></tf-chart>
+      <tf-chart query="per_day" mark="bar" x="Day" y="95th Percentile (ms)" title="Query time (95th percentile, ms)"></tf-chart>
+      <tf-chart query="top_content" mark="bar" x="Views" y="Content" title="Most viewed dashboards"></tf-chart>
+      <tf-crosstab class="wide" query="people" title="People"></tf-crosstab>
+    </tf-dashboard>
+  </body>
+</html>

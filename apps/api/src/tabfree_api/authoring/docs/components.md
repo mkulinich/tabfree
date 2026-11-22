@@ -63,3 +63,11 @@ reference line; `band` = `quartiles` or `"lo,hi"` shades a band; `trend="linear"
 
 Actions in `tabfree.json`: besides `filter` and `highlight`, a `parameter` action sets a parameter from the
 selected mark's `field`, and a `url` action opens its `url` template (`<Field Name>` placeholders; http and https only).
+A `set` action makes the selected marks' `field` values the members of a model set (`mode`: `assign`, `add` or
+`remove`; `clear` on an empty selection: `keep`, `remove_all`, or `add_all` to restore the set's definition); queries
+that use the set (as a dimension or a filter) follow.
+
+Viz in tooltip: `<tf-chart … tooltip-query="detail" tooltip-mark="bar" tooltip-x="…" tooltip-y="…">` shows a small
+chart of `detail` when the pointer rests on a mark, narrowed to that mark by a `filter` action from this chart's query
+to `detail` (declare it in `tabfree.json`). On scatter plots (two measures), a dimension on `color` gives one colour per
+series with a legend, and a measure shades the points.

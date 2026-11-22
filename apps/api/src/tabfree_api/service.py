@@ -21,7 +21,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -177,6 +177,17 @@ class QueryService:
 
     # ---- pipeline -------------------------------------------------------------------------------
 
+    def _register(self, derived: Mapping[str, Any]) -> str:
+        """A derived model (rollup, set override), keyed by content so a changed model never reuses it."""
+        digest = hashlib.sha256(json.dumps(derived, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        key_id = f"{derived['id']}@{digest}"
+        if key_id not in self._derived:
+            if len(self._derived) > 1000:
+                self._derived.clear()
+                self._compiled = {k: v for k, v in self._compiled.items() if "@" not in k}
+            self._derived[key_id] = derived
+        return key_id
+
     def _model(self, model_id: str) -> tuple[SemanticModel, Mapping[str, Any]]:
         doc = self._models.get(model_id) or self._derived.get(model_id)
         if doc is None:
@@ -198,19 +209,17 @@ class QueryService:
         _model, doc = self._model(bound.model)
         engine = self._engine_for(doc)
         version = self._data_version(bound.model)
+        if bound.sets and not bound.query.get("blend"):
+            # Set actions (P6.11): the chosen members replace the sets' definitions for this query.
+            doc = with_sets(doc, bound.sets)
+            bound = replace(bound, model=self._register(doc))
         if self.rollups and doc.get("rollups") and not bound.query.get("blend"):
             from tabfree_api.rollups import choose
 
             derived = choose(doc, bound.query, bound.filters)
             if derived is not None:
                 # Same connection and data version; the derived model carries the RLS policies.
-                # Keyed by content, so a changed model never reuses an old compiled rollup.
-                digest = hashlib.sha256(
-                    json.dumps(derived, sort_keys=True, default=str).encode()
-                ).hexdigest()[:16]
-                key_id = f"{derived['id']}@{digest}"
-                self._derived[key_id] = derived
-                bound = replace(bound, model=key_id)
+                bound = replace(bound, model=self._register(derived))
                 self.stats.rollup_hits += 1
         limits = limits or self.limits
         query = dict(bound.query)
@@ -341,6 +350,23 @@ class QueryService:
 
 
 # ---- helpers --------------------------------------------------------------------------------------
+
+
+def with_sets(doc: Mapping[str, Any], sets: Mapping[str, Sequence[Any]]) -> dict[str, Any]:
+    """The model with the named sets defined by these members (a set action's choice)."""
+    known = {str(st.get("name")) for st in doc.get("sets", []) or []}
+    missing = sorted(set(sets) - known)
+    if missing:
+        raise CompileError(f"the model has no set {missing[0]!r}")
+    out = dict(doc)
+    out["sets"] = [
+        {k: v for k, v in st.items() if k not in ("members", "condition", "top")}
+        | {"members": list(sets[str(st.get("name"))])}
+        if str(st.get("name")) in sets
+        else st
+        for st in doc.get("sets", []) or []
+    ]
+    return out
 
 
 @functools.cache

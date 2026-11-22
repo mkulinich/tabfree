@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     link_signing_key: SecretStr | None = None
     #: Embedding (P6.8): the longest an embed token may live, in seconds.
     embed_token_max_s: int = Field(default=600, ge=30, le=600)
+    #: Several sites in one server (P6.9): host name → site id, e.g. {"sales.tabfree.example": "sales"}.
+    #: Requests for other hosts go to ``site_id``. Empty: one site per server.
+    site_hosts: dict[str, str] = Field(default_factory=dict)
+    #: Where the usage_export job writes the audit log for usage dashboards (P6.7): s3://bucket/prefix
+    #: or a folder.
+    usage_lake: str | None = None
 
     # OpenID Connect. The secret comes from the environment (inject it with `secret run`), never a file.
     oidc_issuer: str | None = None
