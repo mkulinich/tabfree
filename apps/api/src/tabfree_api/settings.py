@@ -116,6 +116,24 @@ class Settings(BaseSettings):
     oauth_refresh_days: int = Field(default=30, ge=1, le=90)
     oauth_signing_key: SecretStr | None = None
 
+    # Phase 6: jobs (ADR-013), mail, links and embedding.
+    #: Run a worker and the scheduler inside the API process (development; production runs
+    #: ``python -m tabfree_api.jobs worker`` as its own service).
+    jobs_inline: bool = False
+    #: Finished jobs older than this many days are pruned from the job history.
+    job_retention_days: int = Field(default=30, ge=1, le=3650)
+    #: "log" writes mail to the log (development); "ses" sends through Amazon SES.
+    mail_backend: Literal["log", "ses"] = "log"
+    mail_from: str = "TabFree <tabfree@localhost>"
+    ses_region: str | None = None
+    #: Email domains of the organisation. Subscriptions to other addresses wait for the owner to
+    #: confirm them (P6.3), and render with the owner's access.
+    mail_internal_domains: list[str] = Field(default_factory=list)
+    #: Signs unsubscribe links. Unset: derived from the database URL (set it explicitly in production).
+    link_signing_key: SecretStr | None = None
+    #: Embedding (P6.8): the longest an embed token may live, in seconds.
+    embed_token_max_s: int = Field(default=600, ge=30, le=600)
+
     # OpenID Connect. The secret comes from the environment (inject it with `secret run`), never a file.
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None

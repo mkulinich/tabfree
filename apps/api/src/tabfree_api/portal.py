@@ -78,12 +78,31 @@ class Context:
         self.budget: Any = None
         self.provider: Any = None
         self.author: Any = None
+        #: Phase 6: outgoing mail and the job queue (database only).
+        self.mailer: Any = None
+        self.jobs: Any = None
 
     def audit(self, action: str, actor: str | None, outcome: str = "ok", **detail: Any) -> None:
         """An audit event: in the database when there is one, always in the service log."""
         log.info("audit %s actor=%s outcome=%s %s", action, actor, outcome, detail)
         if self.audit_log is not None:
             self.audit_log.record(action, actor=actor, outcome=outcome, **detail)
+        event = WEBHOOK_EVENTS.get(action)
+        if event is not None and outcome == "ok" and self.jobs is not None:
+            from tabfree_api.jobs import webhooks
+
+            data = {k: v for k, v in detail.items() if k in ("resource_kind", "resource_id", "revision")}
+            webhooks.emit(self, event, {**data, "actor": actor})
+
+
+#: Audit actions that are also webhook events (P6.9).
+WEBHOOK_EVENTS = {
+    "content_publish": "content.published",
+    "content_delete": "content.deleted",
+    "content_restore": "content.restored",
+    "comment_create": "comment.created",
+    "migration_approve": "content.published",
+}
 
 
 class ExportBody(BaseModel):
@@ -352,6 +371,10 @@ def create_router(ctx: Context) -> APIRouter:
     from tabfree_api.migration import routes as migration_routes
 
     migration_routes.add_routes(router, ctx, current, csrf)
+
+    from tabfree_api.jobs import routes as jobs_routes
+
+    jobs_routes.add_routes(router, ctx, current, csrf)
 
     # ---- personal access tokens (P3.2) -------------------------------------------------------------
 
@@ -637,6 +660,7 @@ def create_router(ctx: Context) -> APIRouter:
         "/admin/{_page}",
         "/migration",
         "/migration/{_id}",
+        "/jobs",
     ):
         router.add_api_route(route, lambda: spa() or RedirectResponse("/"), include_in_schema=False)
 

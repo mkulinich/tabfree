@@ -29,6 +29,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
+from sqlalchemy import true as sa_true
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql.expression import false
 
@@ -150,6 +152,11 @@ content = Table(
     Column("created_at", Timestamp, nullable=False),
     Column("updated_at", Timestamp, nullable=False),
     Column("deleted_at", Timestamp),
+    #: P6.6: certification (models and dashboards) and a data quality warning shown to viewers.
+    Column("certified", Boolean, nullable=False, server_default=sa_false()),
+    Column("certification_note", Text, nullable=False, server_default=""),
+    Column("certified_by", String(255)),
+    Column("quality_warning", Document),
     ForeignKeyConstraint(["site_id", "project_id"], ["projects.site_id", "projects.id"]),
     CheckConstraint(_in("kind", CONTENT_KINDS), name="kind"),
 )
@@ -487,4 +494,257 @@ migration_records = Table(
     Column("data", Document, nullable=False),
     Column("status", String(32), nullable=False, server_default="pending"),
     Column("updated_at", Timestamp, nullable=False),
+)
+
+# ---- Phase 6: Tableau Server feature parity -----------------------------------------------------------
+
+JOB_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled")
+
+#: Named, shared schedules (P6.1), like Tableau's: {frequency, every, at, weekdays, day, timezone}.
+schedules = Table(
+    "schedules",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("name", String(200), nullable=False),
+    Column("spec", Document, nullable=False),
+    Column("enabled", Boolean, nullable=False, server_default=sa_true()),
+    Column("next_run_at", Timestamp),
+    Column("last_run_at", Timestamp),
+    Column("created_at", Timestamp, nullable=False),
+    UniqueConstraint("site_id", "name", name="uq_schedules_site_name"),
+    Index("ix_schedules_due", "enabled", "next_run_at"),
+)
+
+#: The job queue and its history (ADR-013).
+jobs = Table(
+    "jobs",
+    metadata,
+    Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True),
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+    #: refresh | subscription | alert | warm | webhook | rollup
+    Column("kind", String(24), nullable=False),
+    Column("payload", Document, nullable=False, default=dict),
+    Column("status", String(12), nullable=False, server_default="queued"),
+    Column("priority", Integer, nullable=False, server_default="0"),
+    Column("run_at", Timestamp, nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("max_attempts", Integer, nullable=False, server_default="3"),
+    Column("locked_by", String(100)),
+    Column("locked_until", Timestamp),
+    Column("schedule_id", String(36)),
+    #: Who or what asked for it: a username, "schedule", or "event:<name>".
+    Column("created_by", String(255)),
+    #: A queued or running job with the same key is not enqueued twice.
+    Column("dedupe_key", String(200)),
+    Column("error", Text),
+    Column("result", Document),
+    Column("created_at", Timestamp, nullable=False),
+    Column("started_at", Timestamp),
+    Column("finished_at", Timestamp),
+    CheckConstraint(_in("status", JOB_STATUSES), name="status"),
+    Index("ix_jobs_claim", "status", "run_at", "priority"),
+    Index("ix_jobs_site_created", "site_id", "created_at"),
+    Index("ix_jobs_dedupe", "site_id", "dedupe_key"),
+)
+
+#: Extract refresh tasks (P6.2): which model refreshes how, on which schedule.
+refresh_tasks = Table(
+    "refresh_tasks",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("model_id", String(100), nullable=False),
+    #: full | incremental | materialized_view
+    Column("mode", String(24), nullable=False),
+    Column("schedule_id", String(36)),
+    #: Per table: source SQL or table, the target, the incremental key; see jobs/refresh.py.
+    Column("settings", Document, nullable=False, default=dict),
+    Column("owner", String(255)),
+    Column("enabled", Boolean, nullable=False, server_default=sa_true()),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+#: Subscriptions (P6.3): a dashboard emailed to recipients, rendered for each of them.
+subscriptions = Table(
+    "subscriptions",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("owner", String(255), nullable=False),
+    Column("dashboard_id", String(100), nullable=False),
+    Column("subject", String(255), nullable=False),
+    Column("message", Text, nullable=False, server_default=""),
+    #: [{"user": name} | {"group": name} | {"email": address}]
+    Column("recipients", Document, nullable=False, default=list),
+    Column("format", String(8), nullable=False, server_default="png"),
+    #: Dashboard state (filters, parameters) or a custom view to render.
+    Column("state", Document, nullable=False, default=dict),
+    Column("custom_view_id", String(36)),
+    Column("schedule_id", String(36)),
+    #: Send after this model refreshes, instead of (or as well as) on a schedule.
+    Column("after_refresh_of", String(100)),
+    Column("only_if_data", Boolean, nullable=False, server_default=sa_false()),
+    Column("webhook_url", Text),
+    #: active | paused | pending_confirmation (external recipients wait for the owner)
+    Column("status", String(24), nullable=False, server_default="active"),
+    Column("last_sent_at", Timestamp),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+)
+
+#: Recipients who unsubscribed (from one subscription, or from all when subscription_id is "*").
+mail_suppressions = Table(
+    "mail_suppressions",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("address", String(320), primary_key=True),
+    Column("subscription_id", String(36), primary_key=True),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+#: Data-driven alerts (P6.4) with the state that stops the same alert repeating.
+data_alerts = Table(
+    "data_alerts",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("owner", String(255), nullable=False),
+    Column("title", String(255), nullable=False),
+    Column("dashboard_id", String(100), nullable=False),
+    Column("query", String(64), nullable=False),
+    Column("measure", String(256), nullable=False),
+    #: {"operator": ">" | ">=" | "<" | "<=" | "=" | "!=", "threshold": number, "aggregate": "any"|"all"|"sum"}
+    Column("condition", Document, nullable=False),
+    Column("state", Document, nullable=False, default=dict),
+    Column("recipients", Document, nullable=False, default=list),
+    Column("schedule_id", String(36)),
+    Column("after_refresh_of", String(100)),
+    #: How often to notify while the condition stays true: once | every_check | daily
+    Column("repeat", String(16), nullable=False, server_default="once"),
+    Column("enabled", Boolean, nullable=False, server_default=sa_true()),
+    Column("firing", Boolean, nullable=False, server_default=sa_false()),
+    Column("last_value", Document),
+    Column("last_checked_at", Timestamp),
+    Column("last_notified_at", Timestamp),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+#: Custom views (P6.5): saved filter and parameter state, private or shared, and "default for me".
+custom_views = Table(
+    "custom_views",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("dashboard_id", String(100), nullable=False),
+    Column("owner", String(255), nullable=False),
+    Column("name", String(200), nullable=False),
+    Column("state", Document, nullable=False, default=dict),
+    Column("shared", Boolean, nullable=False, server_default=sa_false()),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+    Index("ix_custom_views_dashboard", "site_id", "dashboard_id"),
+)
+
+custom_view_defaults = Table(
+    "custom_view_defaults",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("username", String(255), primary_key=True),
+    Column("dashboard_id", String(100), primary_key=True),
+    Column("custom_view_id", String(36), nullable=False),
+)
+
+#: Sharing links (P6.5): a short id for a dashboard in a given state; viewers still need View.
+share_links = Table(
+    "share_links",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(24), primary_key=True),
+    Column("dashboard_id", String(100), nullable=False),
+    Column("state", Document, nullable=False, default=dict),
+    Column("created_by", String(255), nullable=False),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+comments = Table(
+    "comments",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("dashboard_id", String(100), nullable=False),
+    Column("author", String(255), nullable=False),
+    Column("body", Text, nullable=False),
+    Column("mentions", Document, nullable=False, default=list),
+    #: The dashboard state the comment was written about (filters, parameters).
+    Column("state", Document),
+    Column("created_at", Timestamp, nullable=False),
+    Column("deleted_at", Timestamp),
+    Index("ix_comments_dashboard", "site_id", "dashboard_id"),
+)
+
+content_tags = Table(
+    "content_tags",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("kind", String(16), primary_key=True),
+    Column("content_id", String(100), primary_key=True),
+    Column("tag", String(50), primary_key=True),
+    Index("ix_content_tags_tag", "site_id", "tag"),
+)
+
+collections = Table(
+    "collections",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("owner", String(255), nullable=False),
+    Column("name", String(200), nullable=False),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("shared", Boolean, nullable=False, server_default=sa_false()),
+    #: [{"kind": "dashboard"|"model", "id": ...}], in order.
+    Column("items", Document, nullable=False, default=list),
+    Column("created_at", Timestamp, nullable=False),
+    Column("updated_at", Timestamp, nullable=False),
+)
+
+#: Outgoing webhooks (P6.9): events posted to a URL, signed with HMAC-SHA256.
+webhooks = Table(
+    "webhooks",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),
+    Column("name", String(200), nullable=False),
+    Column("url", Text, nullable=False),
+    Column("events", Document, nullable=False, default=list),
+    #: The signing secret; the database is encrypted at rest (KMS). Shown once, when created.
+    Column("secret", String(100), nullable=False),
+    Column("enabled", Boolean, nullable=False, server_default=sa_true()),
+    Column("created_by", String(255)),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+#: Connected apps for embedding (P6.8): who may sign embed tokens, and where frames may appear.
+connected_apps = Table(
+    "connected_apps",
+    metadata,
+    Column("site_id", ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True),
+    Column("id", String(36), primary_key=True),  # the client id (JWT "iss")
+    Column("name", String(200), nullable=False),
+    Column("secret_id", String(36), nullable=False),  # JWT "kid"
+    Column("secret", String(100), nullable=False),
+    Column("enabled", Boolean, nullable=False, server_default=sa_true()),
+    #: Origins allowed to frame dashboards (Content-Security-Policy frame-ancestors).
+    Column("domains", Document, nullable=False, default=list),
+    #: Projects whose content the app may embed (empty: all).
+    Column("projects", Document, nullable=False, default=list),
+    Column("created_at", Timestamp, nullable=False),
+)
+
+#: Embed tokens already used (single-use "jti"), kept until they expire.
+embed_jtis = Table(
+    "embed_jtis",
+    metadata,
+    Column("jti", String(100), primary_key=True),
+    Column("expires_at", Timestamp, nullable=False, index=True),
 )

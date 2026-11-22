@@ -64,6 +64,14 @@ class Engine(Protocol):
     ) -> EngineResult: ...
 
 
+class StatementEngine(Engine, Protocol):
+    """Engines that also run DDL and DML for extract refreshes (P6.2)."""
+
+    def statements(self, sqls: list[str], *, timeout_s: float | None = None) -> list[list[list[Any]]]:
+        """Run statements in order (one transaction where the engine has them); rows of each."""
+        ...
+
+
 # ---- DuckDB -----------------------------------------------------------------------------------
 
 
@@ -112,6 +120,23 @@ class DuckDBEngine:
                 if timer is not None:
                     timer.cancel()
         return EngineResult([list(r) for r in rows], scanned_bytes=0)
+
+    def statements(self, sqls: list[str], *, timeout_s: float | None = None) -> list[list[list[Any]]]:
+        out: list[list[list[Any]]] = []
+        with self._lock:
+            try:
+                self._con.execute("BEGIN TRANSACTION")
+                for sql in sqls:
+                    cursor = self._con.execute(sql)
+                    try:
+                        out.append([list(r) for r in cursor.fetchall()])
+                    except Exception:  # statements without a result set
+                        out.append([])
+                self._con.execute("COMMIT")
+            except Exception as exc:
+                self._con.execute("ROLLBACK")
+                raise EngineError(f"statement failed: {str(exc).splitlines()[0]}") from None
+        return out
 
 
 # ---- Athena -----------------------------------------------------------------------------------
@@ -219,6 +244,15 @@ class AthenaEngine:
             rows[: max_rows + 1], scanned_bytes=int(scanned) if scanned is not None else None, reused=reused
         )
 
+    def statements(self, sqls: list[str], *, timeout_s: float | None = None) -> list[list[list[Any]]]:
+        """Athena has no multi-statement transactions: statements run one after another."""
+        return [_athena_statement_rows(self, sql, timeout_s) for sql in sqls]
+
+
+def _athena_statement_rows(engine: Any, sql: str, timeout_s: float | None) -> list[list[Any]]:
+    query = CompiledQuery(sql, "athena", (), {}, ())
+    return list(engine.execute(query, 10_000, ExecuteOptions(timeout_s=timeout_s)).rows)
+
 
 def _athena_value(text: str | None, type_: str) -> Any:
     if text is None:
@@ -307,6 +341,28 @@ class RedshiftDataEngine:
             if not token:
                 break
         return EngineResult(rows[: max_rows + 1])
+
+    def statements(self, sqls: list[str], *, timeout_s: float | None = None) -> list[list[list[Any]]]:
+        """One transaction (BatchExecuteStatement); statements return no rows here."""
+        request: dict[str, Any] = {"Sqls": list(sqls), "Database": self.database}
+        if self.workgroup:
+            request["WorkgroupName"] = self.workgroup
+        else:
+            request["ClusterIdentifier"] = self.cluster
+        if self.secret_arn:
+            request["SecretArn"] = self.secret_arn
+        statement_id = self._client.batch_execute_statement(**request)["Id"]
+        deadline = time.monotonic() + (timeout_s if timeout_s is not None else self.timeout_s)
+        while True:
+            status = self._client.describe_statement(Id=statement_id)
+            if status["Status"] == "FINISHED":
+                return [[] for _ in sqls]
+            if status["Status"] in ("FAILED", "ABORTED"):
+                raise EngineError(f"Redshift statement {status['Status'].lower()}: {status.get('Error', '')}")
+            if time.monotonic() > deadline:
+                self._client.cancel_statement(Id=statement_id)
+                raise EngineTimeoutError("Redshift statement timed out and was cancelled")
+            time.sleep(self.poll_s)
 
 
 def _redshift_parameter(name: str, value: Any) -> dict[str, str]:

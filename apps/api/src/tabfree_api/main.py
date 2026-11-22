@@ -214,6 +214,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from tabfree_api.authoring.author import AuthorRunner, sandbox_from_settings
 
         ctx.author = AuthorRunner(ctx, sandbox=sandbox_from_settings(config))
+    from tabfree_api.jobs import mail
+
+    ctx.mailer = mail.from_settings(config)
+    if config.database_url is not None:
+        from tabfree_api.jobs.queue import JobQueue
+
+        ctx.jobs = JobQueue(site.engine)
+        if config.jobs_inline:
+            import threading
+
+            from tabfree_api.jobs.worker import run_forever
+
+            stop = threading.Event()
+            app.state.jobs_stop = stop
+            threading.Thread(
+                target=run_forever, args=(ctx,), kwargs={"scheduler": True, "stop": stop}, daemon=True,
+                name="tabfree-jobs",
+            ).start()  # fmt: skip
     app.include_router(create_router(ctx))
     if signer is not None:
         app.include_router(
