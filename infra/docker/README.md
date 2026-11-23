@@ -86,7 +86,7 @@ TABFREE_ENGINE=trino TABFREE_TRINO_URL=http://localhost:8080 TABFREE_DEV_LOGIN=1
   uv run uvicorn tabfree_api.main:app_factory --factory --port 8765
 ```
 
-Tableau's TDVT expression suites run on it too (1173 of 1190 pass; the rest are listed by the run):
+Tableau's TDVT expression suites run on it too (1179 of 1190 pass; the other 11 are known deviations in TDVT's own expected files):
 
 ```sh
 uv run python -m tabfree_api.conformance --engine trino --trino-url http://localhost:8080 --load-local

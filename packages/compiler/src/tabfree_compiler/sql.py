@@ -22,6 +22,7 @@ import dataclasses
 import datetime as dt
 import re
 import secrets
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -1188,8 +1189,7 @@ class _Planner:
                     expression=exp.Order(expressions=[exp.Ordered(this=x)]),
                 )
                 return T(ordered, "float")
-            # Athena has no exact percentile: approx_percentile (documented approximation).
-            return T(exp.Anonymous(this="APPROX_PERCENTILE", expressions=[x, _num(fraction)]), "float")
+            return T(_trino_percentile(x, fraction), "float")
         if name in ("CORR", "COVAR", "COVARP"):
             if len(call.args) != 2:
                 raise CompileError(f"{name} takes two arguments")
@@ -1214,12 +1214,9 @@ class _Planner:
         if name == "COUNT":
             return T(exp.Count(this=e), "integer")
         if name == "MEDIAN":
-            return T(
-                exp.Median(this=e)
-                if self.dialect not in ("athena", "trino")
-                else exp.ApproxQuantile(this=e, quantile=exp.Literal.number(0.5)),
-                "float",
-            )
+            if self.dialect in ("athena", "trino"):
+                return T(_trino_percentile(_cast(e, "float"), 0.5), "float")
+            return T(exp.Median(this=e), "float")
         if name in ("STDEV", "STDEVP", "VAR", "VARP"):
             cls = {
                 "STDEV": exp.Stddev,
@@ -1463,6 +1460,13 @@ class _Planner:
             return v
         if v.type == "boolean":
             return T(_case([(v.e, _str("1")), (exp.Not(this=_paren(v.e.copy())), _str("0"))], None), "string")
+        if v.type == "float" and self.dialect in ("athena", "trino"):
+            # Trino casts a double to scientific notation ('-1.421E1'); FORMAT('%s') gives '-14.21'.
+            # FORMAT turns NULL into the text 'null', so NULL is kept apart.
+            formatted = exp.Anonymous(this="FORMAT", expressions=[_str("%s"), v.e])
+            return T(
+                _case([(exp.Is(this=v.e.copy(), expression=exp.Null()), exp.Null())], formatted), "string"
+            )
         return T(_cast(v.e, "string"), "string")
 
     # -- functions -----------------------------------------------------------------------------
@@ -2018,6 +2022,37 @@ def _strf(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
     return p._to_string(tr(args[0]))
 
 
+#: An exact, interpolated percentile for Trino and Athena, which only have APPROX_PERCENTILE (it
+#: returns a nearby value, not Tableau's). The non-null values of the group are sorted in an array
+#: and the two neighbours of the position are interpolated, as PERCENTILE_CONT does. The array holds
+#: one group's values in memory, so this suits the group sizes a dashboard aggregates over.
+_TRINO_PERCENTILE = sqlglot.parse_one(
+    """
+    TRANSFORM(
+      ARRAY[ARRAY_SORT(ARRAY_AGG(tf_x) FILTER (WHERE tf_x IS NOT NULL))],
+      a -> CASE WHEN CARDINALITY(a) = 0 THEN NULL ELSE
+        ELEMENT_AT(a, CAST(FLOOR(1 + (CARDINALITY(a) - 1) * tf_p) AS INTEGER))
+        + (ELEMENT_AT(a, CAST(CEIL(1 + (CARDINALITY(a) - 1) * tf_p) AS INTEGER))
+           - ELEMENT_AT(a, CAST(FLOOR(1 + (CARDINALITY(a) - 1) * tf_p) AS INTEGER)))
+          * ((1 + (CARDINALITY(a) - 1) * tf_p) - FLOOR(1 + (CARDINALITY(a) - 1) * tf_p))
+      END
+    )[1]
+    """,
+    read="trino",
+)
+
+
+def _trino_percentile(x: exp.Expr, fraction: float) -> exp.Expr:
+    def fill(node: exp.Expr) -> exp.Expr:
+        if isinstance(node, exp.Column) and node.name == "tf_x":
+            return x.copy()
+        if isinstance(node, exp.Column) and node.name == "tf_p":
+            return _num(fraction)
+        return node
+
+    return _TRINO_PERCENTILE.copy().transform(fill)
+
+
 def _try_cast(e: exp.Expr, type_: str) -> exp.Expr:
     return exp.TryCast(this=e, to=_sql_type(type_))
 
@@ -2218,9 +2253,29 @@ def _regex_match(p: _Planner, s: exp.Expr, pattern: exp.Expr) -> exp.Expr:
     return exp.RegexpLike(this=s, expression=pattern)
 
 
+_NAMED_CHARACTER = re.compile(r"(?<!\\)((?:\\\\)*)\\N\{([^}]+)\}")
+
+
+def _regex_pattern(p: _Planner, node: Node, tr: Callable[[Node], T]) -> T:
+    """The pattern argument; on Trino a literal's ICU named characters become code points."""
+    if p.dialect in ("athena", "trino") and isinstance(node, Lit) and isinstance(node.value, str):
+
+        def code_point(match: re.Match[str]) -> str:
+            try:
+                return f"{match.group(1)}\\x{{{ord(unicodedata.lookup(match.group(2))):X}}}"
+            except KeyError:
+                return match.group(0)  # not a character name: leave it for the engine to reject
+
+        # Trino's regex engine has no \N{NAME}; \x{HEX} is the same character.
+        rewritten = _NAMED_CHARACTER.sub(code_point, node.value)
+        if rewritten != node.value:
+            return T(_str(rewritten), "string")
+    return tr(node)
+
+
 @_fn("REGEXP_MATCH", arity=(2, 2))
 def _regexp_match(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
-    s, pattern = tr(args[0]), tr(args[1])
+    s, pattern = tr(args[0]), _regex_pattern(p, args[1], tr)
     return T(_regex_match(p, s.e, pattern.e), "boolean")
 
 
@@ -2240,7 +2295,11 @@ def _regex_group(p: _Planner, s: exp.Expr, pattern: exp.Expr, group: int) -> exp
 
 @_fn("REGEXP_EXTRACT", arity=(2, 2))
 def _regexp_extract(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
-    s, pattern = tr(args[0]), tr(args[1])
+    s, pattern = tr(args[0]), _regex_pattern(p, args[1], tr)
+    literal = args[1].value if isinstance(args[1], Lit) else None
+    if p.dialect in ("athena", "trino") and isinstance(literal, str) and _capture_groups(literal) == 0:
+        # No group to extract: Tableau gives '' on a match. Trino would fail asking for group 1.
+        return T(_case([(_regex_match(p, s.e, pattern.e), _str(""))], exp.Null()), "string")
     return T(_regex_group(p, s.e, pattern.e, 1), "string")
 
 
@@ -2264,7 +2323,7 @@ def _capture_groups(pattern: str) -> int:
 
 @_fn("REGEXP_EXTRACT_NTH", arity=(3, 3))
 def _regexp_extract_nth(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
-    s, pattern = tr(args[0]), tr(args[1])
+    s, pattern = tr(args[0]), _regex_pattern(p, args[1], tr)
     n = args[2]
     if not isinstance(n, Lit) or not isinstance(n.value, int) or isinstance(n.value, bool):
         raise UnsupportedError("REGEXP_EXTRACT_NTH needs a literal group number")
@@ -2276,7 +2335,7 @@ def _regexp_extract_nth(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node]
 
 @_fn("REGEXP_REPLACE", arity=(3, 3))
 def _regexp_replace(p: _Planner, args: tuple[Node, ...], tr: Callable[[Node], T]) -> T:
-    s, pattern, replacement = (tr(a) for a in args)
+    s, pattern, replacement = tr(args[0]), _regex_pattern(p, args[1], tr), tr(args[2])
     # Tableau replaces every match (sqlglot adds the 'g' flag where an engine needs it).
     return T(exp.RegexpReplace(this=s.e, expression=pattern.e, replacement=replacement.e), "string")
 
