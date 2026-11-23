@@ -157,7 +157,6 @@ def test_trino_function_names(dialect: str) -> None:
     assert "CODEPOINT(" in ascii_
     assert "UNICODE(" not in ascii_
     median = sql("MEDIAN([num0])")
-    assert "APPROX_PERCENTILE(" in median
     assert "PERCENTILE_CONT" not in median
     assert "MEDIAN(" not in median
     date = sql("DATE([str2])")
@@ -175,3 +174,45 @@ def test_other_dialects_keep_their_function_names(dialect: str) -> None:
     assert "TRUNC(" in sql("DIV([int0], [int1])")
     assert "REPEAT(" in sql("SPACE([int2])")
     assert "CODEPOINT(" not in sql("ASCII([str1])")
+
+
+@pytest.mark.parametrize("dialect", ["athena", "trino"])
+def test_trino_exact_percentiles_strings_and_regexes(dialect: str) -> None:
+    """The last TDVT failures on Trino: approximate percentiles, STR of a float, and three regex cases."""
+    model = calcs_model()
+
+    def sql(formula: str) -> str:
+        compiled = compile_expression(model, formula, dialect=dialect)  # type: ignore[arg-type]
+        sqlglot.parse_one(compiled.sql.replace("?", "NULL"), read="trino")
+        return compiled.sql.upper()
+
+    for formula in ("MEDIAN([num4])", "PERCENTILE([num4], 0.75)"):
+        exact = sql(formula)
+        assert "APPROX_PERCENTILE" not in exact  # it returns a nearby value, not the interpolated one
+        assert "ARRAY_SORT(ARRAY_AGG(" in exact
+        assert "FILTER(WHERE NOT" in exact  # NULLs do not count, as in Tableau
+    assert "* 0.75" in sql("PERCENTILE([num4], 0.75)")
+
+    text = sql("STR([num4])")
+    assert "FORMAT('%S'" in text  # a plain cast gives '-1.421E1'
+    assert "IS NULL THEN NULL" in text  # FORMAT would turn NULL into the text 'null'
+    assert "FORMAT(" not in sql("STR([int0])")
+
+    named = compile_expression(model, "REGEXP_MATCH([str1], '\\N{DOLLAR SIGN}x')", dialect=dialect)  # type: ignore[arg-type]
+    assert "\\x{24}x" in named.sql
+    assert "N{" not in named.sql
+    escaped = compile_expression(model, "REGEXP_MATCH([str1], '\\\\N{DOLLAR SIGN}')", dialect=dialect)  # type: ignore[arg-type]
+    assert "N{DOLLAR SIGN}" in escaped.sql  # an escaped backslash: not a named character
+    unknown = compile_expression(model, "REGEXP_MATCH([str1], '\\N{NO SUCH NAME}')", dialect=dialect)  # type: ignore[arg-type]
+    assert "N{NO SUCH NAME}" in unknown.sql
+
+    no_group = sql("REGEXP_EXTRACT([str1], 'abc')")
+    assert "REGEXP_EXTRACT(" not in no_group  # there is no group 1 to ask Trino for
+    assert "THEN ''" in no_group
+    assert "REGEXP_EXTRACT(" in sql("REGEXP_EXTRACT([str1], '(abc)')")
+
+
+def test_duckdb_keeps_its_own_median_and_cast() -> None:
+    model = calcs_model()
+    assert "ARRAY_AGG" not in compile_expression(model, "MEDIAN([num4])", dialect="duckdb").sql.upper()
+    assert "FORMAT(" not in compile_expression(model, "STR([num4])", dialect="duckdb").sql.upper()
