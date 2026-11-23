@@ -173,7 +173,20 @@ class PlaywrightRenderer:
                     page.goto(url, wait_until="networkidle")
                     page.wait_for_timeout(self.settle_ms)
                     if fmt == "pdf":
-                        return bytes(page.pdf(print_background=True, landscape=True, format="A4"))
+                        # One page the size of the dashboard: the frame cannot break across pages,
+                        # so fixed paper left blank pages and cut the dashboard mid-chart.
+                        page.emulate_media(media="screen")
+                        root = "document.documentElement"
+                        size = page.evaluate(f"() => [{root}.scrollWidth, {root}.scrollHeight]")
+                        width, height = max(int(size[0]), 1), max(int(size[1]), 1)
+                        return bytes(
+                            page.pdf(
+                                print_background=True,
+                                width=f"{width}px",
+                                height=f"{height}px",
+                                page_ranges="1",
+                            )
+                        )
                     return bytes(page.screenshot(full_page=True, type="png"))
                 finally:
                     browser.close()

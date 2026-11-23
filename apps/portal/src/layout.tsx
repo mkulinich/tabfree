@@ -2,14 +2,33 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { ApiError, get, type Me, ROLE_LABELS, send, type SiteInfo } from "./api.js";
+import {
+  ApiError,
+  get,
+  type Me,
+  ROLE_LABELS,
+  send,
+  type SiteInfo,
+} from "./api.js";
+
+/**
+ * True for the export renderer's view (`?print=1`), which shows no portal chrome.
+ * The router rewrites the address to its own JSON form (`print=%221%22`), so both spellings count.
+ */
+export function isPrintView(search: string): boolean {
+  const value = new URLSearchParams(search).get("print");
+  return value === "1" || value === '"1"';
+}
 
 export function useMe() {
   return useQuery({ queryKey: ["me"], queryFn: () => get<Me>("/api/me") });
 }
 
 export function useSite() {
-  return useQuery({ queryKey: ["site"], queryFn: () => get<SiteInfo>("/api/site") });
+  return useQuery({
+    queryKey: ["site"],
+    queryFn: () => get<SiteInfo>("/api/site"),
+  });
 }
 
 /** Old Tableau links ("/#/site/x/views/Workbook/Sheet") keep their path in the fragment (P3.9). */
@@ -36,11 +55,25 @@ function useShareLinks(signedIn: boolean) {
   useEffect(() => {
     const share = new URLSearchParams(location.search).get("share");
     if (!signedIn || !share) return;
-    get<{ dashboard: string; state: { filters?: unknown; parameters?: unknown } }>(`/api/share/${encodeURIComponent(share)}`)
+    get<{
+      dashboard: string;
+      state: { filters?: unknown; parameters?: unknown };
+    }>(`/api/share/${encodeURIComponent(share)}`)
       .then(({ dashboard, state }) => {
-        const json = JSON.stringify({ filters: state.filters ?? {}, parameters: state.parameters ?? {} });
-        const encoded = btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-        void navigate({ to: "/dashboards/$id", params: { id: dashboard }, search: { state: encoded }, replace: true });
+        const json = JSON.stringify({
+          filters: state.filters ?? {},
+          parameters: state.parameters ?? {},
+        });
+        const encoded = btoa(json)
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+        void navigate({
+          to: "/dashboards/$id",
+          params: { id: dashboard },
+          search: { state: encoded },
+          replace: true,
+        });
       })
       .catch(() => setMissing(share));
   }, [signedIn, navigate]);
@@ -60,7 +93,10 @@ export function Layout() {
       <main className="signin">
         <h1>TabFree</h1>
         <p>
-          <a className="button primary" href={`/auth/login?return=${encodeURIComponent(location.pathname)}`}>
+          <a
+            className="button primary"
+            href={`/auth/login?return=${encodeURIComponent(location.pathname)}`}
+          >
             Sign in
           </a>
         </p>
@@ -68,7 +104,7 @@ export function Layout() {
     );
   }
 
-  if (new URLSearchParams(location.search).get("print") === "1") {
+  if (isPrintView(location.search)) {
     return (
       <main id="main" className="print">
         <Outlet />
@@ -129,7 +165,8 @@ export function Layout() {
       <main id="main">
         {missingLink ? (
           <p role="alert" className="note page">
-            That Tableau link has no dashboard here, or it is not shared with you.
+            That Tableau link has no dashboard here, or it is not shared with
+            you.
           </p>
         ) : null}
         {missingShare ? (
@@ -144,7 +181,8 @@ export function Layout() {
 }
 
 export function Problem({ error }: { error: unknown }) {
-  const message = error instanceof Error ? error.message : "something went wrong";
+  const message =
+    error instanceof Error ? error.message : "something went wrong";
   return (
     <p role="alert" className="problem">
       {message}
